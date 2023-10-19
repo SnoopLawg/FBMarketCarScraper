@@ -28,8 +28,12 @@ class FacebookMarketplaceScraper:
         # options.add_argument("-headless")
         self.driver = webdriver.Firefox(options=options)
         # Read JSON file
-        with open("FB Marketplace/Config.json", "r") as json_file:
-            config = json.load(json_file)
+        try:
+            with open("FB Marketplace/Config.json", "r") as json_file:
+                config = json.load(json_file)
+        except:
+            with open("Config.json", "r") as json_file:
+                config = json.load(json_file)
         self.config = config
         self.passive_mode = config.get("Passive")
         self.desired_car = config.get("DesiredCar")
