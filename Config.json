@@ -1,0 +1,21 @@
+{
+  "Passive": null,
+  "DesiredCar": [
+    "Ford Fusion",
+    "Honda Civic",
+    "Toyota Rav4",
+    "Toyota Camry",
+    "Honda Accord",
+    "Toyota Corolla",
+    "Hyundai Sonata",
+    "Nissan Altima",
+    "Kia Optima",
+    "Hyundai Elantra"
+  ],
+  "MileageMin": null,
+  "MileageMax": 150000,
+  "CityID": "107584845937516",
+  "MinPrice": 2000,
+  "MaxPrice": 5500,
+  "PriceThreshold": 500
+}
