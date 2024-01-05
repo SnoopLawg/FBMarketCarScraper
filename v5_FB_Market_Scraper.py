@@ -157,6 +157,8 @@ class FacebookMarketplaceScraper:
                         if len(price) > 1:
                             price, compare_at_price = price
                             car_elems = price + compare_at_price + title + city + miles
+                        elif len(price) == 0:
+                            break
                         else:
                             price = price[0]
                             car_elems = price + title + city + miles
@@ -603,4 +605,4 @@ def human():
 
 gather()
 check_em_out()
-# human()
+human()
