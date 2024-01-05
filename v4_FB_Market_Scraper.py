@@ -25,7 +25,7 @@ class FacebookMarketplaceScraper:
     def __init__(self):
         logging.info("Initializing FacebookMarketplaceScraper...")
         options = Options()
-        # options.add_argument("-headless")
+        options.add_argument("-headless")
         self.driver = webdriver.Firefox(options=options)
         # Read JSON file
         try:
@@ -192,11 +192,11 @@ class FacebookMarketplaceScraper:
             table_name = f"{cleaned_name}_listings"
 
             # Fetch all listings from the table
-            self.cur.execute(f"SELECT id, car FROM {table_name}")
+            self.cur.execute(f"SELECT id, car, location FROM {table_name}")
             listings = self.cur.fetchall()
 
             # Check each listing and delete if the car's name doesn't match the desired car's name
-            for listing_id, car_name in listings:
+            for listing_id, car_name, location in listings:
                 if desired_car.lower() not in car_name.lower():
                     self.cur.execute(
                         f"DELETE FROM {table_name} WHERE id=?", (listing_id,)
@@ -204,6 +204,15 @@ class FacebookMarketplaceScraper:
                     logging.info(
                         f"Deleted listing with ID {listing_id} from {table_name} as it doesn't match the desired car's name."
                     )
+                # Remove the problematic row from the database
+                if "UT" not in location:
+                    self.cur.execute(
+                        f"DELETE FROM {cleaned_name}_listings WHERE id = {listing_id}"
+                    )
+                    logging.info(
+                        f"Deleted listing with ID {listing_id} from {table_name} as it doesn't match the desired car's desired location."
+                    )
+                    self.conn.commit()
 
             self.conn.commit()
 
@@ -235,7 +244,17 @@ class FacebookMarketplaceScraper:
                 year = year.group(0)
                 if year not in car_prices:
                     car_prices[year] = []
-                price = float(row[3].replace("$", "").replace(",", ""))
+                try:
+                    price = float(row[3].replace("$", "").replace(",", ""))
+                except:
+                    # Assuming 'id' is the first element in the row
+                    row_id = row[0]
+
+                    # Remove the problematic row from the database
+                    cur.execute(
+                        f"DELETE FROM {cleaned_name}_listings WHERE id = {row_id}"
+                    )
+                    self.conn.commit()
                 # Extract numeric mileage from the string using regular expression
                 mileage_match = re.search(r"\b\d+\.?\d*\.?[Kk]?\b", row[6])
                 if mileage_match:
@@ -330,7 +349,17 @@ class FacebookMarketplaceScraper:
                     price = row[3]
                     if price == "Sold":
                         continue
-                    price = float(row[3].replace("$", "").replace(",", ""))
+                    try:
+                        price = float(row[3].replace("$", "").replace(",", ""))
+                    except:
+                        # Assuming 'id' is the first element in the row
+                        row_id = row[0]
+
+                        # Remove the problematic row from the database
+                        cur.execute(
+                            f"DELETE FROM {cleaned_name}_listings WHERE id = {row_id}"
+                        )
+                        self.conn.commit()
                 else:
                     mileage = 0
                 if year is None:
@@ -556,8 +585,10 @@ class FacebookMarketplaceScraper:
         )
 
 
+scraper = FacebookMarketplaceScraper()
+
+
 def gather():
-    scraper = FacebookMarketplaceScraper()
     scraper.scrape_data()
     scraper.create_database()
     scraper.clean_database_listings()
@@ -565,7 +596,6 @@ def gather():
 
 
 def check_em_out():
-    scraper = FacebookMarketplaceScraper()
     scraper.create_database()
     scraper.deal_assesment()
     scraper.close_connection()
