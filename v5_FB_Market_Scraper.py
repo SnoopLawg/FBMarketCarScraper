@@ -44,6 +44,7 @@ class FacebookMarketplaceScraper:
         self.max_price = config.get("MaxPrice")
         self.price_threshold = config.get("PriceThreshold")
         self.db_name = "marketplace_listings"
+        self.purchase_location = config.get("PurchaseLocation")
         if self.passive_mode != "yes":
             self.desired_car = config.get("DesiredCar", [])
             self.db_name = f"{self.desired_car}"
@@ -352,7 +353,7 @@ class FacebookMarketplaceScraper:
                 mileage = int(mileage)
                 city = row[5]
                 if year:
-                    if "UT" in city:
+                    if self.purchase_location in city:
                         for avgrow in avg_rows:
                             avgyear = avgrow[0]
                             if year == avgyear:
