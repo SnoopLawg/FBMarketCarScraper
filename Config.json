@@ -18,5 +18,7 @@
   "CityID": "107584845937516",
   "MinPrice": 2000,
   "MaxPrice": 5500,
-  "PriceThreshold": 500
+  "PriceThreshold": 500,
+  "LocationFilter": "UT",
+  "ScrollCount": 10
 }
