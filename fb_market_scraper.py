@@ -1,7 +1,10 @@
 import time
+import random
 import re
 import sys
 import json
+import glob as globmod
+import pickle
 import sqlite3
 import logging
 import webbrowser
@@ -12,7 +15,9 @@ from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.firefox.service import Service
 from bs4 import BeautifulSoup
 
 logging.basicConfig(
@@ -164,12 +169,46 @@ class FacebookMarketplaceScraper:
         match = re.search(r"\b(19|20)\d{2}\b", car_name)
         return int(match.group()) if match else None
 
+    # ── Human-like timing ─────────────────────────────────────────────
+
+    @staticmethod
+    def _human_delay(min_s=2, max_s=6):
+        """Sleep a random amount to mimic human behavior."""
+        time.sleep(random.uniform(min_s, max_s))
+
+    @staticmethod
+    def _human_scroll_delay():
+        """Random pause between scrolls like a real person browsing."""
+        time.sleep(random.uniform(1.5, 4.0))
+
     # ── Selenium driver ────────────────────────────────────────────────
+
+    COOKIE_FILE = SCRIPT_DIR / "fb_cookies.pkl"
+
+    FIREFOX_PROFILE = str(
+        Path.home() / "Library" / "Application Support" / "Firefox" / "Profiles" / "6kmbn0d4.fbscraper"
+    )
 
     def _start_driver(self):
         if self.driver is None:
             options = Options()
+
+            # Use the dedicated fbscraper Firefox profile
+            options.profile = self.FIREFOX_PROFILE
+            logging.info(f"Using Firefox profile: {self.FIREFOX_PROFILE}")
+
+            # Anti-fingerprinting: hide that this is an automated browser
+            options.set_preference("dom.webdriver.enabled", False)
+            options.set_preference("useAutomationExtension", False)
+            options.set_preference("privacy.resistFingerprinting", False)
+            options.set_preference("toolkit.telemetry.enabled", False)
+            options.set_preference("datareporting.policy.dataSubmissionEnabled", False)
+
             self.driver = webdriver.Firefox(options=options)
+            # Remove webdriver flag from navigator object
+            self.driver.execute_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
 
     def _quit_driver(self):
         if self.driver:
@@ -178,6 +217,82 @@ class FacebookMarketplaceScraper:
             except Exception:
                 pass
             self.driver = None
+
+    # ── Login / cookie management ─────────────────────────────────────
+
+    def _save_cookies(self):
+        cookies = self.driver.get_cookies()
+        with open(self.COOKIE_FILE, "wb") as f:
+            pickle.dump(cookies, f)
+        logging.info("Cookies saved for future sessions.")
+
+    def _load_cookies(self):
+        if not self.COOKIE_FILE.exists():
+            return False
+        try:
+            with open(self.COOKIE_FILE, "rb") as f:
+                cookies = pickle.load(f)
+            # Must be on facebook.com domain to set cookies
+            self.driver.get("https://www.facebook.com/")
+            for cookie in cookies:
+                # Remove problematic fields that can cause errors
+                for key in ["sameSite", "expiry"]:
+                    cookie.pop(key, None)
+                try:
+                    self.driver.add_cookie(cookie)
+                except Exception:
+                    pass
+            self.driver.refresh()
+            time.sleep(3)
+            return self._is_logged_in()
+        except Exception as e:
+            logging.warning(f"Failed to load cookies: {e}")
+            return False
+
+    def _is_logged_in(self):
+        """Check if we're logged into Facebook by looking for the login form."""
+        try:
+            page = self.driver.page_source.lower()
+            # If we see a login form or "log in" button, we're not logged in
+            if 'id="loginbutton"' in page or 'name="email"' in page:
+                return False
+            # If we got redirected to login page
+            if "/login" in self.driver.current_url:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _ensure_logged_in(self):
+        """Try cookies first, then wait for manual login."""
+        logging.info("Checking Facebook login status...")
+
+        # Try saved cookies first
+        if self._load_cookies():
+            logging.info("Logged in via saved cookies.")
+            return
+
+        # Navigate to Facebook login
+        self.driver.get("https://www.facebook.com/")
+        time.sleep(2)
+
+        if self._is_logged_in():
+            logging.info("Already logged in.")
+            self._save_cookies()
+            return
+
+        # Wait for manual login
+        logging.info("Please log into Facebook in the browser window...")
+        print("\n" + "=" * 50)
+        print("  Please log into Facebook in the browser window.")
+        print("  Waiting for login...")
+        print("=" * 50 + "\n")
+
+        while not self._is_logged_in():
+            time.sleep(3)
+
+        logging.info("Login detected! Saving cookies for next time.")
+        self._save_cookies()
 
     # ── URL builder ────────────────────────────────────────────────────
 
@@ -200,19 +315,36 @@ class FacebookMarketplaceScraper:
     def scrape_data(self):
         logging.info("Starting data scraping...")
         self._start_driver()
+        self._ensure_logged_in()
         self._open_db()
 
         try:
-            time.sleep(5)
-            for car_query in self.desired_cars:
+            for i, car_query in enumerate(self.desired_cars):
                 logging.info(f"Scraping listings for: {car_query}")
-                self.driver.get(self._get_url(car_query))
-                self.driver.implicitly_wait(15)
 
-                # Scroll to load dynamic content
-                for _ in range(self.scroll_count):
-                    self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
-                    time.sleep(2)
+                # Random delay between searches (skip first one)
+                if i > 0:
+                    delay = random.uniform(5, 15)
+                    logging.info(f"Waiting {delay:.1f}s before next search...")
+                    time.sleep(delay)
+
+                self.driver.get(self._get_url(car_query))
+                self._human_delay(3, 7)
+
+                # Randomized scrolling to mimic real browsing
+                num_scrolls = self.scroll_count + random.randint(-2, 3)
+                for _ in range(max(3, num_scrolls)):
+                    # Mix scroll methods: sometimes Keys.END, sometimes JS scroll
+                    if random.random() < 0.6:
+                        self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
+                    else:
+                        scroll_px = random.randint(500, 1200)
+                        self.driver.execute_script(f"window.scrollBy(0, {scroll_px})")
+                    self._human_scroll_delay()
+
+                    # Occasionally pause longer like a human reading a listing
+                    if random.random() < 0.15:
+                        time.sleep(random.uniform(3, 8))
 
                 page_source = self.driver.page_source
                 soup = BeautifulSoup(page_source, "html.parser")

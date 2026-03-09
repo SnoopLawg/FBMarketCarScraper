@@ -1,0 +1,160 @@
+"""Craigslist scraper — single broad query, local car matching."""
+
+import re
+import logging
+
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+
+from scrapers.base import BaseScraper
+
+
+class CraigslistScraper(BaseScraper):
+    SOURCE_NAME = "craigslist"
+
+    def scrape(self):
+        cl_config = self.config["Sources"].get("craigslist", {})
+        region = cl_config.get("region", "saltlakecity")
+        max_pages = cl_config.get("max_pages", 5)
+
+        # Build keyword patterns for local matching
+        self._car_patterns = {}
+        for car in self.desired_cars:
+            # "Ford Fusion" → match "ford" AND "fusion" anywhere in title
+            words = car.lower().split()
+            self._car_patterns[car] = words
+
+        # Single broad query: all cars+trucks in price range
+        url = (
+            f"https://{region}.craigslist.org/search/cta"
+            f"?min_price={self.min_price}&max_price={self.max_price}"
+        )
+
+        total_found = 0
+        total_matched = 0
+
+        for page in range(max_pages):
+            page_url = url if page == 0 else f"{url}#search=1~gallery~{page}"
+            self.log(f"Loading page {page + 1}...")
+
+            try:
+                self.driver.get(page_url)
+            except Exception as e:
+                self.log(f"Failed to load page {page + 1}: {e}")
+                break
+
+            self.human_delay(3, 6)
+
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, ".cl-search-result, .result-row, .gallery-card")
+                    )
+                )
+            except Exception:
+                self.log(f"No results on page {page + 1}")
+                break
+
+            soup = BeautifulSoup(self.driver.page_source, "html.parser")
+            results = (
+                soup.select(".cl-search-result")
+                or soup.select(".result-row")
+                or soup.select(".gallery-card")
+            )
+
+            if not results:
+                break
+
+            total_found += len(results)
+            for item in results:
+                if self._process_listing(item, region):
+                    total_matched += 1
+
+            self.log(f"Page {page + 1}: {len(results)} listings")
+
+            # Check if there are more pages
+            next_btn = soup.select_one("button.cl-next-page, .next, a.next")
+            if not next_btn or next_btn.get("disabled"):
+                break
+
+            if page < max_pages - 1:
+                self.human_delay(4, 8)
+
+        self.log(f"Done: {total_found} total listings, {total_matched} matched desired cars")
+
+    def _match_car(self, title):
+        """Match a listing title against desired cars. Returns car_query or None."""
+        title_lower = title.lower()
+        for car_query, words in self._car_patterns.items():
+            if all(w in title_lower for w in words):
+                return car_query
+        return None
+
+    def _process_listing(self, item, region):
+        """Parse and insert a listing. Returns True if it matched a desired car."""
+        try:
+            # Title and link
+            title_el = (
+                item.select_one(".posting-title a")
+                or item.select_one("a.posting-title")
+                or item.select_one(".result-title")
+                or item.select_one("a.titlestring")
+                or item.select_one("a[href]")
+            )
+            if not title_el:
+                return False
+            title = title_el.get_text(strip=True)
+            if not title:
+                return False
+
+            # Match against desired cars
+            car_query = self._match_car(title)
+            if not car_query:
+                return False
+
+            href = title_el.get("href", "")
+            if not href:
+                return False
+            if not href.startswith("http"):
+                href = f"https://{region}.craigslist.org{href}"
+
+            # Price
+            price_el = item.select_one(".priceinfo, .result-price, .price")
+            price_str = price_el.get_text(strip=True) if price_el else ""
+
+            # Meta contains mileage + location (e.g., "2/19 256k mi POCATELLO")
+            mileage_str = "N/A"
+            location = ""
+            meta_el = item.select_one(".meta")
+            if meta_el:
+                meta_text = meta_el.get_text(" ", strip=True)
+                mi_match = re.search(r'([\d,]+k?)\s*mi', meta_text, re.IGNORECASE)
+                if mi_match:
+                    mileage_str = mi_match.group(0)
+                loc_text = re.sub(r'\d+/\d+', '', meta_text)
+                loc_text = re.sub(r'[\d,]+k?\s*mi', '', loc_text, flags=re.IGNORECASE)
+                loc_text = loc_text.strip()
+                if loc_text:
+                    location = loc_text
+
+            if not location:
+                loc_el = item.select_one(".result-hood, .location")
+                location = loc_el.get_text(strip=True).strip("() ") if loc_el else ""
+
+            # Image
+            img_el = item.select_one("img")
+            image_url = ""
+            if img_el:
+                image_url = img_el.get("src", "") or img_el.get("data-src", "")
+
+            self.insert(
+                car_query=car_query, href=href, image_url=image_url,
+                price=price_str, car_name=title, location=location,
+                mileage_raw=mileage_str, source=self.SOURCE_NAME,
+            )
+            return True
+        except Exception as e:
+            logging.debug(f"[Craigslist] Parse error: {e}")
+            return False

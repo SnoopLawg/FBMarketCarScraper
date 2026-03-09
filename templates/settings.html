@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - Car Deal Finder</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; }
+
+        .header { background: #1a1a2e; padding: 20px 30px; border-bottom: 2px solid #16213e; display: flex; align-items: center; gap: 20px; }
+        .header h1 { font-size: 24px; color: #fff; }
+        .header a { color: #4a9eff; text-decoration: none; font-size: 14px; }
+        .header a:hover { text-decoration: underline; }
+
+        .container { max-width: 800px; margin: 30px auto; padding: 0 25px; }
+
+        .section { background: #1a1a2e; border-radius: 12px; border: 1px solid #222; padding: 24px; margin-bottom: 20px; }
+        .section h2 { font-size: 18px; color: #fff; margin-bottom: 16px; }
+
+        .car-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+        .car-tag {
+            display: flex; align-items: center; gap: 6px;
+            background: #16213e; border: 1px solid #333; border-radius: 6px;
+            padding: 6px 12px; font-size: 14px;
+        }
+        .car-tag .remove {
+            cursor: pointer; color: #ff4444; font-weight: bold;
+            font-size: 16px; line-height: 1; margin-left: 4px;
+        }
+        .car-tag .remove:hover { color: #ff6666; }
+
+        .add-row { display: flex; gap: 8px; }
+        .add-row input {
+            flex: 1; background: #111; color: #e0e0e0; border: 1px solid #333;
+            padding: 10px 14px; border-radius: 6px; font-size: 14px;
+        }
+        .add-row input:focus { outline: none; border-color: #4a9eff; }
+
+        .btn {
+            padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer;
+            font-size: 14px; font-weight: 500; transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn-add { background: #4a9eff; color: #fff; }
+        .btn-save { background: #4aff8a; color: #000; font-size: 16px; padding: 12px 32px; }
+
+        .field-group { margin-bottom: 14px; }
+        .field-group label { display: block; font-size: 13px; color: #888; margin-bottom: 4px; }
+        .field-group input {
+            background: #111; color: #e0e0e0; border: 1px solid #333;
+            padding: 10px 14px; border-radius: 6px; font-size: 14px; width: 200px;
+        }
+        .field-group input:focus { outline: none; border-color: #4a9eff; }
+
+        .field-row { display: flex; gap: 20px; flex-wrap: wrap; }
+
+        .source-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px 0; border-bottom: 1px solid #222;
+        }
+        .source-row:last-child { border-bottom: none; }
+        .source-name { font-size: 15px; text-transform: capitalize; }
+
+        .toggle { position: relative; width: 44px; height: 24px; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle .slider {
+            position: absolute; cursor: pointer; inset: 0;
+            background: #333; border-radius: 24px; transition: 0.3s;
+        }
+        .toggle .slider:before {
+            content: ""; position: absolute; height: 18px; width: 18px;
+            left: 3px; bottom: 3px; background: #888; border-radius: 50%; transition: 0.3s;
+        }
+        .toggle input:checked + .slider { background: #4a9eff; }
+        .toggle input:checked + .slider:before { transform: translateX(20px); background: #fff; }
+
+        .save-bar {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: #1a1a2e; border-top: 2px solid #16213e;
+            padding: 16px 30px; display: flex; justify-content: center; gap: 12px;
+            align-items: center;
+        }
+        .save-bar .status { font-size: 14px; color: #4aff8a; display: none; }
+
+        .suggestions { font-size: 12px; color: #666; margin-top: 8px; }
+        .suggestions span { cursor: pointer; color: #4a9eff; margin-right: 8px; }
+        .suggestions span:hover { text-decoration: underline; }
+
+        body { padding-bottom: 80px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Settings</h1>
+        <div style="display:flex; gap:12px;">
+            <a href="/">Deals</a>
+            <a href="/analytics">Analytics</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Desired Cars -->
+        <div class="section">
+            <h2>Desired Cars</h2>
+            <div class="car-list" id="car-list">
+                {% for car in config.DesiredCar %}
+                <div class="car-tag">
+                    <span>{{ car }}</span>
+                    <span class="remove" onclick="removeCar(this)">&times;</span>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="add-row">
+                <input type="text" id="new-car" placeholder="e.g. Honda Civic, Toyota Camry 2018..."
+                       onkeydown="if(event.key==='Enter')addCar()">
+                <button class="btn btn-add" onclick="addCar()">Add</button>
+            </div>
+            <div class="suggestions">
+                Quick add:
+                <span onclick="addCarByName('Honda Civic')">Honda Civic</span>
+                <span onclick="addCarByName('Toyota Camry')">Toyota Camry</span>
+                <span onclick="addCarByName('Toyota Corolla')">Toyota Corolla</span>
+                <span onclick="addCarByName('Honda Accord')">Honda Accord</span>
+                <span onclick="addCarByName('Ford Fusion')">Ford Fusion</span>
+                <span onclick="addCarByName('Hyundai Sonata')">Hyundai Sonata</span>
+                <span onclick="addCarByName('Nissan Altima')">Nissan Altima</span>
+                <span onclick="addCarByName('Kia Optima')">Kia Optima</span>
+                <span onclick="addCarByName('Toyota Rav4')">Toyota Rav4</span>
+                <span onclick="addCarByName('Subaru Outback')">Subaru Outback</span>
+                <span onclick="addCarByName('Mazda 3')">Mazda 3</span>
+            </div>
+        </div>
+
+        <!-- Price & Mileage -->
+        <div class="section">
+            <h2>Search Filters</h2>
+            <div class="field-row">
+                <div class="field-group">
+                    <label>Min Price ($)</label>
+                    <input type="number" id="min-price" value="{{ config.MinPrice }}">
+                </div>
+                <div class="field-group">
+                    <label>Max Price ($)</label>
+                    <input type="number" id="max-price" value="{{ config.MaxPrice }}">
+                </div>
+                <div class="field-group">
+                    <label>Max Mileage</label>
+                    <input type="number" id="mileage-max" value="{{ config.MileageMax or '' }}">
+                </div>
+            </div>
+            <div class="field-row">
+                <div class="field-group">
+                    <label>Deal Threshold ($) — how far below average to flag</label>
+                    <input type="number" id="price-threshold" value="{{ config.PriceThreshold }}">
+                </div>
+                <div class="field-group">
+                    <label>Location Filter</label>
+                    <input type="text" id="location-filter" value="{{ config.LocationFilter or '' }}">
+                </div>
+            </div>
+        </div>
+
+        <!-- Sources -->
+        <div class="section">
+            <h2>Sources</h2>
+            {% for name, src in config.Sources.items() %}
+            <div class="source-row">
+                <span class="source-name">{{ name }}</span>
+                <label class="toggle">
+                    <input type="checkbox" data-source="{{ name }}"
+                           {{ 'checked' if src.get('enabled', true) else '' }}>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="save-bar">
+        <button class="btn btn-save" onclick="saveSettings()">Save Settings</button>
+        <span class="status" id="save-status">Saved!</span>
+    </div>
+
+    <script>
+        function getCarNames() {
+            return [...document.querySelectorAll('#car-list .car-tag span:first-child')]
+                .map(el => el.textContent.trim());
+        }
+
+        function addCar() {
+            const input = document.getElementById('new-car');
+            const name = input.value.trim();
+            if (!name) return;
+            if (getCarNames().includes(name)) { input.value = ''; return; }
+            addCarTag(name);
+            input.value = '';
+            input.focus();
+        }
+
+        function addCarByName(name) {
+            if (getCarNames().includes(name)) return;
+            addCarTag(name);
+        }
+
+        function addCarTag(name) {
+            const tag = document.createElement('div');
+            tag.className = 'car-tag';
+            tag.innerHTML = `<span>${name}</span><span class="remove" onclick="removeCar(this)">&times;</span>`;
+            document.getElementById('car-list').appendChild(tag);
+        }
+
+        function removeCar(btn) {
+            btn.parentElement.remove();
+        }
+
+        async function saveSettings() {
+            const sources = {};
+            document.querySelectorAll('[data-source]').forEach(el => {
+                sources[el.dataset.source] = el.checked;
+            });
+
+            const data = {
+                desired_cars: getCarNames(),
+                min_price: document.getElementById('min-price').value,
+                max_price: document.getElementById('max-price').value,
+                mileage_max: document.getElementById('mileage-max').value,
+                price_threshold: document.getElementById('price-threshold').value,
+                location_filter: document.getElementById('location-filter').value,
+                sources: sources,
+            };
+
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data),
+            });
+
+            const status = document.getElementById('save-status');
+            status.style.display = 'inline';
+            setTimeout(() => status.style.display = 'none', 2000);
+        }
+    </script>
+</body>
+</html>

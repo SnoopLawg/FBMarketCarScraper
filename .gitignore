@@ -2,3 +2,8 @@ marketplace_listings.db
 deleted_listings.txt
 favorite_listings.txt
 viewed_listings.txt
+fb_cookies.pkl
+__pycache__/
+scrapers/__pycache__/
+*.pyc
+venv/

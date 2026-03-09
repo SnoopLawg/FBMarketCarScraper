@@ -2,23 +2,36 @@
   "PurchaseLocation": "UT",
   "Passive": null,
   "DesiredCar": [
-    "Ford Fusion",
-    "Honda Civic",
-    "Toyota Rav4",
-    "Toyota Camry",
-    "Honda Accord",
-    "Toyota Corolla",
-    "Hyundai Sonata",
-    "Nissan Altima",
-    "Kia Optima",
-    "Hyundai Elantra"
+    "Toyota Tacoma",
+    "Honda Cr-v",
+    "Toyota Rav4"
   ],
   "MileageMin": null,
   "MileageMax": 150000,
   "CityID": "107584845937516",
-  "MinPrice": 2000,
-  "MaxPrice": 5500,
+  "MinPrice": 5000,
+  "MaxPrice": 30000,
   "PriceThreshold": 500,
   "LocationFilter": "UT",
-  "ScrollCount": 10
+  "ScrollCount": 10,
+  "Sources": {
+    "facebook": {
+      "enabled": true,
+      "CityID": "107584845937516"
+    },
+    "craigslist": {
+      "enabled": true,
+      "region": "saltlakecity"
+    },
+    "carscom": {
+      "enabled": true,
+      "zip": "84101",
+      "max_distance": 100
+    },
+    "autotrader": {
+      "enabled": true,
+      "zip": "84101",
+      "search_radius": 100
+    }
+  }
 }
