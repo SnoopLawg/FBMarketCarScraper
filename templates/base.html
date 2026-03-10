@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Car Deal Finder{% endblock %}</title>
+    <style>
+        /* ── Reset & Tokens ──────────────────────────────── */
+        :root {
+            --bg-primary: #0c0c0c;
+            --bg-card: #161620;
+            --bg-card-hover: #1c1c2a;
+            --bg-input: #111118;
+            --bg-nav: #12121c;
+            --border: #1e1e2e;
+            --border-hover: #3b3b5c;
+            --text-primary: #f0f0f5;
+            --text-secondary: #9090a8;
+            --text-muted: #5c5c74;
+            --accent: #5b8dee;
+            --accent-hover: #7aa4f7;
+            --green: #34d399;
+            --green-muted: #1a3d2e;
+            --red: #f87171;
+            --red-muted: #3d1a1a;
+            --yellow: #fbbf24;
+            --purple: #a78bfa;
+            --orange: #fb923c;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --font: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+        }
+
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Navigation ──────────────────────────────────── */
+        .topnav {
+            position: sticky; top: 0; z-index: 100;
+            background: var(--bg-nav);
+            border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .topnav-inner {
+            max-width: 1320px;
+            margin: 0 auto;
+            padding: 0 24px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .topnav-brand {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text-primary);
+            text-decoration: none;
+            letter-spacing: -0.3px;
+            margin-right: 24px;
+        }
+        .topnav-links {
+            display: flex;
+            gap: 2px;
+        }
+        .topnav-link {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 7px 14px;
+            border-radius: var(--radius-sm);
+            transition: all 0.15s;
+        }
+        .topnav-link:hover {
+            color: var(--text-primary);
+            background: rgba(255,255,255,0.05);
+        }
+        .topnav-link.active {
+            color: var(--text-primary);
+            background: rgba(255,255,255,0.08);
+        }
+
+        /* ── Layout ──────────────────────────────────────── */
+        .page { max-width: 1320px; margin: 0 auto; padding: 24px; }
+        .page-narrow { max-width: 720px; margin: 0 auto; padding: 24px; }
+
+        /* ── Cards / Panels ──────────────────────────────── */
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .panel-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
+        }
+
+        /* ── Buttons ─────────────────────────────────────── */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            border: 1px solid transparent;
+            font-family: var(--font);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-decoration: none;
+            line-height: 1;
+        }
+        .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+        .btn-ghost { background: transparent; color: var(--text-secondary); border-color: var(--border); }
+        .btn-ghost:hover { color: var(--text-primary); border-color: var(--border-hover); background: rgba(255,255,255,0.03); }
+        .btn-danger { background: transparent; color: var(--red); border-color: var(--red-muted); }
+        .btn-danger:hover { background: var(--red-muted); }
+        .btn-success { background: var(--green); color: #000; font-weight: 600; }
+        .btn-success:hover { opacity: 0.9; }
+        .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+        /* ── Badges ───────────────────────────────────────── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 4px;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+        }
+        .badge-facebook { background: #1877f2; color: #fff; }
+        .badge-craigslist { background: #7c3aed; color: #fff; }
+        .badge-carscom { background: #dc2626; color: #fff; }
+        .badge-autotrader { background: #ea580c; color: #fff; }
+        .badge-year { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+        .badge-deal { background: var(--green-muted); color: var(--green); }
+        .badge-info { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+        /* ── Form elements ────────────────────────────────── */
+        .input {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 9px 14px;
+            border-radius: var(--radius-sm);
+            font-family: var(--font);
+            font-size: 14px;
+            transition: border-color 0.15s;
+            outline: none;
+        }
+        .input:focus { border-color: var(--accent); }
+        .input::placeholder { color: var(--text-muted); }
+
+        .label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        select.input {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%239090a8'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 32px;
+            cursor: pointer;
+        }
+
+        /* ── Utilities ────────────────────────────────────── */
+        .flex { display: flex; }
+        .flex-wrap { flex-wrap: wrap; }
+        .items-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+        .gap-2 { gap: 8px; }
+        .gap-3 { gap: 12px; }
+        .gap-4 { gap: 16px; }
+        .gap-5 { gap: 20px; }
+        .mb-3 { margin-bottom: 12px; }
+        .mb-4 { margin-bottom: 16px; }
+        .text-muted { color: var(--text-muted); }
+        .text-secondary { color: var(--text-secondary); }
+        .text-sm { font-size: 13px; }
+
+        /* ── Responsive ───────────────────────────────────── */
+        @media (max-width: 640px) {
+            .topnav-inner { padding: 0 16px; }
+            .page, .page-narrow { padding: 16px; }
+            .topnav-brand { margin-right: 12px; font-size: 14px; }
+            .topnav-link { padding: 6px 10px; font-size: 12px; }
+        }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="topnav">
+        <div class="topnav-inner">
+            <a href="/" class="topnav-brand">CarFinder</a>
+            <div class="topnav-links">
+                <a href="/" class="topnav-link {% block nav_deals %}{% endblock %}">Deals</a>
+                <a href="/analytics" class="topnav-link {% block nav_analytics %}{% endblock %}">Analytics</a>
+                <a href="/settings" class="topnav-link {% block nav_settings %}{% endblock %}">Settings</a>
+            </div>
+        </div>
+    </nav>
+
+    {% block body %}{% endblock %}
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>
