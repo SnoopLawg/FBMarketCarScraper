@@ -1,0 +1,118 @@
+{# Shared deal card partial — used by deals.html and favorites.html
+   Expects: deal (dict), card_id (string), show_save (bool), favorites (set) #}
+
+<div class="deal-card" id="{{ card_id }}">
+    {% if deal.image_url %}
+    <img class="deal-img" src="{{ deal.image_url }}" alt="{{ deal.car_name }}" loading="lazy"
+         onerror="this.outerHTML='<div class=deal-img-empty>No image available</div>'">
+    {% else %}
+    <div class="deal-img-empty">No image available</div>
+    {% endif %}
+
+    <div class="deal-body">
+        <div class="deal-badges">
+            <span class="badge badge-{{ deal.source }}">{{ deal.source }}</span>
+            {% if deal.year %}<span class="badge badge-year">{{ deal.year }}</span>{% endif %}
+            {% if deal.deal_score is not none %}
+            <span class="badge badge-score badge-score-{{ deal.deal_grade|lower }}"
+                  style="cursor:pointer"
+                  onclick="showScoreModal({{ deal.deal_score }}, {{ deal.score_breakdown.price_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.condition_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.mileage_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.reliability_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.drivetrain_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.trim_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.freshness_score if deal.score_breakdown else 0 }}, '{{ deal.deal_grade }}', {{ deal.title_cap|default(100) }})">
+                {{ deal.deal_grade }} ({{ deal.deal_score }})
+            </span>
+            {% endif %}
+            {% if deal.drivetrain %}
+            <span class="badge badge-drivetrain{% if deal.drivetrain in ['AWD', '4WD'] %} badge-drivetrain-awd{% endif %}">{{ deal.drivetrain }}{% if deal.drivetrain_source == 'default' %}*{% endif %}</span>
+            {% endif %}
+            {% if deal.trim_tier_name and deal.trim_tier and deal.trim_tier > 1 %}
+            <span class="badge badge-trim badge-trim-{{ deal.trim_tier }}">{{ deal.trim_tier_name }}{% if deal.trim_label %}: {{ deal.trim_label }}{% endif %}</span>
+            {% endif %}
+            {% if deal.deal_rating %}<span class="badge badge-deal">{{ deal.deal_rating }}</span>{% endif %}
+            {% if deal.accident_history %}<span class="badge badge-info">{{ deal.accident_history }}</span>{% endif %}
+            {% if deal.title_type and deal.title_type|lower in ['salvage', 'rebuilt', 'lemon'] %}
+            <span class="badge badge-title-warning">{{ deal.title_type|upper }}</span>
+            {% elif deal.title_type and deal.title_type|lower == 'clean' %}
+            <span class="badge badge-title-clean">Clean Title</span>
+            {% endif %}
+        </div>
+
+        <div class="deal-title">{{ deal.car_name or deal.car_query }}</div>
+
+        <div class="deal-price-row">
+            <span class="deal-price">${{ '{:,.0f}'.format(deal.price) }}</span>
+            {% set eff_avg = deal.trim_avg_price if deal.trim_avg_price and deal.trim_avg_price > 0 else deal.avg_price %}
+            {% if eff_avg and eff_avg > 0 and eff_avg > deal.price %}
+            <span class="deal-savings">${{ '{:,.0f}'.format(eff_avg - deal.price) }} below {{ deal.trim_tier_name ~ ' ' if deal.trim_avg_price and deal.trim_avg_price > 0 else '' }}avg</span>
+            {% endif %}
+        </div>
+
+        {% if deal.price_history %}
+        <div class="deal-price-change">
+            {% if deal.price_history.old_price > deal.price %}
+            <span class="price-drop">
+                &#x25BC; Was ${{ '{:,.0f}'.format(deal.price_history.old_price) }}
+                &mdash; ${{ '{:,.0f}'.format(deal.price_history.old_price - deal.price) }} drop
+            </span>
+            {% elif deal.price_history.old_price < deal.price %}
+            <span class="price-up">
+                &#x25B2; Was ${{ '{:,.0f}'.format(deal.price_history.old_price) }}
+                &mdash; ${{ '{:,.0f}'.format(deal.price - deal.price_history.old_price) }} increase
+            </span>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <div class="deal-details">
+            {% if deal.trim %}
+            <div class="deal-detail">
+                <span class="deal-detail-icon">T</span> {{ deal.trim }}
+            </div>
+            {% endif %}
+            {% if deal.mileage %}
+            <div class="deal-detail">
+                <span class="deal-detail-icon">M</span> {{ '{:,.0f}'.format(deal.mileage) }} miles
+            </div>
+            {% endif %}
+            {% if deal.seller %}
+            <div class="deal-detail">
+                <span class="deal-detail-icon">S</span> {{ deal.seller }}
+            </div>
+            {% endif %}
+            {% if deal.location %}
+            <div class="deal-detail">
+                <span class="deal-detail-icon">L</span> {{ deal.location }}{% if deal.distance %} &middot; {{ deal.distance }}{% endif %}
+            </div>
+            {% endif %}
+            {% if deal.nhtsa_rating and deal.nhtsa_rating.overall_rating %}
+            <div class="deal-detail">
+                <span class="deal-detail-icon">&#9733;</span> NHTSA {{ deal.nhtsa_rating.overall_rating }}/5 stars
+                {% if deal.nhtsa_rating.complaints_count %}&middot; {{ deal.nhtsa_rating.complaints_count }} complaints{% endif %}
+            </div>
+            {% endif %}
+            {% if deal.created_at %}
+            <div class="deal-detail deal-detail-muted">
+                Found {{ deal.created_at[:10] }}{% if deal.updated_at and deal.updated_at[:10] != deal.created_at[:10] %} &middot; Updated {{ deal.updated_at[:10] }}{% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <hr class="deal-divider">
+
+        <div class="deal-actions">
+            <a class="btn btn-primary" href="{{ deal.href }}" target="_blank">View Listing</a>
+            {% if show_save %}
+            <button class="btn btn-ghost {{ 'btn-saved' if deal.href in favorites else '' }}"
+                    onclick="toggleFav(this, '{{ deal.href }}')"
+                    style="{{ 'color:var(--yellow);border-color:var(--yellow)' if deal.href in favorites else '' }}">
+                {{ '★ Saved' if deal.href in favorites else '☆ Save' }}
+            </button>
+            <button class="btn btn-danger btn-sm"
+                    onclick="deleteDeal('{{ deal.href }}', '{{ card_id }}')">✕</button>
+            {% else %}
+            <button class="btn btn-danger"
+                    onclick="removeFav('{{ deal.href }}', '{{ card_id }}')">
+                Remove
+            </button>
+            {% endif %}
+        </div>
+    </div>
+</div>

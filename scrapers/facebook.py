@@ -89,11 +89,193 @@ class FacebookScraper(BaseScraper):
 
         full_href = f"https://www.facebook.com{href}" if not href.startswith("http") else href
 
+        # Title type — Facebook occasionally includes it in listing text
+        title_type = ""
+        full_text = f"{title} {city} {miles}".lower()
+        if "salvage" in full_text:
+            title_type = "salvage"
+        elif "rebuilt" in full_text:
+            title_type = "rebuilt"
+        elif "clean title" in full_text:
+            title_type = "clean"
+
         self.insert(
             car_query=car_query, href=full_href, image_url=img_tag["src"],
             price=price, car_name=title, location=city,
             mileage_raw=miles, source=self.SOURCE_NAME,
+            title_type=title_type,
         )
+
+    # ── Detail page enrichment ──────────────────────────────────────
+
+    def enrich_listings(self, db, limit=40):
+        """Visit individual listing pages to extract title type and details.
+
+        Call this AFTER the main scrape.  Visits up to `limit` listings
+        that are missing title_type, with human-like delays between visits.
+        """
+        if not self._ensure_logged_in():
+            self.log("Cannot enrich — not logged in.")
+            return 0
+
+        rows = db.get_listings_missing_title_type(source="facebook", limit=limit)
+        if not rows:
+            self.log("No listings need enrichment.")
+            return 0
+
+        self.log(f"Enriching {len(rows)} listings with detail page data...")
+        enriched = 0
+
+        for row in rows:
+            href = row["href"]
+            try:
+                self.driver.get(href)
+                self.inject_stealth()
+                self.human_delay(2, 5)
+
+                # Click all "See more" buttons to expand hidden description text
+                self._click_see_more()
+                self.human_delay(0.5, 1.5)
+
+                page_source = self.driver.page_source
+                page_text = page_source.lower()
+                details = self._extract_detail_info(page_text)
+
+                # Capture visible description text for future re-parsing
+                description = self._extract_description(page_source)
+                if description:
+                    details["description"] = description
+
+                if details:
+                    db.update_listing_details(href, **details)
+                    enriched += 1
+                    tt = details.get("title_type", "—")
+                    self.log(f"  Enriched: {row['car_name'][:40]} → title={tt}")
+                else:
+                    # Mark as 'unknown' so we don't re-visit
+                    db.update_title_type(href, "unknown")
+
+            except Exception as e:
+                logging.warning(f"[Facebook] Enrich error for {href[:60]}: {e}")
+
+            # Human-like delay between pages
+            self.human_delay(1, 3)
+
+        self.log(f"Enrichment complete: {enriched}/{len(rows)} listings updated.")
+        return enriched
+
+    def _click_see_more(self):
+        """Click all 'See more' / 'See More' links on the page to expand text."""
+        from selenium.webdriver.common.by import By
+
+        try:
+            # Facebook uses various elements for "See more" — try multiple selectors
+            see_more_selectors = [
+                "//div[contains(text(), 'See more')]",
+                "//span[contains(text(), 'See more')]",
+                "//div[contains(text(), 'See More')]",
+                "//span[contains(text(), 'See More')]",
+                "//div[@role='button' and contains(text(), 'See')]",
+            ]
+            for xpath in see_more_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, xpath)
+                    for el in elements[:3]:  # Click up to 3
+                        try:
+                            el.click()
+                            time.sleep(0.3)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass  # Don't let this break enrichment
+
+    def _extract_description(self, page_source):
+        """Extract the visible text from a FB listing detail page.
+
+        Stores a clean version of the seller's description and vehicle
+        details so we can re-parse later without re-visiting the page.
+        """
+        try:
+            soup = BeautifulSoup(page_source, "html.parser")
+
+            # Remove script/style noise
+            for tag in soup(["script", "style", "noscript"]):
+                tag.decompose()
+
+            # Get all visible text
+            text = soup.get_text(separator="\n", strip=True)
+
+            # Trim to a reasonable size (descriptions are rarely > 5k chars)
+            # but keep enough to be useful for re-parsing
+            if len(text) > 8000:
+                text = text[:8000]
+
+            return text if len(text) > 50 else None
+        except Exception:
+            return None
+
+    def _extract_detail_info(self, page_text):
+        """Extract title type, condition, and other info from a FB listing detail page."""
+        info = {}
+        text = page_text.lower()
+
+        # ── Title type detection ─────────────────────────────────
+        # Facebook shows title status in vehicle details or description
+        # Check structured patterns first (more reliable), then broad text
+        title_patterns = [
+            # Structured: ">clean title<" or ">salvage title<"
+            (">salvage title<", "salvage"),
+            (">rebuilt title<", "rebuilt"),
+            (">clean title<", "clean"),
+            ('"salvage title"', "salvage"),
+            ('"rebuilt title"', "rebuilt"),
+            ('"clean title"', "clean"),
+            # Common seller descriptions
+            ("salvage title", "salvage"),
+            ("rebuilt title", "rebuilt"),
+            ("branded title", "rebuilt"),
+            ("clean title", "clean"),
+        ]
+        for pattern, ttype in title_patterns:
+            if pattern in text:
+                info["title_type"] = ttype
+                break
+
+        # Broader fallback — "salvage" alone is a strong signal on a car listing
+        if "title_type" not in info:
+            if "salvage" in text and ("title" in text or "vehicle" in text):
+                info["title_type"] = "salvage"
+            elif "rebuilt" in text and "title" in text:
+                info["title_type"] = "rebuilt"
+            elif "lemon" in text and ("title" in text or "law" in text):
+                info["title_type"] = "lemon"
+
+        # ── Accident history ─────────────────────────────────────
+        if "no accident" in text or "no accidents" in text or "0 accidents" in text:
+            info["accident_history"] = "No Accidents"
+        elif ("1 accident" in text or "accident reported" in text
+              or "accidents reported" in text):
+            info["accident_history"] = "Accident Reported"
+
+        # ── Condition ────────────────────────────────────────────
+        for cond in ["excellent", "like new", "good", "fair", "poor"]:
+            if f">condition<" in text or f"condition" in text:
+                # Look for "Condition: Good" or ">Good<" near condition context
+                if f">{cond}<" in text or f'"{cond}"' in text:
+                    info["condition"] = cond.title()
+                    break
+
+        # ── Deal rating (from third-party badges on listing) ─────
+        if "great deal" in text:
+            info["deal_rating"] = "Great Deal"
+        elif "good deal" in text:
+            info["deal_rating"] = "Good Deal"
+        elif "fair deal" in text:
+            info["deal_rating"] = "Fair Deal"
+
+        return info
 
     # ── Login / cookie management ─────────────────────────────────
 

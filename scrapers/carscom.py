@@ -165,11 +165,23 @@ class CarsComScraper(BaseScraper):
             if img_el:
                 image_url = img_el.get("src", "") or img_el.get("data-src", "")
 
+            # Title type — search card text for salvage/rebuilt keywords
+            title_type = ""
+            card_text_lower = card.get_text(" ", strip=True).lower()
+            if "salvage" in card_text_lower:
+                title_type = "salvage"
+            elif "rebuilt" in card_text_lower:
+                title_type = "rebuilt"
+            elif "lemon" in card_text_lower:
+                title_type = "lemon"
+            elif "clean title" in card_text_lower:
+                title_type = "clean"
+
             self.insert(
                 car_query=car_query, href=href, image_url=image_url,
                 price=price_str, car_name=title, location=location,
                 mileage_raw=mileage_str, source=self.SOURCE_NAME,
-                seller=seller, distance=distance,
+                seller=seller, distance=distance, title_type=title_type,
             )
             return True
         except Exception as e:

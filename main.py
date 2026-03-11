@@ -79,6 +79,10 @@ def main():
                 if stale:
                     logging.info(f"Marked {stale} stale {source} listings as deleted")
 
+        # Backfill title_type from car_name keywords (catches sellers
+        # who put "salvage" / "clean title" etc. in the listing title)
+        db.backfill_title_types()
+
         deals = run_analysis(config, db)
         logging.info(f"Found {len(deals)} deals total.")
     finally:

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Favorites - Car Deal Finder{% endblock %}
+{% block nav_favorites %}active{% endblock %}
+
+{% block head %}
+<style>
+    .deal-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 16px;
+    }
+    .deal-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        transition: border-color 0.2s, transform 0.2s;
+    }
+    .deal-card:hover {
+        border-color: var(--border-hover);
+        transform: translateY(-2px);
+    }
+    .deal-img {
+        width: 100%; height: 210px;
+        object-fit: cover; display: block;
+        background: var(--bg-input);
+    }
+    .deal-img-empty {
+        width: 100%; height: 210px;
+        background: var(--bg-input);
+        display: flex; align-items: center; justify-content: center;
+        color: var(--text-muted); font-size: 13px;
+    }
+    .deal-body { padding: 18px; }
+    .deal-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .deal-title {
+        font-size: 15px; font-weight: 600; color: var(--text-primary);
+        line-height: 1.35; margin-bottom: 12px;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .deal-price-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+    .deal-price { font-size: 24px; font-weight: 700; color: var(--green); letter-spacing: -0.5px; }
+    .deal-savings { font-size: 12px; font-weight: 600; color: var(--red); }
+    .deal-price-change { font-size: 12px; margin-bottom: 4px; }
+    .price-drop { color: var(--green); font-weight: 500; }
+    .price-up { color: var(--red); font-weight: 500; }
+    .deal-details { margin: 12px 0 0 0; }
+    .deal-detail {
+        font-size: 13px; color: var(--text-secondary);
+        padding: 3px 0; display: flex; align-items: center; gap: 6px;
+    }
+    .deal-detail-icon { color: var(--text-muted); font-size: 14px; width: 16px; text-align: center; }
+    .deal-detail-muted { color: var(--text-muted); font-size: 12px; }
+    .deal-divider { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+    .deal-actions { display: flex; gap: 8px; }
+    .deal-actions .btn { flex: 1; justify-content: center; }
+    .empty-state {
+        text-align: center; padding: 80px 20px;
+        color: var(--text-muted); font-size: 15px;
+    }
+    .empty-state p { margin-top: 8px; font-size: 13px; }
+
+    @media (max-width: 640px) {
+        .deal-grid { grid-template-columns: 1fr; }
+    }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+    <div style="margin-bottom:20px;" class="flex items-center justify-between">
+        <span class="text-secondary text-sm">{{ total }} favorite{{ 's' if total != 1 else '' }}</span>
+    </div>
+
+    {% if deals %}
+    <div class="deal-grid">
+        {% for deal in deals %}
+        {% set card_id = "fav-" ~ loop.index %}
+        {% set show_save = false %}
+        {% include '_deal_card.html' %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div style="font-size:40px; margin-bottom:12px;">No favorites yet</div>
+        <p>Save listings from the Deals page to see them here.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function removeFav(href, cardId) {
+    await fetch('/api/unfavorite', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({href})
+    });
+    const card = document.getElementById(cardId);
+    card.style.transition = 'opacity 0.3s, transform 0.3s';
+    card.style.opacity = '0';
+    card.style.transform = 'scale(0.95)';
+    setTimeout(() => card.remove(), 300);
+}
+</script>
+{% endblock %}

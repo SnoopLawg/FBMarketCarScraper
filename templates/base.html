@@ -135,6 +135,7 @@
         .btn-success { background: var(--green); color: #000; font-weight: 600; }
         .btn-success:hover { opacity: 0.9; }
         .btn-sm { padding: 5px 10px; font-size: 12px; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         /* ── Badges ───────────────────────────────────────── */
         .badge {
@@ -154,6 +155,21 @@
         .badge-year { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
         .badge-deal { background: var(--green-muted); color: var(--green); }
         .badge-info { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+        .badge-title-warning { background: var(--red); color: #fff; animation: pulse-badge 2s infinite; }
+        .badge-title-clean { background: rgba(52,211,153,0.12); color: var(--green); }
+        @keyframes pulse-badge { 0%,100% { opacity:1; } 50% { opacity:0.7; } }
+        .badge-drivetrain { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+        .badge-drivetrain-awd { background: rgba(59,130,246,0.15); color: #60a5fa; font-weight: 700; }
+        .badge-trim { font-weight: 600; text-transform: none; }
+        .badge-trim-2 { background: rgba(91,141,238,0.12); color: var(--accent); }
+        .badge-trim-3 { background: rgba(167,139,250,0.12); color: var(--purple); }
+        .badge-trim-4 { background: rgba(251,191,36,0.15); color: var(--yellow); }
+        .badge-score { font-weight: 700; }
+        .badge-score-a { background: var(--green-muted); color: var(--green); }
+        .badge-score-b { background: rgba(91,141,238,0.15); color: var(--accent); }
+        .badge-score-c { background: rgba(251,191,36,0.15); color: var(--yellow); }
+        .badge-score-d { background: rgba(251,146,60,0.15); color: var(--orange); }
+        .badge-score-f { background: var(--red-muted); color: var(--red); }
 
         /* ── Form elements ────────────────────────────────── */
         .input {
@@ -189,6 +205,94 @@
             cursor: pointer;
         }
 
+        /* ── Scrape Toast ────────────────────────────────── */
+        .scrape-toast {
+            display: none;
+            position: fixed; bottom: 20px; right: 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 16px 20px;
+            min-width: 300px;
+            z-index: 200;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        .scrape-toast-title {
+            font-size: 13px; font-weight: 600;
+            color: var(--text-primary); margin-bottom: 6px;
+        }
+        .scrape-toast-msg {
+            font-size: 12px; color: var(--text-secondary);
+        }
+        .scrape-toast-bar {
+            margin-top: 8px; height: 4px;
+            background: var(--border); border-radius: 2px;
+            overflow: hidden;
+        }
+        .scrape-toast-fill {
+            height: 100%; background: var(--accent);
+            width: 0%; transition: width 0.3s;
+        }
+
+        /* ── Score Modal ──────────────────────────────────── */
+        .score-modal-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 300;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+        .score-modal-overlay.open { display: flex; align-items: center; justify-content: center; }
+        .score-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 28px 32px;
+            width: 380px;
+            max-width: 92vw;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+        }
+        .score-modal-header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .score-modal-title { font-size: 16px; font-weight: 700; }
+        .score-modal-grade {
+            font-size: 24px; font-weight: 800;
+            width: 44px; height: 44px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: var(--radius-sm);
+        }
+        .score-modal-total {
+            font-size: 32px; font-weight: 800; letter-spacing: -1px;
+            margin-bottom: 4px;
+        }
+        .score-modal-subtitle {
+            font-size: 12px; color: var(--text-muted); margin-bottom: 20px;
+        }
+        .score-factor { margin-bottom: 14px; }
+        .score-factor-row {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        .score-factor-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+        .score-factor-value { font-size: 13px; font-weight: 700; color: var(--text-primary); }
+        .score-factor-bar {
+            height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+        }
+        .score-factor-fill {
+            height: 100%; border-radius: 3px; transition: width 0.4s ease;
+        }
+        .score-modal-close {
+            margin-top: 16px; width: 100%; padding: 10px;
+            background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); color: var(--text-secondary);
+            font-family: var(--font); font-size: 13px; font-weight: 500;
+            cursor: pointer; transition: all 0.15s;
+        }
+        .score-modal-close:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+
         /* ── Utilities ────────────────────────────────────── */
         .flex { display: flex; }
         .flex-wrap { flex-wrap: wrap; }
@@ -220,13 +324,292 @@
             <a href="/" class="topnav-brand">CarFinder</a>
             <div class="topnav-links">
                 <a href="/" class="topnav-link {% block nav_deals %}{% endblock %}">Deals</a>
+                <a href="/favorites" class="topnav-link {% block nav_favorites %}{% endblock %}">Favorites</a>
                 <a href="/analytics" class="topnav-link {% block nav_analytics %}{% endblock %}">Analytics</a>
                 <a href="/settings" class="topnav-link {% block nav_settings %}{% endblock %}">Settings</a>
             </div>
+            <button class="btn btn-sm" id="enrich-btn"
+                    onclick="startEnrich()" style="margin-left:auto;background:var(--purple);color:#fff;border-color:var(--purple);">
+                Enrich Titles
+            </button>
+            <button class="btn btn-primary btn-sm" id="scrape-btn"
+                    onclick="startScrape()" style="margin-left:8px;">
+                Scrape Now
+            </button>
         </div>
     </nav>
 
     {% block body %}{% endblock %}
+
+    <div class="scrape-toast" id="scrape-toast">
+        <div class="scrape-toast-title" id="scrape-toast-title">Scraping...</div>
+        <div class="scrape-toast-msg" id="scrape-toast-msg"></div>
+        <div class="scrape-toast-bar">
+            <div class="scrape-toast-fill" id="scrape-progress-bar"></div>
+        </div>
+    </div>
+
+    <!-- Score Breakdown Modal -->
+    <div class="score-modal-overlay" id="score-modal" onclick="if(event.target===this)closeScoreModal()">
+        <div class="score-modal">
+            <div class="score-modal-header">
+                <div>
+                    <div class="score-modal-total" id="sm-total">0</div>
+                    <div class="score-modal-subtitle">out of 100 points</div>
+                </div>
+                <div class="score-modal-grade" id="sm-grade">A</div>
+            </div>
+
+            <div class="score-factor">
+                <div class="score-factor-row">
+                    <span class="score-factor-label">Price vs Average</span>
+                    <span class="score-factor-value"><span id="sm-price">0</span> / 30</span>
+                </div>
+                <div class="score-factor-bar">
+                    <div class="score-factor-fill" id="sm-price-bar" style="width:0%;background:var(--green)"></div>
+                </div>
+            </div>
+
+            <div class="score-factor">
+                <div class="score-factor-row">
+                    <span class="score-factor-label">Title &amp; Condition</span>
+                    <span class="score-factor-value"><span id="sm-condition">0</span> / 25</span>
+                </div>
+                <div class="score-factor-bar">
+                    <div class="score-factor-fill" id="sm-condition-bar" style="width:0%;background:var(--purple)"></div>
+                </div>
+            </div>
+
+            <div class="score-factor">
+                <div class="score-factor-row">
+                    <span class="score-factor-label">Mileage</span>
+                    <span class="score-factor-value"><span id="sm-mileage">0</span> / 15</span>
+                </div>
+                <div class="score-factor-bar">
+                    <div class="score-factor-fill" id="sm-mileage-bar" style="width:0%;background:var(--accent)"></div>
+                </div>
+            </div>
+
+            <div class="score-factor">
+                <div class="score-factor-row">
+                    <span class="score-factor-label">Reliability (NHTSA)</span>
+                    <span class="score-factor-value"><span id="sm-reliability">0</span> / 10</span>
+                </div>
+                <div class="score-factor-bar">
+                    <div class="score-factor-fill" id="sm-reliability-bar" style="width:0%;background:var(--yellow)"></div>
+                </div>
+            </div>
+
+            <div class="score-factor">
+                <div class="score-factor-row">
+                    <span class="score-factor-label">Drivetrain</span>
+                    <span class="score-factor-value"><span id="sm-drivetrain">0</span> / 10</span>
+                </div>
+                <div class="score-factor-bar">
+                    <div class="score-factor-fill" id="sm-drivetrain-bar" style="width:0%;background:#3b82f6"></div>
+                </div>
+            </div>
+
+            <div class="score-factor">
+                <div class="score-factor-row">
+                    <span class="score-factor-label">Trim Value</span>
+                    <span class="score-factor-value"><span id="sm-trim">0</span> / 5</span>
+                </div>
+                <div class="score-factor-bar">
+                    <div class="score-factor-fill" id="sm-trim-bar" style="width:0%;background:var(--orange)"></div>
+                </div>
+            </div>
+
+            <div class="score-factor">
+                <div class="score-factor-row">
+                    <span class="score-factor-label">Freshness</span>
+                    <span class="score-factor-value"><span id="sm-freshness">0</span> / 5</span>
+                </div>
+                <div class="score-factor-bar">
+                    <div class="score-factor-fill" id="sm-freshness-bar" style="width:0%;background:#22d3ee"></div>
+                </div>
+            </div>
+
+            <div class="score-factor" id="sm-cap-row" style="display:none">
+                <div class="score-factor-row">
+                    <span class="score-factor-label" style="color:var(--red)">⚠ Title Cap Applied</span>
+                    <span class="score-factor-value" style="color:var(--red)" id="sm-cap-text"></span>
+                </div>
+            </div>
+
+            <button class="score-modal-close" onclick="closeScoreModal()">Close</button>
+        </div>
+    </div>
+
+    <script>
+    /* ── Score Modal ── */
+    function showScoreModal(total, price, condition, mileage, reliability, drivetrain, trim, freshness, grade, titleCap) {
+        document.getElementById('sm-total').textContent = total;
+        document.getElementById('sm-price').textContent = price;
+        document.getElementById('sm-condition').textContent = condition;
+        document.getElementById('sm-mileage').textContent = mileage;
+        document.getElementById('sm-reliability').textContent = reliability;
+        document.getElementById('sm-drivetrain').textContent = drivetrain;
+        document.getElementById('sm-trim').textContent = trim;
+        document.getElementById('sm-freshness').textContent = freshness;
+
+        // Fill bars (as percentage of each factor's max)
+        document.getElementById('sm-price-bar').style.width = (price / 30 * 100) + '%';
+        document.getElementById('sm-condition-bar').style.width = (condition / 25 * 100) + '%';
+        document.getElementById('sm-mileage-bar').style.width = (mileage / 15 * 100) + '%';
+        document.getElementById('sm-reliability-bar').style.width = (reliability / 10 * 100) + '%';
+        document.getElementById('sm-drivetrain-bar').style.width = (drivetrain / 10 * 100) + '%';
+        document.getElementById('sm-trim-bar').style.width = (trim / 5 * 100) + '%';
+        document.getElementById('sm-freshness-bar').style.width = (freshness / 5 * 100) + '%';
+
+        // Title cap warning row
+        const capRow = document.getElementById('sm-cap-row');
+        if (titleCap && titleCap < 100) {
+            const raw = price + condition + mileage + reliability + drivetrain + trim + freshness;
+            capRow.style.display = 'block';
+            document.getElementById('sm-cap-text').textContent = 'Max ' + titleCap + ' (raw: ' + raw.toFixed(1) + ')';
+        } else {
+            capRow.style.display = 'none';
+        }
+
+        // Grade badge
+        const gradeEl = document.getElementById('sm-grade');
+        gradeEl.textContent = grade;
+        const gradeColors = {
+            'A': { bg: 'var(--green-muted)', fg: 'var(--green)' },
+            'B': { bg: 'rgba(91,141,238,0.15)', fg: 'var(--accent)' },
+            'C': { bg: 'rgba(251,191,36,0.15)', fg: 'var(--yellow)' },
+            'D': { bg: 'rgba(251,146,60,0.15)', fg: 'var(--orange)' },
+            'F': { bg: 'var(--red-muted)', fg: 'var(--red)' },
+        };
+        const c = gradeColors[grade] || gradeColors['F'];
+        gradeEl.style.background = c.bg;
+        gradeEl.style.color = c.fg;
+
+        document.getElementById('score-modal').classList.add('open');
+    }
+
+    function closeScoreModal() {
+        document.getElementById('score-modal').classList.remove('open');
+    }
+
+    // Close on Escape key
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeScoreModal();
+    });
+
+    let _scrapePolling = null;
+
+    async function startScrape() {
+        const btn = document.getElementById('scrape-btn');
+        btn.disabled = true;
+        btn.textContent = 'Scraping...';
+
+        try {
+            const res = await fetch('/api/scrape', {method: 'POST'});
+            const data = await res.json();
+
+            if (!data.started) {
+                btn.disabled = false;
+                btn.textContent = 'Scrape Now';
+                alert(data.message);
+                return;
+            }
+
+            document.getElementById('scrape-toast').style.display = 'block';
+            _scrapePolling = setInterval(pollScrapeStatus, 3000);
+        } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Scrape Now';
+        }
+    }
+
+    async function pollScrapeStatus() {
+        try {
+            const res = await fetch('/api/scrape/status');
+            const s = await res.json();
+
+            document.getElementById('scrape-toast-msg').textContent = s.message;
+            document.getElementById('scrape-progress-bar').style.width = s.progress + '%';
+
+            if (s.phase === 'done') {
+                clearInterval(_scrapePolling);
+                document.getElementById('scrape-toast-title').textContent = 'Complete!';
+                document.getElementById('scrape-toast-title').style.color = 'var(--green)';
+                document.getElementById('scrape-btn').disabled = false;
+                document.getElementById('scrape-btn').textContent = 'Scrape Now';
+                document.getElementById('enrich-btn').disabled = false;
+                document.getElementById('enrich-btn').textContent = 'Enrich Titles';
+                setTimeout(() => {
+                    document.getElementById('scrape-toast').style.display = 'none';
+                    document.getElementById('scrape-toast-title').style.color = '';
+                    window.location.reload();
+                }, 2000);
+            } else if (s.phase === 'error') {
+                clearInterval(_scrapePolling);
+                document.getElementById('scrape-toast-title').textContent = 'Failed';
+                document.getElementById('scrape-toast-title').style.color = 'var(--red)';
+                document.getElementById('scrape-toast-msg').textContent = s.error || 'Unknown error';
+                document.getElementById('scrape-btn').disabled = false;
+                document.getElementById('scrape-btn').textContent = 'Scrape Now';
+                document.getElementById('enrich-btn').disabled = false;
+                document.getElementById('enrich-btn').textContent = 'Enrich Titles';
+                setTimeout(() => {
+                    document.getElementById('scrape-toast').style.display = 'none';
+                    document.getElementById('scrape-toast-title').style.color = '';
+                }, 5000);
+            }
+        } catch (e) {
+            // Network error, keep polling
+        }
+    }
+
+    async function startEnrich() {
+        const btn = document.getElementById('enrich-btn');
+        const scrapeBtn = document.getElementById('scrape-btn');
+        btn.disabled = true;
+        scrapeBtn.disabled = true;
+        btn.textContent = 'Enriching...';
+
+        try {
+            const res = await fetch('/api/enrich', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({limit: 100}),
+            });
+            const data = await res.json();
+
+            if (!data.started) {
+                btn.disabled = false;
+                scrapeBtn.disabled = false;
+                btn.textContent = 'Enrich Titles';
+                alert(data.message);
+                return;
+            }
+
+            document.getElementById('scrape-toast').style.display = 'block';
+            document.getElementById('scrape-toast-title').textContent = 'Enriching Titles...';
+            _scrapePolling = setInterval(pollScrapeStatus, 3000);
+        } catch (e) {
+            btn.disabled = false;
+            scrapeBtn.disabled = false;
+            btn.textContent = 'Enrich Titles';
+        }
+    }
+
+    // Check if a scrape is already running on page load
+    fetch('/api/scrape/status').then(r => r.json()).then(s => {
+        if (s.running) {
+            document.getElementById('scrape-btn').disabled = true;
+            document.getElementById('scrape-btn').textContent = 'Scraping...';
+            document.getElementById('enrich-btn').disabled = true;
+            document.getElementById('scrape-toast').style.display = 'block';
+            document.getElementById('scrape-toast-msg').textContent = s.message;
+            document.getElementById('scrape-progress-bar').style.width = s.progress + '%';
+            _scrapePolling = setInterval(pollScrapeStatus, 3000);
+        }
+    }).catch(() => {});
+    </script>
 
     {% block scripts %}{% endblock %}
 </body>

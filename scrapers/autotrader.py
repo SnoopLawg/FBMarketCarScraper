@@ -154,6 +154,18 @@ class AutotraderScraper(BaseScraper):
                     accident_history = txt
                     break
 
+            # Title type — look for "clean title", "salvage", "rebuilt"
+            title_type = ""
+            card_text_lower = card.get_text(" ", strip=True).lower()
+            if "salvage" in card_text_lower:
+                title_type = "salvage"
+            elif "rebuilt" in card_text_lower:
+                title_type = "rebuilt"
+            elif "lemon" in card_text_lower:
+                title_type = "lemon"
+            elif "clean title" in card_text_lower:
+                title_type = "clean"
+
             # Seller name
             seller = ""
             for sel in ["[class*='dealer-name']", "[class*='seller']",
@@ -191,6 +203,7 @@ class AutotraderScraper(BaseScraper):
                 mileage_raw=mileage_str, source=self.SOURCE_NAME,
                 seller=seller, distance=distance, trim=trim,
                 deal_rating=deal_rating, accident_history=accident_history,
+                title_type=title_type,
             )
             return True
         except Exception as e:

@@ -5,8 +5,9 @@ import webbrowser
 from pathlib import Path
 from threading import Timer
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify
 
+from analysis import title_group
 from config import load_config, save_config
 from database import Database
 
@@ -35,11 +36,36 @@ def _append_to_file(filepath, value):
         f.write(value + "\n")
 
 
+# ── Deals page ────────────────────────────────────────────────────
+
 @app.route("/")
 def index():
     source_filter = request.args.get("source", "")
     car_filter = request.args.get("car", "")
-    sort_by = request.args.get("sort", "discount")
+    sort_by = request.args.get("sort", "score")
+    search_query = request.args.get("q", "").strip().lower()
+    year_min = request.args.get("year_min", "")
+    year_max = request.args.get("year_max", "")
+    mileage_min = request.args.get("mileage_min", "")
+    mileage_max = request.args.get("mileage_max", "")
+
+    # Parse numeric filters
+    try:
+        year_min_val = int(year_min) if year_min else None
+    except ValueError:
+        year_min_val = None
+    try:
+        year_max_val = int(year_max) if year_max else None
+    except ValueError:
+        year_max_val = None
+    try:
+        mileage_min_val = int(mileage_min) if mileage_min else None
+    except ValueError:
+        mileage_min_val = None
+    try:
+        mileage_max_val = int(mileage_max) if mileage_max else None
+    except ValueError:
+        mileage_max_val = None
 
     filtered = []
     for d in _deals:
@@ -49,14 +75,39 @@ def index():
             continue
         if car_filter and d["car_query"] != car_filter:
             continue
+        if search_query:
+            searchable = " ".join([
+                d.get("car_name") or "", d.get("car_query") or "",
+                d.get("seller") or "", d.get("location") or "",
+                d.get("trim") or "",
+            ]).lower()
+            if search_query not in searchable:
+                continue
+        if year_min_val and (not d.get("year") or d["year"] < year_min_val):
+            continue
+        if year_max_val and (not d.get("year") or d["year"] > year_max_val):
+            continue
+        if mileage_min_val and (not d.get("mileage") or d["mileage"] < mileage_min_val):
+            continue
+        if mileage_max_val and (not d.get("mileage") or d["mileage"] > mileage_max_val):
+            continue
         filtered.append(d)
 
+    # Sorting
     if sort_by == "price":
         filtered.sort(key=lambda d: d["price"])
     elif sort_by == "mileage":
         filtered.sort(key=lambda d: d.get("mileage") or 999999)
+    elif sort_by == "score":
+        filtered.sort(key=lambda d: d.get("deal_score", 0), reverse=True)
     else:  # discount
         filtered.sort(key=lambda d: d["price"] - d.get("avg_price", d["price"]))
+
+    # Enrich with price history
+    deal_hrefs = [d["href"] for d in filtered]
+    price_histories = _db.get_price_history_batch(deal_hrefs) if _db else {}
+    for d in filtered:
+        d["price_history"] = price_histories.get(d["href"])
 
     sources = sorted(set(d["source"] for d in _deals))
     cars = sorted(set(d["car_query"] for d in _deals))
@@ -71,16 +122,91 @@ def index():
         current_car=car_filter,
         current_sort=sort_by,
         total=len(filtered),
+        current_search=search_query,
+        current_year_min=year_min,
+        current_year_max=year_max,
+        current_mileage_min=mileage_min,
+        current_mileage_max=mileage_max,
     )
 
+
+# ── Favorites page ────────────────────────────────────────────────
+
+@app.route("/favorites")
+def favorites_page():
+    fav_listings = _db.get_listings_by_hrefs(list(_favorites)) if _db else []
+
+    config = load_config()
+    mileage_threshold = config.get("MileageMax") or 150000
+
+    enriched = []
+    for row in fav_listings:
+        d = dict(row)
+        # Compute avg_price for display (title-group aware)
+        avg_price = 0
+        if d.get("car_query") and d.get("year"):
+            avgs = _db.get_averages(d["car_query"])
+            grp = title_group(d.get("title_type"))
+            avg_key = (d["year"], grp)
+            if avg_key not in avgs:
+                avg_key = (d["year"], "all")
+            if avg_key in avgs:
+                avg_lower, avg_higher = avgs[avg_key]
+                mileage = d.get("mileage") or 0
+                avg_price = avg_lower if mileage <= mileage_threshold else avg_higher
+        d["avg_price"] = avg_price
+        d["deal_score"] = None
+        d["deal_grade"] = None
+        d["score_breakdown"] = None
+        d["price_history"] = None
+        d["nhtsa_rating"] = None
+        enriched.append(d)
+
+    # Enrich with price history
+    deal_hrefs = [d["href"] for d in enriched]
+    price_histories = _db.get_price_history_batch(deal_hrefs) if _db else {}
+    for d in enriched:
+        d["price_history"] = price_histories.get(d["href"])
+
+    return render_template(
+        "favorites.html",
+        deals=enriched,
+        favorites=_favorites,
+        total=len(enriched),
+    )
+
+
+# ── API endpoints ─────────────────────────────────────────────────
 
 @app.route("/api/favorite", methods=["POST"])
 def favorite():
     href = request.json.get("href")
-    if href and href not in _favorites:
-        _favorites.add(href)
-        _append_to_file(_favorites_file, href)
+    if href:
+        if href in _favorites:
+            # Toggle off
+            _favorites.discard(href)
+            _rewrite_favorites()
+        else:
+            # Toggle on
+            _favorites.add(href)
+            _append_to_file(_favorites_file, href)
+    return jsonify({"ok": True, "saved": href in _favorites})
+
+
+@app.route("/api/unfavorite", methods=["POST"])
+def unfavorite():
+    href = request.json.get("href")
+    if href and href in _favorites:
+        _favorites.discard(href)
+        _rewrite_favorites()
     return jsonify({"ok": True})
+
+
+def _rewrite_favorites():
+    """Rewrite the entire favorites file from the current set."""
+    with open(_favorites_file, "w") as f:
+        for h in _favorites:
+            f.write(h + "\n")
 
 
 @app.route("/api/delete", methods=["POST"])
@@ -92,6 +218,16 @@ def delete():
         _db.delete_listing(href)
     return jsonify({"ok": True})
 
+
+@app.route("/api/price-history/<path:href>")
+def price_history_api(href):
+    rows = _db.get_price_history(href) if _db else []
+    history = [{"old_price": r["old_price"], "new_price": r["new_price"],
+                "changed_at": r["changed_at"]} for r in rows]
+    return jsonify({"history": history})
+
+
+# ── Settings ──────────────────────────────────────────────────────
 
 @app.route("/settings")
 def settings():
@@ -125,6 +261,8 @@ def update_settings():
     return jsonify({"ok": True})
 
 
+# ── Analytics ─────────────────────────────────────────────────────
+
 @app.route("/analytics")
 def analytics():
     return render_template("analytics.html")
@@ -132,7 +270,7 @@ def analytics():
 
 @app.route("/api/analytics")
 def analytics_data():
-    rows = _db.get_analytics_data()
+    rows = _db.get_analytics_data() if _db else []
     listings = []
     for r in rows:
         listings.append({
@@ -148,7 +286,7 @@ def analytics_data():
             "created_at": r["created_at"],
         })
 
-    avg_rows = _db.get_analytics_averages()
+    avg_rows = _db.get_analytics_averages() if _db else []
     averages = []
     for r in avg_rows:
         averages.append({
@@ -160,6 +298,41 @@ def analytics_data():
 
     return jsonify({"listings": listings, "averages": averages})
 
+
+# ── Scrape Now ────────────────────────────────────────────────────
+
+@app.route("/api/scrape", methods=["POST"])
+def trigger_scrape():
+    from scraper_worker import start_scrape
+
+    def on_complete(deals):
+        global _deals
+        _deals = deals
+
+    started, msg = start_scrape(on_complete=on_complete)
+    return jsonify({"started": started, "message": msg})
+
+
+@app.route("/api/enrich", methods=["POST"])
+def trigger_enrich():
+    from scraper_worker import start_enrich
+
+    def on_complete(deals):
+        global _deals
+        _deals = deals
+
+    limit = request.json.get("limit", 100) if request.is_json else 100
+    started, msg = start_enrich(on_complete=on_complete, limit=limit)
+    return jsonify({"started": started, "message": msg})
+
+
+@app.route("/api/scrape/status")
+def scrape_status():
+    from scraper_worker import get_status
+    return jsonify(get_status())
+
+
+# ── Startup ───────────────────────────────────────────────────────
 
 def start_web_ui(deals, port=5001):
     """Launch the Flask web UI with the given deals list."""

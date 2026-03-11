@@ -149,10 +149,23 @@ class CraigslistScraper(BaseScraper):
             if img_el:
                 image_url = img_el.get("src", "") or img_el.get("data-src", "")
 
+            # Title type — Craigslist sometimes shows in listing text
+            title_type = ""
+            item_text_lower = item.get_text(" ", strip=True).lower()
+            if "salvage" in item_text_lower:
+                title_type = "salvage"
+            elif "rebuilt" in item_text_lower:
+                title_type = "rebuilt"
+            elif "lemon" in item_text_lower:
+                title_type = "lemon"
+            elif "clean title" in item_text_lower:
+                title_type = "clean"
+
             self.insert(
                 car_query=car_query, href=href, image_url=image_url,
                 price=price_str, car_name=title, location=location,
                 mileage_raw=mileage_str, source=self.SOURCE_NAME,
+                title_type=title_type,
             )
             return True
         except Exception as e:

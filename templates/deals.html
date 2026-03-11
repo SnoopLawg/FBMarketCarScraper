@@ -27,6 +27,12 @@
     .sort-btn:hover { color: var(--text-secondary); }
     .sort-btn.active { background: rgba(255,255,255,0.08); color: var(--text-primary); }
 
+    .filter-row {
+        max-width: 1320px; margin: 0 auto; padding: 10px 24px 0;
+        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    .filter-row .input { font-size: 13px; padding: 7px 10px; }
+
     /* ── Card Grid ── */
     .deal-grid {
         display: grid;
@@ -74,6 +80,10 @@
     .deal-price { font-size: 24px; font-weight: 700; color: var(--green); letter-spacing: -0.5px; }
     .deal-savings { font-size: 12px; font-weight: 600; color: var(--red); }
 
+    .deal-price-change { font-size: 12px; margin-bottom: 4px; }
+    .price-drop { color: var(--green); font-weight: 500; }
+    .price-up { color: var(--red); font-weight: 500; }
+
     .deal-details { margin: 12px 0 0 0; }
     .deal-detail {
         font-size: 13px; color: var(--text-secondary);
@@ -96,12 +106,19 @@
 
     @media (max-width: 640px) {
         .deal-grid { grid-template-columns: 1fr; }
-        .toolbar-inner { padding: 0 16px; }
+        .toolbar-inner, .filter-row { padding: 0 16px; }
     }
 </style>
 {% endblock %}
 
 {% block body %}
+{% set filter_params = 'source=' ~ current_source ~ '&car=' ~ current_car
+    ~ ('&q=' ~ current_search if current_search else '')
+    ~ ('&year_min=' ~ current_year_min if current_year_min else '')
+    ~ ('&year_max=' ~ current_year_max if current_year_max else '')
+    ~ ('&mileage_min=' ~ current_mileage_min if current_mileage_min else '')
+    ~ ('&mileage_max=' ~ current_mileage_max if current_mileage_max else '') %}
+
 <div class="toolbar">
     <div class="toolbar-inner">
         <span class="toolbar-count">{{ total }} deal{{ 's' if total != 1 else '' }}</span>
@@ -121,13 +138,41 @@
         </select>
 
         <div class="sort-group">
-            <a href="?sort=discount&source={{ current_source }}&car={{ current_car }}"
+            <a href="?sort=score&{{ filter_params }}"
+               class="sort-btn {{ 'active' if current_sort == 'score' else '' }}">Score</a>
+            <a href="?sort=discount&{{ filter_params }}"
                class="sort-btn {{ 'active' if current_sort == 'discount' else '' }}">Best Deal</a>
-            <a href="?sort=price&source={{ current_source }}&car={{ current_car }}"
+            <a href="?sort=price&{{ filter_params }}"
                class="sort-btn {{ 'active' if current_sort == 'price' else '' }}">Price</a>
-            <a href="?sort=mileage&source={{ current_source }}&car={{ current_car }}"
+            <a href="?sort=mileage&{{ filter_params }}"
                class="sort-btn {{ 'active' if current_sort == 'mileage' else '' }}">Miles</a>
         </div>
+    </div>
+
+    <div class="filter-row">
+        <input type="text" class="input" style="width:180px" placeholder="Search cars..."
+               id="search-input" value="{{ current_search }}"
+               onkeydown="if(event.key==='Enter') applyAllFilters()">
+
+        <div class="flex items-center gap-2">
+            <span class="text-muted text-sm">Year:</span>
+            <input type="number" class="input" style="width:80px" placeholder="Min"
+                   id="year-min" value="{{ current_year_min }}">
+            <span class="text-muted">-</span>
+            <input type="number" class="input" style="width:80px" placeholder="Max"
+                   id="year-max" value="{{ current_year_max }}">
+        </div>
+
+        <div class="flex items-center gap-2">
+            <span class="text-muted text-sm">Miles:</span>
+            <input type="number" class="input" style="width:100px" placeholder="Min"
+                   id="mileage-min" value="{{ current_mileage_min }}">
+            <span class="text-muted">-</span>
+            <input type="number" class="input" style="width:100px" placeholder="Max"
+                   id="mileage-max" value="{{ current_mileage_max }}">
+        </div>
+
+        <button class="btn btn-ghost btn-sm" onclick="clearFilters()">Clear</button>
     </div>
 </div>
 
@@ -135,73 +180,9 @@
     {% if deals %}
     <div class="deal-grid">
         {% for deal in deals %}
-        <div class="deal-card" id="card-{{ loop.index }}">
-            {% if deal.image_url %}
-            <img class="deal-img" src="{{ deal.image_url }}" alt="{{ deal.car_name }}" loading="lazy"
-                 onerror="this.outerHTML='<div class=deal-img-empty>No image available</div>'">
-            {% else %}
-            <div class="deal-img-empty">No image available</div>
-            {% endif %}
-
-            <div class="deal-body">
-                <div class="deal-badges">
-                    <span class="badge badge-{{ deal.source }}">{{ deal.source }}</span>
-                    {% if deal.year %}<span class="badge badge-year">{{ deal.year }}</span>{% endif %}
-                    {% if deal.deal_rating %}<span class="badge badge-deal">{{ deal.deal_rating }}</span>{% endif %}
-                    {% if deal.accident_history %}<span class="badge badge-info">{{ deal.accident_history }}</span>{% endif %}
-                </div>
-
-                <div class="deal-title">{{ deal.car_name or deal.car_query }}</div>
-
-                <div class="deal-price-row">
-                    <span class="deal-price">${{ '{:,.0f}'.format(deal.price) }}</span>
-                    {% if deal.avg_price and deal.avg_price > 0 %}
-                    <span class="deal-savings">${{ '{:,.0f}'.format(deal.avg_price - deal.price) }} below avg</span>
-                    {% endif %}
-                </div>
-
-                <div class="deal-details">
-                    {% if deal.trim %}
-                    <div class="deal-detail">
-                        <span class="deal-detail-icon">T</span> {{ deal.trim }}
-                    </div>
-                    {% endif %}
-                    {% if deal.mileage %}
-                    <div class="deal-detail">
-                        <span class="deal-detail-icon">M</span> {{ '{:,.0f}'.format(deal.mileage) }} miles
-                    </div>
-                    {% endif %}
-                    {% if deal.seller %}
-                    <div class="deal-detail">
-                        <span class="deal-detail-icon">S</span> {{ deal.seller }}
-                    </div>
-                    {% endif %}
-                    {% if deal.location %}
-                    <div class="deal-detail">
-                        <span class="deal-detail-icon">L</span> {{ deal.location }}{% if deal.distance %} &middot; {{ deal.distance }}{% endif %}
-                    </div>
-                    {% endif %}
-                    {% if deal.created_at %}
-                    <div class="deal-detail deal-detail-muted">
-                        Found {{ deal.created_at[:10] }}{% if deal.updated_at and deal.updated_at[:10] != deal.created_at[:10] %} &middot; Updated {{ deal.updated_at[:10] }}{% endif %}
-                    </div>
-                    {% endif %}
-                </div>
-
-                <hr class="deal-divider">
-
-                <div class="deal-actions">
-                    <a class="btn btn-primary" href="{{ deal.href }}" target="_blank">View Listing</a>
-                    <button class="btn btn-ghost {{ 'btn-saved' if deal.href in favorites else '' }}"
-                            onclick="toggleFav(this, '{{ deal.href }}')"
-                            style="{{ 'color:var(--yellow);border-color:var(--yellow)' if deal.href in favorites else '' }}">
-                        {{ '★ Saved' if deal.href in favorites else '☆ Save' }}
-                    </button>
-                    <button class="btn btn-danger btn-sm"
-                            onclick="deleteDeal('{{ deal.href }}', 'card-{{ loop.index }}')">✕</button>
-                </div>
-            </div>
-        </div>
+        {% set card_id = "card-" ~ loop.index %}
+        {% set show_save = true %}
+        {% include '_deal_card.html' %}
         {% endfor %}
     </div>
     {% else %}
@@ -222,16 +203,53 @@
         window.location.search = params.toString();
     }
 
+    function applyAllFilters() {
+        const params = new URLSearchParams(window.location.search);
+
+        const q = document.getElementById('search-input').value;
+        if (q) params.set('q', q); else params.delete('q');
+
+        const yearMin = document.getElementById('year-min').value;
+        if (yearMin) params.set('year_min', yearMin); else params.delete('year_min');
+
+        const yearMax = document.getElementById('year-max').value;
+        if (yearMax) params.set('year_max', yearMax); else params.delete('year_max');
+
+        const miMin = document.getElementById('mileage-min').value;
+        if (miMin) params.set('mileage_min', miMin); else params.delete('mileage_min');
+
+        const miMax = document.getElementById('mileage-max').value;
+        if (miMax) params.set('mileage_max', miMax); else params.delete('mileage_max');
+
+        window.location.search = params.toString();
+    }
+
+    function clearFilters() {
+        window.location.href = '/';
+    }
+
+    // Apply filters on change for numeric inputs
+    ['year-min','year-max','mileage-min','mileage-max'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', applyAllFilters);
+    });
+
     async function toggleFav(btn, href) {
-        await fetch('/api/favorite', {
+        const res = await fetch('/api/favorite', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({href})
         });
-        const saved = btn.textContent.trim().startsWith('★');
-        btn.textContent = saved ? '☆ Save' : '★ Saved';
-        btn.style.color = saved ? '' : 'var(--yellow)';
-        btn.style.borderColor = saved ? '' : 'var(--yellow)';
+        const data = await res.json();
+        if (data.saved) {
+            btn.textContent = '★ Saved';
+            btn.style.color = 'var(--yellow)';
+            btn.style.borderColor = 'var(--yellow)';
+        } else {
+            btn.textContent = '☆ Save';
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }
     }
 
     async function deleteDeal(href, cardId) {
