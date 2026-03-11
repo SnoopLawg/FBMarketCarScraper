@@ -4,9 +4,11 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
-from nhtsa import parse_make_model, get_vehicle_rating
+from nhtsa import parse_make_model, get_vehicle_rating, get_recalls_batch
+from epa import get_mpg_batch, estimate_monthly_fuel_cost
 from trim_tiers import get_trim_tier, tier_name
 from drivetrain import detect_drivetrain, drivetrain_label, is_awd_or_4wd
+from vin_validate import validate_vin_against_listing, compute_vin_penalty
 
 
 def title_group(title_type):
@@ -164,7 +166,8 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
                        accident_history, title_type, nhtsa_rating,
                        trim_tier=1, trim_avg_price=None,
                        drivetrain="unknown", dt_source="unknown",
-                       days_listed=0, car_query=""):
+                       days_listed=0, car_query="",
+                       vin_mismatches=None):
     """Compute a composite deal score from 0-100 with 7 factors.
 
     Title & Condition is the DOMINANT factor (25 pts) because a bad
@@ -457,6 +460,25 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
                       + reliability_score + drivetrain_score + trim_score
                       + freshness_score, 1)
 
+    # ── VIN cross-validation penalty ──────────────────────────────
+    vin_penalty = 0
+    if vin_mismatches:
+        vin_penalty = compute_vin_penalty(vin_mismatches)
+        raw_total = max(0, round(raw_total + vin_penalty, 1))
+        _mm_parts = []
+        for mm in vin_mismatches:
+            _mm_parts.append(
+                f"{mm['field']}: listing says {mm['listing_value']}, "
+                f"VIN says {mm['vin_value']} ({mm['severity']})")
+        reasons["vin_validation"] = (
+            f"VIN mismatch ({vin_penalty:+d} penalty): "
+            + "; ".join(_mm_parts))
+    elif vin_mismatches is not None:
+        # Empty list = we checked and everything matched
+        reasons["vin_validation"] = "VIN verified — matches listing"
+    else:
+        reasons["vin_validation"] = "No VIN data to validate"
+
     # ── Hard score cap for bad titles ─────────────────────────────
     # Salvage/rebuilt/lemon can NEVER score well.  This is the key
     # insight: a "great price" on a salvage car is not a great deal.
@@ -479,6 +501,7 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
         "condition_score": round(condition_score, 1),
         "trim_score": round(trim_score, 1),
         "freshness_score": round(freshness_score, 1),
+        "vin_penalty": vin_penalty,
         "reasons": reasons,
     }
 
@@ -613,6 +636,35 @@ def find_deals(db, desired_cars, config):
                 except Exception as e:
                     logging.warning(f"[NHTSA] Failed for {car_query} {year}: {e}")
 
+    # Fetch NHTSA recall details (batch, cached)
+    recalls_cache = {}
+    try:
+        recalls_cache = get_recalls_batch(db, car_year_combos)
+        logging.info(f"Loaded recalls for {len(recalls_cache)} car/year combos.")
+    except Exception as e:
+        logging.warning(f"[NHTSA] Recalls batch fetch failed: {e}")
+
+    # Fetch EPA MPG data (batch, cached)
+    mpg_cache = {}
+    try:
+        mpg_cache = get_mpg_batch(db, car_year_combos)
+        logging.info(f"Loaded MPG data for {len(mpg_cache)} car/year combos.")
+    except Exception as e:
+        logging.warning(f"[EPA] MPG batch fetch failed: {e}")
+
+    # Pre-fetch VIN decode data for all candidates with VINs.
+    # Uses NHTSA's batch decode endpoint for efficiency (up to 50 VINs per call).
+    all_vins = set()
+    for car_query in desired_cars:
+        for row in all_candidates[car_query]:
+            if row["vin"]:
+                all_vins.add(row["vin"])
+    if all_vins:
+        from vin import decode_vins_batch_cached
+        vin_data_cache = decode_vins_batch_cached(db, list(all_vins))
+    else:
+        vin_data_cache = {}
+
     for car_query in desired_cars:
         avg_table = db.get_averages(car_query)  # (year, title_grp) → (lo, hi)
         candidates = all_candidates[car_query]
@@ -680,6 +732,20 @@ def find_deals(db, desired_cars, config):
                 except (ValueError, TypeError):
                     pass
 
+            # VIN cross-validation
+            vin_mismatches = None
+            vin = row["vin"]
+            if vin:
+                vd = vin_data_cache.get(vin.upper())
+                if vd:
+                    val_result = validate_vin_against_listing(vd, {
+                        "year": year,
+                        "car_query": car_query,
+                        "drivetrain": drivetrain_label(dt),
+                        "drivetrain_source": dt_source,
+                    })
+                    vin_mismatches = val_result["mismatches"]
+
             score_data = compute_deal_score(
                 price=price,
                 avg_price=avg_price,
@@ -695,8 +761,19 @@ def find_deals(db, desired_cars, config):
                 dt_source=dt_source,
                 days_listed=days_listed,
                 car_query=car_query,
+                vin_mismatches=vin_mismatches,
             )
             score = score_data["total"]
+
+            # Look up recalls and MPG for this car/year
+            recall_key = (car_query.lower(), year)
+            recalls = recalls_cache.get(recall_key, [])
+
+            mpg_data = mpg_cache.get(recall_key)
+            monthly_fuel_cost = None
+            if mpg_data and mpg_data.get("mpg_combined"):
+                monthly_fuel_cost = estimate_monthly_fuel_cost(
+                    mpg_data["mpg_combined"])
 
             if score >= min_score:
                 deals.append({
@@ -732,6 +809,11 @@ def find_deals(db, desired_cars, config):
                     "score_breakdown": score_data,
                     "nhtsa_rating": nhtsa_rating,
                     "title_cap": _title_cap(row["title_type"]),
+                    "recalls": recalls,
+                    "recalls_count": len(recalls),
+                    "mpg_data": mpg_data,
+                    "monthly_fuel_cost": monthly_fuel_cost,
+                    "vin_mismatches": vin_mismatches,
                 })
 
     # Deduplicate — same car posted under multiple URLs

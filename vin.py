@@ -25,7 +25,10 @@ _VIN_RE = re.compile(
 _INVALID_VIN_CHARS = set("IOQioq")
 
 _DECODE_URL = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json"
+_BATCH_DECODE_URL = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/"
 _TIMEOUT = 15
+_BATCH_TIMEOUT = 30
+_BATCH_SIZE = 50  # NHTSA batch endpoint limit
 
 
 def extract_vin(text):
@@ -166,3 +169,140 @@ def decode_vin_cached(db, vin):
     time.sleep(0.3)
 
     return result
+
+
+def _parse_vin_result(r):
+    """Parse a single result row from NHTSA VIN decode response."""
+    def val(key):
+        v = r.get(key, "")
+        if not v or v in ("Not Applicable", ""):
+            return None
+        return v.strip()
+
+    error_code = val("ErrorCode") or "0"
+    first_code = error_code.split(",")[0].split("-")[0].strip()
+    try:
+        error_num = int(first_code)
+    except ValueError:
+        error_num = 99
+
+    if error_num >= 5:
+        return None
+
+    year_raw = val("ModelYear")
+    try:
+        year = int(year_raw) if year_raw else None
+    except (ValueError, TypeError):
+        year = None
+
+    vin = (r.get("VIN") or "").upper().strip()
+
+    return {
+        "vin": vin,
+        "make": val("Make"),
+        "model": val("Model"),
+        "year": year,
+        "trim": val("Trim"),
+        "body_class": val("BodyClass"),
+        "drive_type": val("DriveType"),
+        "fuel_type": val("FuelTypePrimary"),
+        "engine": val("EngineCylinders"),
+        "displacement": val("DisplacementL"),
+        "cylinders": val("EngineCylinders"),
+        "plant_city": val("PlantCity"),
+        "plant_country": val("PlantCountry"),
+        "error_code": error_code,
+    }
+
+
+def decode_vins_batch(vins):
+    """Decode multiple VINs in a single NHTSA batch API call.
+
+    The NHTSA batch endpoint accepts up to 50 VINs separated by semicolons.
+    Returns dict {VIN_upper: result_dict} for successfully decoded VINs.
+    """
+    if not vins:
+        return {}
+
+    results = {}
+    # Process in chunks of BATCH_SIZE
+    for i in range(0, len(vins), _BATCH_SIZE):
+        chunk = [v.upper().strip() for v in vins[i:i + _BATCH_SIZE]]
+        vin_str = ";".join(chunk)
+
+        try:
+            resp = requests.post(
+                _BATCH_DECODE_URL,
+                data={"format": "json", "data": vin_str},
+                timeout=_BATCH_TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logging.warning(f"[VIN] Batch decode failed for {len(chunk)} VINs: {e}")
+            continue
+
+        for r in data.get("Results", []):
+            parsed = _parse_vin_result(r)
+            vin_key = (r.get("VIN") or "").upper().strip()
+            if vin_key:
+                results[vin_key] = parsed  # None if invalid VIN
+
+        if i + _BATCH_SIZE < len(vins):
+            time.sleep(0.5)  # polite pause between batches
+
+    return results
+
+
+def decode_vins_batch_cached(db, vins):
+    """Batch-decode VINs with database caching.
+
+    Checks cache first, then batch-decodes uncached VINs via NHTSA,
+    and stores everything in the cache.
+
+    Returns dict {VIN_upper: result_dict} for all valid results.
+    """
+    if not vins:
+        return {}
+
+    vins_upper = list(set(v.upper().strip() for v in vins if v and len(v) == 17))
+    if not vins_upper:
+        return {}
+
+    # Check which are already cached (including "not_found" markers)
+    cached_data = db.get_vin_data_batch(vins_upper)
+    # Also check for "not_found" markers so we don't re-fetch them
+    already_checked = set(cached_data.keys())
+    # Check which VINs have any cache entry at all (including not_found)
+    for vin in vins_upper:
+        existing = db.get_vin_data(vin)
+        if existing is not None:
+            already_checked.add(vin)
+            if existing.get("make"):  # valid decode, not a not_found marker
+                cached_data[vin] = existing
+
+    uncached = [v for v in vins_upper if v not in already_checked]
+
+    if uncached:
+        logging.info(f"[VIN] Batch-decoding {len(uncached)} VINs via NHTSA...")
+        batch_results = decode_vins_batch(uncached)
+
+        for vin in uncached:
+            result = batch_results.get(vin)
+            if result:
+                db.upsert_vin_data(vin, result)
+                cached_data[vin] = result
+            else:
+                # Store "not found" marker
+                db.upsert_vin_data(vin, {
+                    "vin": vin, "make": None, "model": None, "year": None,
+                    "trim": None, "body_class": None, "drive_type": None,
+                    "fuel_type": None, "engine": None, "displacement": None,
+                    "cylinders": None, "plant_city": None, "plant_country": None,
+                    "error_code": "not_found",
+                })
+
+        logging.info(f"[VIN] Batch decode complete — "
+                     f"{len(cached_data)} VINs with valid data.")
+
+    return cached_data

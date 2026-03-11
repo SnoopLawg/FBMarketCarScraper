@@ -111,11 +111,31 @@ class Database:
                 rollover_rating INTEGER,
                 complaints_count INTEGER DEFAULT 0,
                 recalls_count INTEGER DEFAULT 0,
+                mpg_city INTEGER,
+                mpg_highway INTEGER,
+                mpg_combined INTEGER,
                 fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(make, model, year)
             );
             CREATE INDEX IF NOT EXISTS idx_vehicle_ratings_lookup
                 ON vehicle_ratings(make, model, year);
+
+            CREATE TABLE IF NOT EXISTS vehicle_recalls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                make TEXT NOT NULL,
+                model TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                campaign_number TEXT NOT NULL,
+                component TEXT,
+                summary TEXT,
+                consequence TEXT,
+                remedy TEXT,
+                report_date TEXT,
+                fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(make, model, year, campaign_number)
+            );
+            CREATE INDEX IF NOT EXISTS idx_vehicle_recalls_lookup
+                ON vehicle_recalls(make, model, year);
         """)
         self.conn.commit()
 
@@ -184,6 +204,19 @@ class Database:
                 logging.info("vin migration complete.")
             except sqlite3.OperationalError:
                 pass
+
+        # Migrate vehicle_ratings to include MPG columns
+        self.cur.execute("PRAGMA table_info(vehicle_ratings)")
+        vr_rows = self.cur.fetchall()
+        if vr_rows:
+            vr_cols = [r["name"] if isinstance(r, sqlite3.Row) else r[1] for r in vr_rows]
+            for col in ["mpg_city", "mpg_highway", "mpg_combined"]:
+                if col not in vr_cols:
+                    try:
+                        self.cur.execute(f"ALTER TABLE vehicle_ratings ADD COLUMN {col} INTEGER")
+                    except sqlite3.OperationalError:
+                        pass
+            self.conn.commit()
 
         # Migrate average_prices to include title_group
         self.cur.execute("PRAGMA table_info(average_prices)")
@@ -451,7 +484,8 @@ class Database:
         """Get cached NHTSA rating for a vehicle."""
         self.cur.execute(
             "SELECT overall_rating, front_crash_rating, side_crash_rating, "
-            "rollover_rating, complaints_count, recalls_count, fetched_at "
+            "rollover_rating, complaints_count, recalls_count, "
+            "mpg_city, mpg_highway, mpg_combined, fetched_at "
             "FROM vehicle_ratings "
             "WHERE make = ? AND model = ? AND year = ?",
             (make.lower(), model.lower(), year))
@@ -465,20 +499,27 @@ class Database:
             "rollover_rating": row["rollover_rating"],
             "complaints_count": row["complaints_count"] or 0,
             "recalls_count": row["recalls_count"] or 0,
+            "mpg_city": row["mpg_city"],
+            "mpg_highway": row["mpg_highway"],
+            "mpg_combined": row["mpg_combined"],
             "fetched_at": row["fetched_at"],
         }
 
     def upsert_vehicle_rating(self, *, make, model, year,
                                overall_rating, front_crash, side_crash,
-                               rollover, complaints, recalls):
-        """Insert or update a cached NHTSA rating."""
+                               rollover, complaints, recalls,
+                               mpg_city=None, mpg_highway=None,
+                               mpg_combined=None):
+        """Insert or update a cached NHTSA rating (+ optional MPG data)."""
         try:
             self.cur.execute("""
                 INSERT INTO vehicle_ratings
                     (make, model, year, overall_rating, front_crash_rating,
                      side_crash_rating, rollover_rating,
-                     complaints_count, recalls_count, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                     complaints_count, recalls_count,
+                     mpg_city, mpg_highway, mpg_combined, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        CURRENT_TIMESTAMP)
                 ON CONFLICT(make, model, year) DO UPDATE SET
                     overall_rating = excluded.overall_rating,
                     front_crash_rating = excluded.front_crash_rating,
@@ -486,10 +527,14 @@ class Database:
                     rollover_rating = excluded.rollover_rating,
                     complaints_count = excluded.complaints_count,
                     recalls_count = excluded.recalls_count,
+                    mpg_city = COALESCE(excluded.mpg_city, mpg_city),
+                    mpg_highway = COALESCE(excluded.mpg_highway, mpg_highway),
+                    mpg_combined = COALESCE(excluded.mpg_combined, mpg_combined),
                     fetched_at = CURRENT_TIMESTAMP
             """, (make.lower(), model.lower(), year,
                   overall_rating, front_crash, side_crash,
-                  rollover, complaints, recalls))
+                  rollover, complaints, recalls,
+                  mpg_city, mpg_highway, mpg_combined))
             self.conn.commit()
         except sqlite3.Error as e:
             logging.error(f"DB vehicle rating upsert error: {e}")
@@ -743,6 +788,98 @@ class Database:
         if updated:
             logging.info(f"Backfilled VINs for {updated} listings from descriptions.")
         return updated
+
+    def update_vehicle_mpg(self, make, model, year,
+                           mpg_city, mpg_highway, mpg_combined):
+        """Update just the MPG columns for an existing vehicle_ratings row."""
+        try:
+            self.cur.execute("""
+                UPDATE vehicle_ratings
+                SET mpg_city = ?, mpg_highway = ?, mpg_combined = ?
+                WHERE make = ? AND model = ? AND year = ?
+            """, (mpg_city, mpg_highway, mpg_combined,
+                  make.lower(), model.lower(), year))
+            if self.cur.rowcount == 0:
+                # No existing row — insert a minimal one with just MPG
+                self.cur.execute("""
+                    INSERT OR IGNORE INTO vehicle_ratings
+                        (make, model, year, mpg_city, mpg_highway, mpg_combined,
+                         fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (make.lower(), model.lower(), year,
+                      mpg_city, mpg_highway, mpg_combined))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB update MPG error: {e}")
+
+    # ── Vehicle Recalls ────────────────────────────────────────────
+
+    def get_vehicle_recalls(self, make, model, year):
+        """Get cached recalls for a vehicle. Returns list of dicts."""
+        self.cur.execute(
+            "SELECT campaign_number, component, summary, consequence, "
+            "remedy, report_date, fetched_at "
+            "FROM vehicle_recalls "
+            "WHERE make = ? AND model = ? AND year = ?",
+            (make.lower(), model.lower(), year))
+        rows = self.cur.fetchall()
+        if not rows:
+            return None  # None = never fetched; [] = fetched, no recalls
+        return [{
+            "campaign_number": r["campaign_number"],
+            "component": r["component"],
+            "summary": r["summary"],
+            "consequence": r["consequence"],
+            "remedy": r["remedy"],
+            "report_date": r["report_date"],
+            "fetched_at": r["fetched_at"],
+        } for r in rows]
+
+    def upsert_vehicle_recalls(self, make, model, year, recalls_list):
+        """Insert or update recalls for a vehicle (bulk upsert).
+
+        If recalls_list is empty, stores a single sentinel row with
+        campaign_number='__none__' so we know we've checked this vehicle.
+        """
+        make_l = make.lower()
+        model_l = model.lower()
+
+        if not recalls_list:
+            # Sentinel row — indicates "checked, no recalls found"
+            recalls_list = [{
+                "campaign_number": "__none__",
+                "component": None,
+                "summary": None,
+                "consequence": None,
+                "remedy": None,
+                "report_date": None,
+            }]
+
+        try:
+            for rec in recalls_list:
+                self.cur.execute("""
+                    INSERT INTO vehicle_recalls
+                        (make, model, year, campaign_number, component,
+                         summary, consequence, remedy, report_date,
+                         fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(make, model, year, campaign_number) DO UPDATE SET
+                        component = excluded.component,
+                        summary = excluded.summary,
+                        consequence = excluded.consequence,
+                        remedy = excluded.remedy,
+                        report_date = excluded.report_date,
+                        fetched_at = CURRENT_TIMESTAMP
+                """, (make_l, model_l, year,
+                      rec["campaign_number"],
+                      rec.get("component"),
+                      rec.get("summary"),
+                      rec.get("consequence"),
+                      rec.get("remedy"),
+                      rec.get("report_date")))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB recalls upsert error: {e}")
 
     def get_all_cached_ratings(self):
         """Get all cached ratings as a dict keyed by (make, model, year)."""

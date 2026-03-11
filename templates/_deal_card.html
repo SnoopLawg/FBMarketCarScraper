@@ -10,32 +10,55 @@
     {% endif %}
 
     <div class="deal-body">
-        <div class="deal-badges">
+        {# ── Primary badges: score + source + critical warnings ── #}
+        {% set _sb = deal.score_breakdown or {} %}
+        {% set _reasons = _sb.get('reasons', {}) if _sb else {} %}
+        <div class="deal-badges-primary">
             <span class="badge badge-{{ deal.source }}">{{ deal.source }}</span>
-            {% if deal.year %}<span class="badge badge-year">{{ deal.year }}</span>{% endif %}
             {% if deal.deal_score is not none %}
-            {% set _sb = deal.score_breakdown or {} %}
-            {% set _reasons = _sb.get('reasons', {}) if _sb else {} %}
             <span class="badge badge-score badge-score-{{ deal.deal_grade|lower }}"
                   style="cursor:pointer"
-                  data-score='{{ {"total": deal.deal_score, "grade": deal.deal_grade, "title_cap": deal.title_cap|default(100), "price": _sb.price_score|default(0), "condition": _sb.condition_score|default(0), "mileage": _sb.mileage_score|default(0), "reliability": _sb.reliability_score|default(0), "drivetrain": _sb.drivetrain_score|default(0), "trim": _sb.trim_score|default(0), "freshness": _sb.freshness_score|default(0), "r_price": _reasons.get("price","")|default(""), "r_condition": _reasons.get("condition","")|default(""), "r_mileage": _reasons.get("mileage","")|default(""), "r_reliability": _reasons.get("reliability","")|default(""), "r_drivetrain": _reasons.get("drivetrain","")|default(""), "r_trim": _reasons.get("trim","")|default(""), "r_freshness": _reasons.get("freshness","")|default("")}|tojson }}'
+                  data-score='{{ {"total": deal.deal_score, "grade": deal.deal_grade, "title_cap": deal.title_cap|default(100), "price": _sb.price_score|default(0), "condition": _sb.condition_score|default(0), "mileage": _sb.mileage_score|default(0), "reliability": _sb.reliability_score|default(0), "drivetrain": _sb.drivetrain_score|default(0), "trim": _sb.trim_score|default(0), "freshness": _sb.freshness_score|default(0), "vin_penalty": _sb.vin_penalty|default(0), "r_price": _reasons.get("price","")|default(""), "r_condition": _reasons.get("condition","")|default(""), "r_mileage": _reasons.get("mileage","")|default(""), "r_reliability": _reasons.get("reliability","")|default(""), "r_drivetrain": _reasons.get("drivetrain","")|default(""), "r_trim": _reasons.get("trim","")|default(""), "r_freshness": _reasons.get("freshness","")|default(""), "r_vin_validation": _reasons.get("vin_validation","")|default("")}|tojson }}'
                   onclick="showScoreModal(JSON.parse(this.dataset.score))">
                 {{ deal.deal_grade }} ({{ deal.deal_score }})
             </span>
             {% endif %}
+            {% if deal.title_type and deal.title_type|lower in ['salvage', 'rebuilt', 'lemon'] %}
+            <span class="badge badge-title-warning">{{ deal.title_type|upper }}</span>
+            {% endif %}
+            {% if deal.vin_mismatches is defined and deal.vin_mismatches %}
+            <span class="badge badge-vin-mismatch"
+                  style="background:var(--red);color:#fff"
+                  title="{% for mm in deal.vin_mismatches %}{{ mm.field }}: listing says {{ mm.listing_value }}, VIN says {{ mm.vin_value }}{% if not loop.last %}; {% endif %}{% endfor %}">
+                ⚠ VIN Mismatch
+            </span>
+            {% endif %}
+        </div>
+        {# ── Secondary badges: supplementary info ── #}
+        <div class="deal-badges-secondary">
             {% if deal.drivetrain %}
             <span class="badge badge-drivetrain{% if deal.drivetrain in ['AWD', '4WD'] %} badge-drivetrain-awd{% endif %}">{{ deal.drivetrain }}{% if deal.drivetrain_source == 'default' %}*{% endif %}</span>
             {% endif %}
             {% if deal.trim_tier_name and deal.trim_tier and deal.trim_tier > 1 %}
             <span class="badge badge-trim badge-trim-{{ deal.trim_tier }}">{{ deal.trim_tier_name }}{% if deal.trim_label %}: {{ deal.trim_label }}{% endif %}</span>
             {% endif %}
-            {% if deal.deal_rating %}<span class="badge badge-deal">{{ deal.deal_rating }}</span>{% endif %}
-            {% if deal.accident_history %}<span class="badge badge-info">{{ deal.accident_history }}</span>{% endif %}
-            {% if deal.title_type and deal.title_type|lower in ['salvage', 'rebuilt', 'lemon'] %}
-            <span class="badge badge-title-warning">{{ deal.title_type|upper }}</span>
-            {% elif deal.title_type and deal.title_type|lower == 'clean' %}
+            {% if deal.title_type and deal.title_type|lower == 'clean' %}
             <span class="badge badge-title-clean">Clean Title</span>
             {% endif %}
+            {% if deal.recalls_count is defined and deal.recalls_count %}
+            <span class="badge badge-recalls"
+                  style="cursor:pointer;background:rgba(248,113,113,0.15);color:var(--red)"
+                  data-recalls='{{ deal.recalls|tojson }}'
+                  data-recalls-title="{{ deal.year }} {{ deal.car_query }}"
+                  onclick="showRecallsModal(JSON.parse(this.dataset.recalls), this.dataset.recallsTitle)">
+                ⚠ {{ deal.recalls_count }} Recall{{ 's' if deal.recalls_count != 1 else '' }}
+            </span>
+            {% endif %}
+            {% if deal.vin_data and (deal.vin_mismatches is defined and deal.vin_mismatches is not none and deal.vin_mismatches|length == 0) %}
+            <span class="badge" style="background:rgba(52,211,153,0.12);color:var(--green)">✓ VIN Match</span>
+            {% endif %}
+            {% if deal.deal_rating %}<span class="badge badge-deal">{{ deal.deal_rating }}</span>{% endif %}
+            {% if deal.accident_history %}<span class="badge badge-info">{{ deal.accident_history }}</span>{% endif %}
         </div>
 
         <div class="deal-title">{{ deal.car_name or deal.car_query }}</div>
@@ -65,8 +88,8 @@
         {% endif %}
 
         {% if deal.market_range %}
-        <div class="market-range" style="margin:8px 0 4px;font-size:11px">
-            <div style="display:flex;justify-content:space-between;color:var(--text-muted);margin-bottom:3px">
+        <div class="market-range">
+            <div style="display:flex;justify-content:space-between;color:var(--text-muted);margin-bottom:4px">
                 <span>Market Range ({{ deal.market_range.count }} listings)</span>
                 {% if deal.price <= deal.market_range.low %}
                 <span style="color:var(--green);font-weight:600">Great Price</span>
@@ -80,18 +103,18 @@
                 <span style="color:var(--red)">High Price</span>
                 {% endif %}
             </div>
-            <div style="position:relative;height:6px;background:var(--border);border-radius:3px;overflow:visible">
+            <div class="market-range-bar">
                 {% set bar_range = deal.market_range.premium - deal.market_range.low %}
                 {% if bar_range > 0 %}
-                <div style="position:absolute;left:{{ ((deal.market_range.fair - deal.market_range.low) / bar_range * 100)|round }}%;right:{{ (100 - (deal.market_range.high - deal.market_range.low) / bar_range * 100)|round }}%;height:100%;background:rgba(91,141,238,0.3);border-radius:3px"></div>
+                <div style="position:absolute;left:{{ ((deal.market_range.fair - deal.market_range.low) / bar_range * 100)|round }}%;right:{{ (100 - (deal.market_range.high - deal.market_range.low) / bar_range * 100)|round }}%;height:100%;background:rgba(91,141,238,0.3);border-radius:4px"></div>
                 {% endif %}
                 {% if bar_range > 0 %}
                 {% set pos = ((deal.price - deal.market_range.low) / bar_range * 100) %}
                 {% set pos_clamped = [0, [pos, 100]|min]|max %}
-                <div style="position:absolute;left:{{ pos_clamped|round }}%;top:-2px;width:10px;height:10px;background:{% if deal.price <= deal.market_range.fair %}var(--green){% elif deal.price <= deal.market_range.avg %}var(--accent){% elif deal.price <= deal.market_range.high %}var(--yellow){% else %}var(--red){% endif %};border-radius:50%;transform:translateX(-5px);border:2px solid var(--bg-card)"></div>
+                <div class="market-range-dot" style="position:absolute;left:{{ pos_clamped|round }}%;top:-3px;transform:translateX(-7px);background:{% if deal.price <= deal.market_range.fair %}var(--green){% elif deal.price <= deal.market_range.avg %}var(--accent){% elif deal.price <= deal.market_range.high %}var(--yellow){% else %}var(--red){% endif %}"></div>
                 {% endif %}
             </div>
-            <div style="display:flex;justify-content:space-between;color:var(--text-muted);margin-top:2px;font-size:10px">
+            <div style="display:flex;justify-content:space-between;color:var(--text-muted);margin-top:3px;font-size:10px">
                 <span>${{ '{:,.0f}'.format(deal.market_range.low) }}</span>
                 <span>${{ '{:,.0f}'.format(deal.market_range.avg) }}</span>
                 <span>${{ '{:,.0f}'.format(deal.market_range.premium) }}</span>
@@ -100,54 +123,69 @@
         {% endif %}
 
         <div class="deal-details">
-            {% if deal.trim %}
-            <div class="deal-detail">
-                <span class="deal-detail-icon">T</span> {{ deal.trim }}
-            </div>
-            {% endif %}
+            {# ── Always-visible details: key decision info ── #}
             {% if deal.mileage %}
             <div class="deal-detail">
-                <span class="deal-detail-icon">M</span> {{ '{:,.0f}'.format(deal.mileage) }} miles
-            </div>
-            {% endif %}
-            {% if deal.seller %}
-            <div class="deal-detail">
-                <span class="deal-detail-icon">S</span> {{ deal.seller }}
+                <span class="deal-detail-icon"><i data-lucide="gauge"></i></span> {{ '{:,.0f}'.format(deal.mileage) }} miles
             </div>
             {% endif %}
             {% if deal.location %}
             <div class="deal-detail">
-                <span class="deal-detail-icon">L</span> {{ deal.location }}{% if deal.distance %} &middot; {{ deal.distance }}{% endif %}
+                <span class="deal-detail-icon"><i data-lucide="map-pin"></i></span> {{ deal.location }}{% if deal.distance %} &middot; {{ deal.distance }}{% endif %}
             </div>
             {% endif %}
-            {% if deal.nhtsa_rating and deal.nhtsa_rating.overall_rating %}
+            {% if deal.mpg_data and deal.mpg_data.mpg_combined %}
             <div class="deal-detail">
-                <span class="deal-detail-icon">&#9733;</span> NHTSA {{ deal.nhtsa_rating.overall_rating }}/5 stars
-                {% if deal.nhtsa_rating.complaints_count %}&middot; {{ deal.nhtsa_rating.complaints_count }} complaints{% endif %}
+                <span class="deal-detail-icon"><i data-lucide="fuel"></i></span>
+                {{ deal.mpg_data.mpg_combined }} MPG ({{ deal.mpg_data.mpg_city }}/{{ deal.mpg_data.mpg_highway }}){% if deal.monthly_fuel_cost %} &middot; ~${{ deal.monthly_fuel_cost }}/mo{% endif %}
             </div>
             {% endif %}
-            {% if deal.vin %}
-            <div class="deal-detail">
-                <span class="deal-detail-icon">V</span>
-                <span style="font-family:monospace;font-size:12px;letter-spacing:0.5px">{{ deal.vin }}</span>
+
+            {# ── Expandable details: supplementary info ── #}
+            <div class="deal-details-extra">
+                {% if deal.trim %}
+                <div class="deal-detail">
+                    <span class="deal-detail-icon"><i data-lucide="settings-2"></i></span> {{ deal.trim }}
+                </div>
+                {% endif %}
+                {% if deal.seller %}
+                <div class="deal-detail">
+                    <span class="deal-detail-icon"><i data-lucide="user"></i></span> {{ deal.seller }}
+                </div>
+                {% endif %}
+                {% if deal.nhtsa_rating and deal.nhtsa_rating.overall_rating %}
+                <div class="deal-detail">
+                    <span class="deal-detail-icon"><i data-lucide="shield-check"></i></span> NHTSA {{ deal.nhtsa_rating.overall_rating }}/5 stars
+                    {% if deal.nhtsa_rating.complaints_count %}&middot; {{ deal.nhtsa_rating.complaints_count }} complaints{% endif %}
+                </div>
+                {% endif %}
+                {% if deal.vin %}
+                <div class="deal-detail">
+                    <span class="deal-detail-icon"><i data-lucide="scan-line"></i></span>
+                    <span style="font-family:var(--font-mono);font-size:12px;letter-spacing:0.5px">{{ deal.vin }}</span>
+                    {% if deal.vin_data %}
+                    <span class="badge badge-info" style="margin-left:4px;font-size:10px">&#x2713; Decoded</span>
+                    {% else %}
+                    <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;margin-left:4px"
+                            onclick="decodeVin('{{ deal.vin }}', this)">Decode</button>
+                    {% endif %}
+                </div>
                 {% if deal.vin_data %}
-                <span class="badge badge-info" style="margin-left:4px;font-size:10px">✓ Verified</span>
-                {% else %}
-                <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;margin-left:4px"
-                        onclick="decodeVin('{{ deal.vin }}', this)">Decode</button>
+                <div class="deal-detail deal-detail-muted" style="padding-left:22px;font-size:11px">
+                    {{ deal.vin_data.year }} {{ deal.vin_data.make }} {{ deal.vin_data.model }}{% if deal.vin_data.trim %} {{ deal.vin_data.trim }}{% endif %}{% if deal.vin_data.drive_type %} &middot; {{ deal.vin_data.drive_type }}{% endif %}{% if deal.vin_data.fuel_type %} &middot; {{ deal.vin_data.fuel_type }}{% endif %}
+                </div>
+                {% endif %}
+                {% endif %}
+                {% if deal.created_at %}
+                <div class="deal-detail deal-detail-muted">
+                    <span class="deal-detail-icon"><i data-lucide="calendar"></i></span>
+                    Found {{ deal.created_at[:10] }}{% if deal.updated_at and deal.updated_at[:10] != deal.created_at[:10] %} &middot; Updated {{ deal.updated_at[:10] }}{% endif %}
+                </div>
                 {% endif %}
             </div>
-            {% if deal.vin_data %}
-            <div class="deal-detail deal-detail-muted" style="padding-left:22px;font-size:11px">
-                {{ deal.vin_data.year }} {{ deal.vin_data.make }} {{ deal.vin_data.model }}{% if deal.vin_data.trim %} {{ deal.vin_data.trim }}{% endif %}{% if deal.vin_data.drive_type %} &middot; {{ deal.vin_data.drive_type }}{% endif %}{% if deal.vin_data.fuel_type %} &middot; {{ deal.vin_data.fuel_type }}{% endif %}
-            </div>
-            {% endif %}
-            {% endif %}
-            {% if deal.created_at %}
-            <div class="deal-detail deal-detail-muted">
-                Found {{ deal.created_at[:10] }}{% if deal.updated_at and deal.updated_at[:10] != deal.created_at[:10] %} &middot; Updated {{ deal.updated_at[:10] }}{% endif %}
-            </div>
-            {% endif %}
+            <button class="deal-details-toggle" onclick="this.closest('.deal-card').classList.toggle('expanded')">
+                <i data-lucide="chevron-down"></i> <span>Show more</span>
+            </button>
         </div>
 
         <hr class="deal-divider">

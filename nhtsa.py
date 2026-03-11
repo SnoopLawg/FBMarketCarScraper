@@ -231,6 +231,91 @@ def get_vehicle_rating(db, make, model, year):
     return rating
 
 
+def fetch_recalls(make, model, year):
+    """Fetch recall details for a vehicle from NHTSA Recalls API.
+
+    Returns list of dicts with:
+      campaign_number, component, summary, consequence, remedy, report_date
+    or empty list if none found / API fails.
+    """
+    url = (
+        f"{_BASE}/recalls/recallsByVehicle"
+        f"?make={quote(make)}&model={quote(model)}&modelYear={year}"
+    )
+    data = _get_json(url)
+    if not data:
+        return []
+
+    results = data.get("results") or data.get("Results") or []
+    recalls = []
+    for r in results:
+        recalls.append({
+            "campaign_number": (r.get("NHTSACampaignNumber")
+                                or r.get("campaignNumber") or ""),
+            "component": r.get("Component") or r.get("component") or "",
+            "summary": r.get("Summary") or r.get("summary") or "",
+            "consequence": r.get("Consequence") or r.get("consequence") or "",
+            "remedy": r.get("Remedy") or r.get("remedy") or "",
+            "report_date": (r.get("ReportReceivedDate")
+                            or r.get("reportReceivedDate") or ""),
+        })
+    return recalls
+
+
+def get_vehicle_recalls_cached(db, make, model, year):
+    """Get recall details — from cache if fresh, else from API.
+
+    Returns list of recall dicts (may be empty if vehicle has no recalls).
+    Returns None only on total failure.
+    """
+    make_l = make.strip().lower()
+    model_l = model.strip().lower()
+
+    # Check cache
+    cached = db.get_vehicle_recalls(make_l, model_l, year)
+    if cached is not None:
+        # Check TTL on the first row
+        fetched_str = cached[0].get("fetched_at", "") if cached else ""
+        if fetched_str:
+            try:
+                fetched_dt = datetime.fromisoformat(
+                    fetched_str.replace("Z", "+00:00"))
+                if datetime.utcnow() - fetched_dt < timedelta(days=_CACHE_DAYS):
+                    # Filter out sentinel rows
+                    return [r for r in cached
+                            if r["campaign_number"] != "__none__"]
+            except (ValueError, TypeError):
+                pass
+
+    # Fetch from API
+    logging.info(f"[NHTSA] Fetching recalls for {year} {make} {model}...")
+    recalls = fetch_recalls(make, model, year)
+
+    # Cache the results
+    db.upsert_vehicle_recalls(make_l, model_l, year, recalls)
+
+    time.sleep(0.3)
+    return recalls
+
+
+def get_recalls_batch(db, car_queries_with_years):
+    """Fetch recalls for multiple (make, model, year) combos, using cache.
+
+    Returns dict {(car_query_lower, year): [recall_dicts]}
+    """
+    results = {}
+    for car_query, year in car_queries_with_years:
+        make, model = parse_make_model(car_query)
+        if not make or not model or not year:
+            continue
+        key = (car_query.lower(), year)
+        if key not in results:
+            recalls = get_vehicle_recalls_cached(db, make, model, year)
+            if recalls is not None:
+                results[key] = recalls
+    return results
+
+
 def get_ratings_batch(db, car_queries_with_years):
     """Fetch ratings for multiple (make, model, year) combos, using cache.
 

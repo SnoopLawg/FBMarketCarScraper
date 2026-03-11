@@ -36,8 +36,8 @@
     /* ── Card Grid ── */
     .deal-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-        gap: 16px;
+        grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+        gap: var(--space-5);
     }
 
     .deal-card {
@@ -45,58 +45,102 @@
         border: 1px solid var(--border);
         border-radius: var(--radius-lg);
         overflow: hidden;
-        transition: border-color 0.2s, transform 0.2s;
+        transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     }
     .deal-card:hover {
         border-color: var(--border-hover);
         transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.35);
     }
 
     .deal-img {
         width: 100%;
-        height: 210px;
+        aspect-ratio: 16 / 10;
         object-fit: cover;
         display: block;
         background: var(--bg-input);
     }
     .deal-img-empty {
-        width: 100%; height: 210px;
+        width: 100%; aspect-ratio: 16 / 10;
         background: var(--bg-input);
         display: flex; align-items: center; justify-content: center;
         color: var(--text-muted); font-size: 13px;
     }
 
-    .deal-body { padding: 18px; }
+    .deal-body { padding: var(--space-5); }
 
-    .deal-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .deal-badges-primary { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .deal-badges-secondary { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: var(--space-3); }
 
     .deal-title {
         font-size: 15px; font-weight: 600; color: var(--text-primary);
-        line-height: 1.35; margin-bottom: 12px;
+        line-height: 1.35; margin-bottom: var(--space-3);
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
 
-    .deal-price-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
-    .deal-price { font-size: 24px; font-weight: 700; color: var(--green); letter-spacing: -0.5px; }
-    .deal-savings { font-size: 12px; font-weight: 600; color: var(--red); }
+    .deal-price-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: var(--space-1); }
+    .deal-price { font-size: 24px; font-weight: 700; color: var(--green); letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+    .deal-savings { font-size: 12px; font-weight: 600; color: var(--green); font-variant-numeric: tabular-nums; }
 
-    .deal-price-change { font-size: 12px; margin-bottom: 4px; }
+    .deal-price-change { font-size: 12px; margin-bottom: var(--space-1); font-variant-numeric: tabular-nums; }
     .price-drop { color: var(--green); font-weight: 500; }
     .price-up { color: var(--red); font-weight: 500; }
 
-    .deal-details { margin: 12px 0 0 0; }
+    /* Market range container */
+    .market-range {
+        margin: var(--space-3) 0 var(--space-2);
+        padding: 10px 12px;
+        background: rgba(255,255,255,0.02);
+        border-radius: var(--radius-sm);
+        border: 1px solid rgba(255,255,255,0.04);
+        font-size: 11px;
+    }
+    .market-range-bar {
+        position: relative;
+        height: 8px;
+        background: var(--border);
+        border-radius: 4px;
+        overflow: visible;
+    }
+    .market-range-dot {
+        width: 14px; height: 14px;
+        border-radius: 50%;
+        border: 2px solid var(--bg-card);
+        box-shadow: 0 0 0 2px rgba(0,0,0,0.3);
+        z-index: 1;
+    }
+
+    .deal-details { margin: var(--space-3) 0 0 0; }
     .deal-detail {
         font-size: 13px; color: var(--text-secondary);
-        padding: 3px 0;
+        padding: 3px 0; line-height: 1.35;
         display: flex; align-items: center; gap: 6px;
     }
-    .deal-detail-icon { color: var(--text-muted); font-size: 14px; width: 16px; text-align: center; }
+    .deal-detail-icon { color: var(--text-muted); width: 16px; text-align: center; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .deal-detail-icon .lucide { width: 14px; height: 14px; stroke-width: 2; }
     .deal-detail-muted { color: var(--text-muted); font-size: 12px; }
 
-    .deal-divider { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+    /* Progressive disclosure for secondary details */
+    .deal-details-extra {
+        max-height: 0; overflow: hidden;
+        transition: max-height 0.3s ease;
+    }
+    .deal-card.expanded .deal-details-extra { max-height: 200px; }
+    .deal-details-toggle {
+        font-size: 12px; color: var(--text-muted); cursor: pointer;
+        padding: 4px 0; border: none; background: none;
+        font-family: var(--font); display: flex; align-items: center; gap: 4px;
+    }
+    .deal-details-toggle:hover { color: var(--text-secondary); }
+    .deal-details-toggle .lucide { width: 12px; height: 12px; transition: transform 0.2s; }
+    .deal-card.expanded .deal-details-toggle .lucide { transform: rotate(180deg); }
 
-    .deal-actions { display: flex; gap: 8px; }
-    .deal-actions .btn { flex: 1; justify-content: center; }
+    .deal-divider { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: var(--space-4) 0; }
+
+    .deal-actions { display: flex; gap: var(--space-2); }
+    .deal-actions .btn:first-child { flex: 2; justify-content: center; }
+    .deal-actions .btn:not(:first-child) { flex: 1; justify-content: center; }
 
     .empty-state {
         text-align: center; padding: 80px 20px;
@@ -290,6 +334,19 @@
             btn.style.color = 'var(--red)';
         }
     }
+
+    // Update "Show more" / "Show less" text on toggle
+    document.addEventListener('click', function(e) {
+        const toggle = e.target.closest('.deal-details-toggle');
+        if (!toggle) return;
+        const card = toggle.closest('.deal-card');
+        const label = toggle.querySelector('span');
+        if (label) {
+            label.textContent = card.classList.contains('expanded') ? 'Show less' : 'Show more';
+        }
+        // Re-render any Lucide icons that might have been added
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    });
 
     async function deleteDeal(href, cardId) {
         await fetch('/api/delete', {

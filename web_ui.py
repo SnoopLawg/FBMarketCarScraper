@@ -195,6 +195,11 @@ def favorites_page():
         d["nhtsa_rating"] = None
         d["vin_data"] = None
         d["market_range"] = None
+        d["recalls"] = []
+        d["recalls_count"] = 0
+        d["mpg_data"] = None
+        d["monthly_fuel_cost"] = None
+        d["vin_mismatches"] = None
         enriched.append(d)
 
     # Enrich with price history

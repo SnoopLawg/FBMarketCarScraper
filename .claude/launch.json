@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "carfinder",
+      "runtimeExecutable": "./venv/bin/python",
+      "runtimeArgs": ["main.py", "--ui-only"],
+      "port": 5001
+    }
+  ]
+}

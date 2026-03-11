@@ -6,10 +6,8 @@ from pathlib import Path
 
 from config import load_config
 from database import Database
-from driver import create_driver
 from analysis import clean_listings, calculate_averages, find_deals
 from web_ui import start_web_ui
-from scrapers import ALL_SCRAPERS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +18,9 @@ logging.basicConfig(
 
 def run_scrapers(config, db):
     """Start the browser, run each enabled scraper, then quit."""
+    from driver import create_driver
+    from scrapers import ALL_SCRAPERS
+
     sources = config.get("Sources", {})
     enabled = {k: v for k, v in sources.items() if v.get("enabled", True)}
 
