@@ -198,11 +198,30 @@ class Database:
 
     # ── Inserts ────────────────────────────────────────────────────
 
+    @staticmethod
+    def _normalize_href(href):
+        """Strip tracking query params from Facebook Marketplace URLs.
+
+        FB appends session-specific tracking UUIDs (browse_serp, referral_code,
+        __tn__, etc.) that change every scrape, making the same listing appear
+        as a different URL each time.  The actual identity is the path, e.g.
+        /marketplace/item/12345/.
+        """
+        if not href:
+            return href
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(href)
+        # Keep scheme, netloc, path — drop params, query, fragment
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path,
+                           '', '', ''))
+
     def insert_listing(self, *, car_query, href, image_url, price, car_name,
                        location, mileage_raw, source, deleted_set=None,
                        trim="", seller="", condition="", deal_rating="",
                        accident_history="", distance="", title_type=""):
         """Insert or update a listing, parsing raw price/mileage/year."""
+        href = self._normalize_href(href)
+
         if deleted_set and href in deleted_set:
             return
 
@@ -331,9 +350,23 @@ class Database:
         """Return all active listings with key fields for analytics."""
         self.cur.execute(
             "SELECT car_query, price, mileage, year, source, location, "
-            "seller, deal_rating, distance, created_at "
+            "seller, deal_rating, distance, created_at, "
+            "title_type, trim, accident_history, condition, vin "
             "FROM listings WHERE deleted_at IS NULL AND price IS NOT NULL"
         )
+        return self.cur.fetchall()
+
+    def get_price_drops_summary(self, days=30):
+        """Get price drop events from the last N days."""
+        self.cur.execute(
+            "SELECT ph.listing_href, ph.old_price, ph.new_price, "
+            "ph.changed_at, l.car_query, l.car_name "
+            "FROM price_history ph "
+            "LEFT JOIN listings l ON l.href = ph.listing_href "
+            "WHERE ph.new_price < ph.old_price "
+            "AND ph.changed_at >= datetime('now', ?) "
+            "ORDER BY ph.changed_at DESC",
+            (f'-{days} days',))
         return self.cur.fetchall()
 
     def get_analytics_averages(self):

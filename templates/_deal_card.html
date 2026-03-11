@@ -14,9 +14,12 @@
             <span class="badge badge-{{ deal.source }}">{{ deal.source }}</span>
             {% if deal.year %}<span class="badge badge-year">{{ deal.year }}</span>{% endif %}
             {% if deal.deal_score is not none %}
+            {% set _sb = deal.score_breakdown or {} %}
+            {% set _reasons = _sb.get('reasons', {}) if _sb else {} %}
             <span class="badge badge-score badge-score-{{ deal.deal_grade|lower }}"
                   style="cursor:pointer"
-                  onclick="showScoreModal({{ deal.deal_score }}, {{ deal.score_breakdown.price_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.condition_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.mileage_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.reliability_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.drivetrain_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.trim_score if deal.score_breakdown else 0 }}, {{ deal.score_breakdown.freshness_score if deal.score_breakdown else 0 }}, '{{ deal.deal_grade }}', {{ deal.title_cap|default(100) }})">
+                  data-score='{{ {"total": deal.deal_score, "grade": deal.deal_grade, "title_cap": deal.title_cap|default(100), "price": _sb.price_score|default(0), "condition": _sb.condition_score|default(0), "mileage": _sb.mileage_score|default(0), "reliability": _sb.reliability_score|default(0), "drivetrain": _sb.drivetrain_score|default(0), "trim": _sb.trim_score|default(0), "freshness": _sb.freshness_score|default(0), "r_price": _reasons.get("price","")|default(""), "r_condition": _reasons.get("condition","")|default(""), "r_mileage": _reasons.get("mileage","")|default(""), "r_reliability": _reasons.get("reliability","")|default(""), "r_drivetrain": _reasons.get("drivetrain","")|default(""), "r_trim": _reasons.get("trim","")|default(""), "r_freshness": _reasons.get("freshness","")|default("")}|tojson }}'
+                  onclick="showScoreModal(JSON.parse(this.dataset.score))">
                 {{ deal.deal_grade }} ({{ deal.deal_score }})
             </span>
             {% endif %}
@@ -78,8 +81,10 @@
                 {% endif %}
             </div>
             <div style="position:relative;height:6px;background:var(--border);border-radius:3px;overflow:visible">
-                <div style="position:absolute;left:{{ ((deal.market_range.fair - deal.market_range.low) / (deal.market_range.premium - deal.market_range.low) * 100)|round }}%;right:{{ (100 - (deal.market_range.high - deal.market_range.low) / (deal.market_range.premium - deal.market_range.low) * 100)|round }}%;height:100%;background:rgba(91,141,238,0.3);border-radius:3px"></div>
                 {% set bar_range = deal.market_range.premium - deal.market_range.low %}
+                {% if bar_range > 0 %}
+                <div style="position:absolute;left:{{ ((deal.market_range.fair - deal.market_range.low) / bar_range * 100)|round }}%;right:{{ (100 - (deal.market_range.high - deal.market_range.low) / bar_range * 100)|round }}%;height:100%;background:rgba(91,141,238,0.3);border-radius:3px"></div>
+                {% endif %}
                 {% if bar_range > 0 %}
                 {% set pos = ((deal.price - deal.market_range.low) / bar_range * 100) %}
                 {% set pos_clamped = [0, [pos, 100]|min]|max %}

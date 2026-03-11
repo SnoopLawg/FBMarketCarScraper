@@ -5,9 +5,17 @@
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
+    .analytics-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+    .analytics-toolbar .label { margin-bottom: 0; }
+
     .stats-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 12px;
         margin-bottom: 24px;
     }
@@ -15,15 +23,18 @@
         background: var(--bg-card);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
-        padding: 20px;
+        padding: 18px 20px;
     }
     .stat-value {
-        font-size: 28px; font-weight: 700; color: var(--text-primary);
+        font-size: 26px; font-weight: 700; color: var(--text-primary);
         letter-spacing: -0.5px;
     }
     .stat-label {
-        font-size: 12px; font-weight: 500; color: var(--text-muted);
+        font-size: 11px; font-weight: 500; color: var(--text-muted);
         text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;
+    }
+    .stat-sub {
+        font-size: 11px; color: var(--text-muted); margin-top: 2px;
     }
 
     .chart-grid {
@@ -70,6 +81,7 @@
 
     @media (max-width: 768px) {
         .chart-grid { grid-template-columns: 1fr; }
+        .analytics-toolbar { flex-wrap: wrap; }
     }
 </style>
 {% endblock %}
@@ -79,6 +91,14 @@
     <div class="loading-state" id="loading">Loading analytics...</div>
 
     <div id="content" style="display:none;">
+        <!-- Car filter -->
+        <div class="analytics-toolbar">
+            <span class="label" style="margin-right:4px">Filter:</span>
+            <select class="input" id="car-filter" onchange="applyFilter()" style="min-width:200px">
+                <option value="">All Cars</option>
+            </select>
+        </div>
+
         <div class="stats-row" id="stats-row"></div>
 
         <div class="chart-grid">
@@ -87,28 +107,43 @@
                 <canvas id="sourceChart"></canvas>
             </div>
             <div class="chart-card">
+                <div class="chart-title">Title Type Distribution</div>
+                <canvas id="titleTypeChart"></canvas>
+            </div>
+            <div class="chart-card">
+                <div class="chart-title">Deal Score Distribution</div>
+                <canvas id="scoreChart"></canvas>
+            </div>
+            <div class="chart-card">
                 <div class="chart-title">Listings by Car</div>
                 <canvas id="carChart"></canvas>
+            </div>
+            <div class="chart-card full">
+                <div class="chart-title">Price vs Mileage <span style="font-weight:400;font-size:11px;color:var(--text-muted)">(colored by title type)</span></div>
+                <canvas id="scatterChart"></canvas>
             </div>
             <div class="chart-card">
                 <div class="chart-title">Price Distribution</div>
                 <canvas id="priceChart"></canvas>
             </div>
             <div class="chart-card">
-                <div class="chart-title">Average Price by Car</div>
+                <div class="chart-title">Average Price by Car &amp; Title</div>
                 <canvas id="avgPriceChart"></canvas>
             </div>
-            <div class="chart-card full">
-                <div class="chart-title">Price vs Mileage</div>
-                <canvas id="scatterChart"></canvas>
+            <div class="chart-card full" id="priceDropsCard" style="display:none">
+                <div class="chart-title">Price Drops (Last 30 Days)</div>
+                <canvas id="priceDropsChart"></canvas>
             </div>
         </div>
 
         <div class="chart-card" style="margin-bottom:24px;">
-            <div class="chart-title">Lowest Price per Car</div>
-            <table class="data-table" id="bestTable">
+            <div class="chart-title">Top 20 Deals by Score</div>
+            <table class="data-table" id="dealsTable">
                 <thead>
-                    <tr><th>Car</th><th>Year</th><th>Price</th><th>Mileage</th><th>Source</th><th>Deal Rating</th></tr>
+                    <tr>
+                        <th>Car</th><th>Year</th><th>Price</th><th>Score</th>
+                        <th>Title</th><th>Mileage</th><th>Source</th><th></th>
+                    </tr>
                 </thead>
                 <tbody></tbody>
             </table>
@@ -120,46 +155,124 @@
 {% block scripts %}
 <script>
 const COLORS = ['#5b8dee','#f87171','#34d399','#fbbf24','#a78bfa','#fb923c','#38bdf8','#e879f9'];
+const TITLE_COLORS = {
+    'clean': '#34d399',
+    'rebuilt': '#5b8dee',
+    'salvage': '#fb923c',
+    'lemon': '#f87171',
+    'unknown': '#5c5c74',
+    '': '#5c5c74',
+};
+const GRADE_COLORS = {
+    'A': '#34d399',
+    'B': '#5b8dee',
+    'C': '#fbbf24',
+    'D': '#fb923c',
+    'F': '#f87171',
+};
+const GRADE_BG = {
+    'A': 'var(--green-muted)',
+    'B': 'rgba(91,141,238,0.15)',
+    'C': 'rgba(251,191,36,0.15)',
+    'D': 'rgba(251,146,60,0.15)',
+    'F': 'var(--red-muted)',
+};
 
 Chart.defaults.color = '#9090a8';
 Chart.defaults.borderColor = '#1e1e2e';
 Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, Inter, Segoe UI, sans-serif';
 
+let _rawData = null;
+let _charts = {};
+
 fetch('/api/analytics')
     .then(r => r.json())
     .then(data => {
+        _rawData = data;
         document.getElementById('loading').style.display = 'none';
         document.getElementById('content').style.display = 'block';
+        populateCarFilter(data.listings);
         render(data);
     });
 
-function render({ listings, averages }) {
-    const sources = [...new Set(listings.map(l => l.source))];
-    const cars = [...new Set(listings.map(l => l.car_query))];
+function populateCarFilter(listings) {
+    const cars = [...new Set(listings.map(l => l.car_query))].sort();
+    const sel = document.getElementById('car-filter');
+    cars.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        sel.appendChild(opt);
+    });
+}
+
+function applyFilter() {
+    if (!_rawData) return;
+    // Destroy existing charts
+    Object.values(_charts).forEach(c => { try { c.destroy(); } catch(e) {} });
+    _charts = {};
+    render(_rawData);
+}
+
+function filterData(data) {
+    const car = document.getElementById('car-filter').value;
+    if (!car) return data;
+    return {
+        listings: data.listings.filter(l => l.car_query === car),
+        averages: data.averages.filter(a => a.car_query === car),
+        deals: data.deals.filter(d => d.car_query === car),
+        price_drops: data.price_drops.filter(d => d.car_query === car),
+    };
+}
+
+function render(rawData) {
+    const data = filterData(rawData);
+    const { listings, deals, price_drops } = data;
+
+    // ── Stats Row ──
     const prices = listings.map(l => l.price).filter(p => p > 0);
-    const avgPrice = prices.length ? Math.round(prices.reduce((a,b) => a+b, 0) / prices.length) : 0;
     const sortedPrices = [...prices].sort((a,b) => a - b);
     const medianPrice = sortedPrices.length ? sortedPrices[Math.floor(sortedPrices.length/2)] : 0;
     const withMileage = listings.filter(l => l.mileage && l.mileage > 0);
     const avgMileage = withMileage.length
         ? Math.round(withMileage.reduce((a,l) => a + l.mileage, 0) / withMileage.length) : 0;
 
+    const cleanCount = listings.filter(l => l.title_type === 'clean').length;
+    const knownTitle = listings.filter(l => l.title_type && l.title_type !== 'unknown').length;
+    const cleanPct = knownTitle > 0 ? Math.round(cleanCount / knownTitle * 100) : 0;
+
+    const scoredDeals = deals.filter(d => d.deal_score != null);
+    const avgScore = scoredDeals.length
+        ? Math.round(scoredDeals.reduce((a,d) => a + d.deal_score, 0) / scoredDeals.length) : 0;
+    const gradeACount = deals.filter(d => d.deal_grade === 'A').length;
+
+    const withVin = listings.filter(l => l.vin).length;
+    const vinPct = listings.length > 0 ? Math.round(withVin / listings.length * 100) : 0;
+
+    const totalDropSaved = price_drops.reduce((a,d) => a + d.saved, 0);
+
     const stats = [
-        { value: listings.length, label: 'Total Listings' },
-        { value: sources.length, label: 'Sources' },
-        { value: cars.length, label: 'Cars Tracked' },
-        { value: `$${avgPrice.toLocaleString()}`, label: 'Avg Price' },
+        { value: listings.length.toLocaleString(), label: 'Total Listings' },
+        { value: `${cleanPct}%`, label: 'Clean Title', sub: `${cleanCount} of ${knownTitle} known` },
+        { value: avgScore, label: 'Avg Deal Score', sub: `${scoredDeals.length} scored` },
+        { value: gradeACount, label: 'Grade A Deals' },
         { value: `$${medianPrice.toLocaleString()}`, label: 'Median Price' },
-        { value: avgMileage.toLocaleString(), label: 'Avg Mileage' },
+        { value: avgMileage.toLocaleString(), label: 'Avg Mileage', sub: `${withMileage.length} with data` },
+        { value: `${vinPct}%`, label: 'VIN Coverage', sub: `${withVin} of ${listings.length}` },
+        { value: price_drops.length, label: 'Price Drops (30d)', sub: totalDropSaved > 0 ? `$${totalDropSaved.toLocaleString()} saved` : '' },
     ];
     document.getElementById('stats-row').innerHTML = stats.map(s =>
-        `<div class="stat-card"><div class="stat-value">${s.value}</div><div class="stat-label">${s.label}</div></div>`
+        `<div class="stat-card">
+            <div class="stat-value">${s.value}</div>
+            <div class="stat-label">${s.label}</div>
+            ${s.sub ? `<div class="stat-sub">${s.sub}</div>` : ''}
+        </div>`
     ).join('');
 
-    // Source doughnut
+    // ── Source Doughnut ──
     const bySrc = {};
     listings.forEach(l => bySrc[l.source] = (bySrc[l.source] || 0) + 1);
-    new Chart(document.getElementById('sourceChart'), {
+    _charts.source = new Chart(document.getElementById('sourceChart'), {
         type: 'doughnut',
         data: {
             labels: Object.keys(bySrc),
@@ -171,11 +284,64 @@ function render({ listings, averages }) {
         }
     });
 
-    // Car bar
+    // ── Title Type Doughnut ──
+    const byTitle = {};
+    listings.forEach(l => {
+        const t = l.title_type || 'unknown';
+        const label = t === '' ? 'unknown' : t;
+        byTitle[label] = (byTitle[label] || 0) + 1;
+    });
+    const titleOrder = ['clean', 'rebuilt', 'salvage', 'lemon', 'unknown'];
+    const titleLabels = titleOrder.filter(t => byTitle[t]);
+    const titleData = titleLabels.map(t => byTitle[t]);
+    const titleBgColors = titleLabels.map(t => TITLE_COLORS[t] || '#5c5c74');
+    _charts.titleType = new Chart(document.getElementById('titleTypeChart'), {
+        type: 'doughnut',
+        data: {
+            labels: titleLabels.map(t => t.charAt(0).toUpperCase() + t.slice(1)),
+            datasets: [{ data: titleData, backgroundColor: titleBgColors, borderWidth: 0 }]
+        },
+        options: {
+            cutout: '65%',
+            plugins: { legend: { position: 'bottom', labels: { padding: 16 } } }
+        }
+    });
+
+    // ── Score Distribution Histogram ──
+    const scoreBuckets = Array(10).fill(0);  // 0-10, 10-20, ... 90-100
+    scoredDeals.forEach(d => {
+        const idx = Math.min(Math.floor(d.deal_score / 10), 9);
+        scoreBuckets[idx]++;
+    });
+    const bucketLabels = ['0-10','10-20','20-30','30-40','40-50','50-60','60-70','70-80','80-90','90-100'];
+    const bucketColors = ['#f87171','#f87171','#fb923c','#fb923c','#fbbf24','#fbbf24','#5b8dee','#5b8dee','#34d399','#34d399'];
+    _charts.score = new Chart(document.getElementById('scoreChart'), {
+        type: 'bar',
+        data: {
+            labels: bucketLabels,
+            datasets: [{
+                data: scoreBuckets,
+                backgroundColor: bucketColors,
+                borderRadius: 4,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' },
+                     title: { display: true, text: 'Deals', color: '#5c5c74' } },
+                x: { grid: { display: false },
+                     title: { display: true, text: 'Score Range', color: '#5c5c74' } }
+            }
+        }
+    });
+
+    // ── Listings by Car Bar ──
     const byCar = {};
     listings.forEach(l => byCar[l.car_query] = (byCar[l.car_query] || 0) + 1);
     const sortedCars = Object.entries(byCar).sort((a,b) => b[1] - a[1]);
-    new Chart(document.getElementById('carChart'), {
+    _charts.car = new Chart(document.getElementById('carChart'), {
         type: 'bar',
         data: {
             labels: sortedCars.map(c => c[0]),
@@ -188,70 +354,25 @@ function render({ listings, averages }) {
         }
     });
 
-    // Price histogram
-    const bucketSize = Math.max(500, Math.round((Math.max(...prices) - Math.min(...prices)) / 10 / 500) * 500) || 500;
-    const buckets = {};
-    prices.forEach(p => {
-        const b = Math.floor(p / bucketSize) * bucketSize;
-        const label = `$${(b/1000).toFixed(b%1000?1:0)}k`;
-        buckets[label] = (buckets[label] || 0) + 1;
-    });
-    const sortedBuckets = Object.entries(buckets);
-    new Chart(document.getElementById('priceChart'), {
-        type: 'bar',
-        data: {
-            labels: sortedBuckets.map(b => b[0]),
-            datasets: [{ data: sortedBuckets.map(b => b[1]), backgroundColor: '#34d399', borderRadius: 4, borderSkipped: false }]
-        },
-        options: {
-            plugins: { legend: { display: false } },
-            scales: {
-                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } },
-                x: { grid: { display: false } }
-            }
-        }
-    });
-
-    // Avg price by car
-    const carPrices = {};
-    listings.forEach(l => {
-        if (!l.price) return;
-        if (!carPrices[l.car_query]) carPrices[l.car_query] = [];
-        carPrices[l.car_query].push(l.price);
-    });
-    const carAvgs = Object.entries(carPrices)
-        .map(([car, ps]) => ({ car, avg: Math.round(ps.reduce((a,b) => a+b, 0) / ps.length) }))
-        .sort((a,b) => a.avg - b.avg);
-    new Chart(document.getElementById('avgPriceChart'), {
-        type: 'bar',
-        data: {
-            labels: carAvgs.map(c => c.car),
-            datasets: [{ data: carAvgs.map(c => c.avg), backgroundColor: '#fbbf24', borderRadius: 4, borderSkipped: false }]
-        },
-        options: {
-            plugins: { legend: { display: false } },
-            scales: {
-                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } },
-                x: { grid: { display: false } }
-            }
-        }
-    });
-
-    // Scatter
-    const scatterData = {};
+    // ── Price vs Mileage Scatter (colored by title type) ──
+    const scatterByTitle = {};
     listings.forEach(l => {
         if (!l.price || !l.mileage || l.mileage <= 0) return;
-        if (!scatterData[l.car_query]) scatterData[l.car_query] = [];
-        scatterData[l.car_query].push({ x: l.mileage, y: l.price });
+        const t = l.title_type || 'unknown';
+        const label = t === '' ? 'unknown' : t;
+        if (!scatterByTitle[label]) scatterByTitle[label] = [];
+        scatterByTitle[label].push({ x: l.mileage, y: l.price, car: l.car_query });
     });
-    new Chart(document.getElementById('scatterChart'), {
+    const scatterOrder = ['clean', 'rebuilt', 'salvage', 'lemon', 'unknown'];
+    _charts.scatter = new Chart(document.getElementById('scatterChart'), {
         type: 'scatter',
         data: {
-            datasets: Object.entries(scatterData).map(([car, points], i) => ({
-                label: car, data: points,
-                backgroundColor: COLORS[i % COLORS.length] + '99',
-                borderColor: COLORS[i % COLORS.length],
-                borderWidth: 1, pointRadius: 5, pointHoverRadius: 7,
+            datasets: scatterOrder.filter(t => scatterByTitle[t]).map(t => ({
+                label: t.charAt(0).toUpperCase() + t.slice(1),
+                data: scatterByTitle[t],
+                backgroundColor: (TITLE_COLORS[t] || '#5c5c74') + '99',
+                borderColor: TITLE_COLORS[t] || '#5c5c74',
+                borderWidth: 1, pointRadius: 4, pointHoverRadius: 6,
             }))
         },
         options: {
@@ -259,30 +380,179 @@ function render({ listings, averages }) {
                 x: { title: { display: true, text: 'Mileage', color: '#5c5c74' }, grid: { color: 'rgba(255,255,255,0.03)' } },
                 y: { title: { display: true, text: 'Price ($)', color: '#5c5c74' }, beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } }
             },
-            plugins: { legend: { position: 'bottom', labels: { padding: 16 } } }
+            plugins: {
+                legend: { position: 'bottom', labels: { padding: 16 } },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            const pt = ctx.raw;
+                            return `${pt.car}: $${pt.y.toLocaleString()} / ${pt.x.toLocaleString()} mi`;
+                        }
+                    }
+                }
+            }
         }
     });
 
-    // Best value table
-    const bestPerCar = {};
+    // ── Price Distribution Histogram ──
+    const bucketSize = Math.max(500, Math.round((Math.max(...prices) - Math.min(...prices)) / 10 / 500) * 500) || 500;
+    const priceBuckets = {};
+    prices.forEach(p => {
+        const b = Math.floor(p / bucketSize) * bucketSize;
+        const label = `$${(b/1000).toFixed(b%1000?1:0)}k`;
+        priceBuckets[label] = (priceBuckets[label] || 0) + 1;
+    });
+    const priceBucketEntries = Object.entries(priceBuckets);
+    _charts.price = new Chart(document.getElementById('priceChart'), {
+        type: 'bar',
+        data: {
+            labels: priceBucketEntries.map(b => b[0]),
+            datasets: [{ data: priceBucketEntries.map(b => b[1]), backgroundColor: '#34d399', borderRadius: 4, borderSkipped: false }]
+        },
+        options: {
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+
+    // ── Average Price by Car & Title Group ──
+    const carTitlePrices = {};
     listings.forEach(l => {
         if (!l.price) return;
-        if (!bestPerCar[l.car_query] || l.price < bestPerCar[l.car_query].price)
-            bestPerCar[l.car_query] = l;
+        const t = l.title_type || 'unknown';
+        const label = (t === 'clean' || t === 'unknown' || t === '') ? 'clean' : 'rebuilt/salvage';
+        const key = l.car_query;
+        if (!carTitlePrices[key]) carTitlePrices[key] = {};
+        if (!carTitlePrices[key][label]) carTitlePrices[key][label] = [];
+        carTitlePrices[key][label].push(l.price);
     });
-    const tbody = document.querySelector('#bestTable tbody');
-    Object.values(bestPerCar).sort((a,b) => a.price - b.price).forEach(l => {
+    const avgCars = Object.keys(carTitlePrices).sort();
+    const cleanAvgs = avgCars.map(c => {
+        const ps = carTitlePrices[c]['clean'] || [];
+        return ps.length ? Math.round(ps.reduce((a,b) => a+b, 0) / ps.length) : 0;
+    });
+    const otherAvgs = avgCars.map(c => {
+        const ps = carTitlePrices[c]['rebuilt/salvage'] || [];
+        return ps.length ? Math.round(ps.reduce((a,b) => a+b, 0) / ps.length) : 0;
+    });
+    _charts.avgPrice = new Chart(document.getElementById('avgPriceChart'), {
+        type: 'bar',
+        data: {
+            labels: avgCars,
+            datasets: [
+                { label: 'Clean/Unknown', data: cleanAvgs, backgroundColor: '#34d399', borderRadius: 4, borderSkipped: false },
+                { label: 'Rebuilt/Salvage', data: otherAvgs, backgroundColor: '#fb923c', borderRadius: 4, borderSkipped: false },
+            ]
+        },
+        options: {
+            plugins: { legend: { position: 'bottom', labels: { padding: 16 } } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+
+    // ── Price Drops Timeline ──
+    if (price_drops.length > 0) {
+        document.getElementById('priceDropsCard').style.display = 'block';
+        const dropsByDate = {};
+        price_drops.forEach(d => {
+            const date = d.changed_at.substring(0, 10);
+            if (!dropsByDate[date]) dropsByDate[date] = { count: 0, saved: 0 };
+            dropsByDate[date].count++;
+            dropsByDate[date].saved += d.saved;
+        });
+        const dropDates = Object.keys(dropsByDate).sort();
+        _charts.drops = new Chart(document.getElementById('priceDropsChart'), {
+            type: 'bar',
+            data: {
+                labels: dropDates,
+                datasets: [
+                    {
+                        label: 'Total Saved ($)',
+                        data: dropDates.map(d => dropsByDate[d].saved),
+                        backgroundColor: '#34d39966',
+                        borderColor: '#34d399',
+                        borderWidth: 1,
+                        borderRadius: 4,
+                        borderSkipped: false,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'Drop Count',
+                        data: dropDates.map(d => dropsByDate[d].count),
+                        type: 'line',
+                        borderColor: '#5b8dee',
+                        backgroundColor: '#5b8dee',
+                        pointRadius: 4,
+                        tension: 0.3,
+                        yAxisID: 'y1',
+                    },
+                ]
+            },
+            options: {
+                plugins: { legend: { position: 'bottom', labels: { padding: 16 } } },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        position: 'left',
+                        title: { display: true, text: 'Savings ($)', color: '#5c5c74' },
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                    },
+                    y1: {
+                        beginAtZero: true,
+                        position: 'right',
+                        title: { display: true, text: 'Drops', color: '#5c5c74' },
+                        grid: { drawOnChartArea: false },
+                    },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    } else {
+        document.getElementById('priceDropsCard').style.display = 'none';
+    }
+
+    // ── Top Deals Table ──
+    const topDeals = deals
+        .filter(d => d.deal_score != null && d.deal_score >= 40)
+        .sort((a,b) => b.deal_score - a.deal_score)
+        .slice(0, 20);
+    const tbody = document.querySelector('#dealsTable tbody');
+    tbody.innerHTML = '';
+    if (topDeals.length === 0) {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>${l.car_query}</td>
-            <td>${l.year || '—'}</td>
-            <td class="price">$${l.price.toLocaleString()}</td>
-            <td>${l.mileage ? l.mileage.toLocaleString() + ' mi' : '—'}</td>
-            <td>${l.source}</td>
-            <td>${l.deal_rating || '—'}</td>
-        `;
+        tr.innerHTML = '<td colspan="8" style="text-align:center;color:var(--text-muted);padding:24px">No deals with score &ge; 40</td>';
         tbody.appendChild(tr);
-    });
+    } else {
+        topDeals.forEach(d => {
+            const grade = d.deal_grade || '?';
+            const gradeColor = GRADE_COLORS[grade] || '#5c5c74';
+            const gradeBg = GRADE_BG[grade] || 'rgba(255,255,255,0.06)';
+            const titleType = d.title_type || '—';
+            const titleColor = TITLE_COLORS[d.title_type] || '#5c5c74';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${d.car_name || d.car_query}</td>
+                <td>${d.year || '—'}</td>
+                <td class="price">$${d.price.toLocaleString()}</td>
+                <td>
+                    <span class="badge" style="background:${gradeBg};color:${gradeColor}">${grade} (${d.deal_score})</span>
+                </td>
+                <td>
+                    <span style="color:${titleColor};text-transform:capitalize;font-weight:500">${titleType}</span>
+                </td>
+                <td>${d.mileage ? d.mileage.toLocaleString() + ' mi' : '—'}</td>
+                <td>${d.source}</td>
+                <td><a class="btn btn-ghost btn-sm" href="${d.href}" target="_blank">View</a></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
 }
 </script>
 {% endblock %}

@@ -350,6 +350,11 @@ def analytics_data():
             "deal_rating": r["deal_rating"],
             "distance": r["distance"],
             "created_at": r["created_at"],
+            "title_type": r["title_type"] or "",
+            "trim": r["trim"] or "",
+            "accident_history": r["accident_history"] or "",
+            "condition": r["condition"] or "",
+            "vin": r["vin"] or "",
         })
 
     avg_rows = _db.get_analytics_averages() if _db else []
@@ -362,7 +367,43 @@ def analytics_data():
             "avg_higher": r["avg_higher_mileage_price"],
         })
 
-    return jsonify({"listings": listings, "averages": averages})
+    # Include pre-scored deals from the in-memory deals list
+    deals = []
+    for d in _deals:
+        deals.append({
+            "car_query": d.get("car_query", ""),
+            "car_name": d.get("car_name", ""),
+            "price": d.get("price", 0),
+            "mileage": d.get("mileage"),
+            "year": d.get("year"),
+            "source": d.get("source", ""),
+            "deal_score": d.get("deal_score"),
+            "deal_grade": d.get("deal_grade", ""),
+            "title_type": d.get("title_type", ""),
+            "trim": d.get("trim", ""),
+            "drivetrain": d.get("drivetrain", ""),
+            "href": d.get("href", ""),
+        })
+
+    # Price drops in last 30 days
+    drop_rows = _db.get_price_drops_summary(days=30) if _db else []
+    price_drops = []
+    for r in drop_rows:
+        price_drops.append({
+            "car_query": r["car_query"] or "",
+            "car_name": r["car_name"] or "",
+            "old_price": r["old_price"],
+            "new_price": r["new_price"],
+            "saved": r["old_price"] - r["new_price"],
+            "changed_at": r["changed_at"],
+        })
+
+    return jsonify({
+        "listings": listings,
+        "averages": averages,
+        "deals": deals,
+        "price_drops": price_drops,
+    })
 
 
 # ── Scrape Now ────────────────────────────────────────────────────

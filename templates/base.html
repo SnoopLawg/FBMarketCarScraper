@@ -249,8 +249,10 @@
             border: 1px solid var(--border);
             border-radius: var(--radius-lg);
             padding: 28px 32px;
-            width: 380px;
+            width: 420px;
             max-width: 92vw;
+            max-height: 85vh;
+            overflow-y: auto;
             box-shadow: 0 16px 48px rgba(0,0,0,0.5);
         }
         .score-modal-header {
@@ -271,10 +273,10 @@
         .score-modal-subtitle {
             font-size: 12px; color: var(--text-muted); margin-bottom: 20px;
         }
-        .score-factor { margin-bottom: 14px; }
+        .score-factor { margin-bottom: 16px; }
         .score-factor-row {
             display: flex; align-items: center; justify-content: space-between;
-            margin-bottom: 5px;
+            margin-bottom: 4px;
         }
         .score-factor-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
         .score-factor-value { font-size: 13px; font-weight: 700; color: var(--text-primary); }
@@ -283,6 +285,10 @@
         }
         .score-factor-fill {
             height: 100%; border-radius: 3px; transition: width 0.4s ease;
+        }
+        .score-factor-reason {
+            font-size: 11px; color: var(--text-muted); margin-top: 4px;
+            line-height: 1.3;
         }
         .score-modal-close {
             margin-top: 16px; width: 100%; padding: 10px;
@@ -368,6 +374,7 @@
                 <div class="score-factor-bar">
                     <div class="score-factor-fill" id="sm-price-bar" style="width:0%;background:var(--green)"></div>
                 </div>
+                <div class="score-factor-reason" id="sm-price-reason"></div>
             </div>
 
             <div class="score-factor">
@@ -378,6 +385,7 @@
                 <div class="score-factor-bar">
                     <div class="score-factor-fill" id="sm-condition-bar" style="width:0%;background:var(--purple)"></div>
                 </div>
+                <div class="score-factor-reason" id="sm-condition-reason"></div>
             </div>
 
             <div class="score-factor">
@@ -388,6 +396,7 @@
                 <div class="score-factor-bar">
                     <div class="score-factor-fill" id="sm-mileage-bar" style="width:0%;background:var(--accent)"></div>
                 </div>
+                <div class="score-factor-reason" id="sm-mileage-reason"></div>
             </div>
 
             <div class="score-factor">
@@ -398,6 +407,7 @@
                 <div class="score-factor-bar">
                     <div class="score-factor-fill" id="sm-reliability-bar" style="width:0%;background:var(--yellow)"></div>
                 </div>
+                <div class="score-factor-reason" id="sm-reliability-reason"></div>
             </div>
 
             <div class="score-factor">
@@ -408,6 +418,7 @@
                 <div class="score-factor-bar">
                     <div class="score-factor-fill" id="sm-drivetrain-bar" style="width:0%;background:#3b82f6"></div>
                 </div>
+                <div class="score-factor-reason" id="sm-drivetrain-reason"></div>
             </div>
 
             <div class="score-factor">
@@ -418,6 +429,7 @@
                 <div class="score-factor-bar">
                     <div class="score-factor-fill" id="sm-trim-bar" style="width:0%;background:var(--orange)"></div>
                 </div>
+                <div class="score-factor-reason" id="sm-trim-reason"></div>
             </div>
 
             <div class="score-factor">
@@ -428,11 +440,12 @@
                 <div class="score-factor-bar">
                     <div class="score-factor-fill" id="sm-freshness-bar" style="width:0%;background:#22d3ee"></div>
                 </div>
+                <div class="score-factor-reason" id="sm-freshness-reason"></div>
             </div>
 
             <div class="score-factor" id="sm-cap-row" style="display:none">
                 <div class="score-factor-row">
-                    <span class="score-factor-label" style="color:var(--red)">⚠ Title Cap Applied</span>
+                    <span class="score-factor-label" style="color:var(--red)">Title Cap Applied</span>
                     <span class="score-factor-value" style="color:var(--red)" id="sm-cap-text"></span>
                 </div>
             </div>
@@ -443,38 +456,49 @@
 
     <script>
     /* ── Score Modal ── */
-    function showScoreModal(total, price, condition, mileage, reliability, drivetrain, trim, freshness, grade, titleCap) {
-        document.getElementById('sm-total').textContent = total;
-        document.getElementById('sm-price').textContent = price;
-        document.getElementById('sm-condition').textContent = condition;
-        document.getElementById('sm-mileage').textContent = mileage;
-        document.getElementById('sm-reliability').textContent = reliability;
-        document.getElementById('sm-drivetrain').textContent = drivetrain;
-        document.getElementById('sm-trim').textContent = trim;
-        document.getElementById('sm-freshness').textContent = freshness;
+    function showScoreModal(d) {
+        // d is an object with: total, grade, title_cap, price, condition, mileage,
+        // reliability, drivetrain, trim, freshness, r_price, r_condition, etc.
+        document.getElementById('sm-total').textContent = d.total;
+        document.getElementById('sm-price').textContent = d.price;
+        document.getElementById('sm-condition').textContent = d.condition;
+        document.getElementById('sm-mileage').textContent = d.mileage;
+        document.getElementById('sm-reliability').textContent = d.reliability;
+        document.getElementById('sm-drivetrain').textContent = d.drivetrain;
+        document.getElementById('sm-trim').textContent = d.trim;
+        document.getElementById('sm-freshness').textContent = d.freshness;
 
         // Fill bars (as percentage of each factor's max)
-        document.getElementById('sm-price-bar').style.width = (price / 30 * 100) + '%';
-        document.getElementById('sm-condition-bar').style.width = (condition / 25 * 100) + '%';
-        document.getElementById('sm-mileage-bar').style.width = (mileage / 15 * 100) + '%';
-        document.getElementById('sm-reliability-bar').style.width = (reliability / 10 * 100) + '%';
-        document.getElementById('sm-drivetrain-bar').style.width = (drivetrain / 10 * 100) + '%';
-        document.getElementById('sm-trim-bar').style.width = (trim / 5 * 100) + '%';
-        document.getElementById('sm-freshness-bar').style.width = (freshness / 5 * 100) + '%';
+        document.getElementById('sm-price-bar').style.width = (d.price / 30 * 100) + '%';
+        document.getElementById('sm-condition-bar').style.width = (d.condition / 25 * 100) + '%';
+        document.getElementById('sm-mileage-bar').style.width = (d.mileage / 15 * 100) + '%';
+        document.getElementById('sm-reliability-bar').style.width = (d.reliability / 10 * 100) + '%';
+        document.getElementById('sm-drivetrain-bar').style.width = (d.drivetrain / 10 * 100) + '%';
+        document.getElementById('sm-trim-bar').style.width = (d.trim / 5 * 100) + '%';
+        document.getElementById('sm-freshness-bar').style.width = (d.freshness / 5 * 100) + '%';
+
+        // Reasoning text under each bar
+        document.getElementById('sm-price-reason').textContent = d.r_price || '';
+        document.getElementById('sm-condition-reason').textContent = d.r_condition || '';
+        document.getElementById('sm-mileage-reason').textContent = d.r_mileage || '';
+        document.getElementById('sm-reliability-reason').textContent = d.r_reliability || '';
+        document.getElementById('sm-drivetrain-reason').textContent = d.r_drivetrain || '';
+        document.getElementById('sm-trim-reason').textContent = d.r_trim || '';
+        document.getElementById('sm-freshness-reason').textContent = d.r_freshness || '';
 
         // Title cap warning row
         const capRow = document.getElementById('sm-cap-row');
-        if (titleCap && titleCap < 100) {
-            const raw = price + condition + mileage + reliability + drivetrain + trim + freshness;
+        if (d.title_cap && d.title_cap < 100) {
+            const raw = d.price + d.condition + d.mileage + d.reliability + d.drivetrain + d.trim + d.freshness;
             capRow.style.display = 'block';
-            document.getElementById('sm-cap-text').textContent = 'Max ' + titleCap + ' (raw: ' + raw.toFixed(1) + ')';
+            document.getElementById('sm-cap-text').textContent = 'Max ' + d.title_cap + ' (raw: ' + raw.toFixed(1) + ')';
         } else {
             capRow.style.display = 'none';
         }
 
         // Grade badge
         const gradeEl = document.getElementById('sm-grade');
-        gradeEl.textContent = grade;
+        gradeEl.textContent = d.grade;
         const gradeColors = {
             'A': { bg: 'var(--green-muted)', fg: 'var(--green)' },
             'B': { bg: 'rgba(91,141,238,0.15)', fg: 'var(--accent)' },
@@ -482,7 +506,7 @@
             'D': { bg: 'rgba(251,146,60,0.15)', fg: 'var(--orange)' },
             'F': { bg: 'var(--red-muted)', fg: 'var(--red)' },
         };
-        const c = gradeColors[grade] || gradeColors['F'];
+        const c = gradeColors[d.grade] || gradeColors['F'];
         gradeEl.style.background = c.bg;
         gradeEl.style.color = c.fg;
 

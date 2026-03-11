@@ -127,11 +127,44 @@ def _build_trim_averages(candidates, car_query, mileage_threshold,
 
 # ── Deal Scoring ─────────────────────────────────────────────────
 
+_EXPECTED_LIFESPAN = {
+    # Miles a well-maintained example commonly reaches.
+    # Sources: iSeeCars, Consumer Reports, mechanic consensus.
+    "toyota": 300_000,
+    "lexus": 300_000,
+    "honda": 250_000,
+    "acura": 250_000,
+    "subaru": 220_000,
+    "mazda": 220_000,
+    "hyundai": 200_000,
+    "kia": 200_000,
+    "ford": 200_000,   # trucks/SUVs can go longer, but avg across lineup
+    "chevrolet": 200_000,
+    "chevy": 200_000,
+    "gmc": 200_000,
+    "ram": 200_000,
+    "dodge": 180_000,
+    "jeep": 180_000,
+    "nissan": 180_000,
+    "volkswagen": 170_000,
+    "vw": 170_000,
+    "bmw": 170_000,
+    "mercedes": 170_000,
+    "audi": 170_000,
+    "volvo": 180_000,
+    "buick": 190_000,
+    "chrysler": 170_000,
+    "mitsubishi": 180_000,
+    "tesla": 250_000,
+}
+_DEFAULT_LIFESPAN = 200_000
+
+
 def compute_deal_score(price, avg_price, mileage, year, deal_rating,
                        accident_history, title_type, nhtsa_rating,
                        trim_tier=1, trim_avg_price=None,
                        drivetrain="unknown", dt_source="unknown",
-                       days_listed=0):
+                       days_listed=0, car_query=""):
     """Compute a composite deal score from 0-100 with 7 factors.
 
     Title & Condition is the DOMINANT factor (25 pts) because a bad
@@ -141,7 +174,7 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
     Factors:
       - Price vs Average: 30pts
       - Title & Condition: 25pts  ← THE biggest factor
-      - Mileage: 15pts (absolute benchmarks)
+      - Mileage: 15pts (age-relative — actual vs 12k mi/yr expected)
       - Reliability: 10pts (NHTSA safety + complaints)
       - Drivetrain: 10pts (AWD/4WD bonus — huge in snowy states)
       - Trim Value: 5pts (higher trim at same/lower price)
@@ -161,21 +194,36 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
     trim_score = 0.0
     freshness_score = 0.0
 
+    # Reasoning explanations for each factor
+    reasons = {}
+
     # Use trim-specific average if available, fall back to overall
     effective_avg = trim_avg_price if trim_avg_price and trim_avg_price > 0 else avg_price
 
     # ── Price factor (30 points max) ──────────────────────────────
+    # Uses a square-root curve so moderate discounts score well.
+    # 10% below avg → ~19pts, 20% below → ~27pts, 25%+ → maxes at 30.
     if effective_avg and effective_avg > 0 and price < effective_avg:
         price_ratio = (effective_avg - price) / effective_avg
-        price_score = round(min(30.0, price_ratio * 80.0), 1)
+        price_score = round(min(30.0, price_ratio ** 0.5 * 60.0), 1)
+        pct = round(price_ratio * 100)
+        avg_label = "trim avg" if trim_avg_price and trim_avg_price > 0 else "avg"
+        reasons["price"] = (f"${price:,.0f} is {pct}% below "
+                            f"${effective_avg:,.0f} {avg_label}")
+    elif effective_avg and effective_avg > 0:
+        pct = round((price - effective_avg) / effective_avg * 100)
+        reasons["price"] = (f"${price:,.0f} is {pct}% above "
+                            f"${effective_avg:,.0f} avg — no price credit")
+    else:
+        reasons["price"] = "No average price data to compare"
 
     # ── Title & Condition factor (25 points max) ──────────────────
     # This is the BIGGEST factor.  A salvage title is a dealbreaker;
     # a clean title is the baseline expectation for a real deal.
     #
     # Title base:  clean=18, unknown=4, rebuilt/salvage/lemon=0
-    # Accidents:   no accident=+5, reported=0
-    # Deal rating: great=+2, good=+1
+    # Accidents:   no accident=+5, unknown=+2.5, reported=0
+    # Deal rating: great=+2, good=+1.5, unknown=+1, fair=+0.5
     #
     # Max: 18 + 5 + 2 = 25
 
@@ -192,37 +240,107 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
         # Salvage, rebuilt, lemon — no title credit
         title_pts = 0.0
 
-    # Accident history
-    accident_pts = 0.0
-    if accident_history and "no accident" in (accident_history or "").lower():
+    # Accident history — neutral default when data is missing
+    accident_lower = (accident_history or "").lower()
+    if "no accident" in accident_lower:
         accident_pts = 5.0
+    elif "accident reported" in accident_lower or "1 accident" in accident_lower:
+        accident_pts = 0.0
+    else:
+        # Unknown — give benefit of the doubt (most cars are clean)
+        accident_pts = 2.5
 
-    # Deal rating from marketplace
-    rating_pts = 0.0
+    # Deal rating from marketplace — neutral default when missing
+    rating_pts = 1.0  # baseline when marketplace hasn't rated it
     if deal_rating:
         rating = deal_rating.lower()
         if "great" in rating:
             rating_pts = 2.0
         elif "good" in rating:
-            rating_pts = 1.0
+            rating_pts = 1.5
+        elif "fair" in rating:
+            rating_pts = 0.5
 
     condition_score = round(min(25.0, title_pts + accident_pts + rating_pts), 1)
 
-    # ── Mileage factor (15 points max) — absolute benchmarks ──────
-    if mileage is not None and mileage > 0:
-        if mileage < 30000:
+    # Build condition reasoning
+    _cond_parts = []
+    if title_lower == "clean":
+        _cond_parts.append("Clean title (+18)")
+    elif not title_lower or title_lower == "unknown":
+        _cond_parts.append("Unknown title (+4)")
+    else:
+        _cond_parts.append(f"{title_type or 'Bad'} title (+0)")
+    if "no accident" in accident_lower:
+        _cond_parts.append("no accidents (+5)")
+    elif "accident reported" in accident_lower or "1 accident" in accident_lower:
+        _cond_parts.append("accident reported (+0)")
+    else:
+        _cond_parts.append("unknown accident history (+2.5)")
+    if deal_rating:
+        _cond_parts.append(f"{deal_rating} rating (+{rating_pts})")
+    else:
+        _cond_parts.append("no marketplace rating (+1)")
+    reasons["condition"] = ", ".join(_cond_parts)
+
+    # ── Mileage factor (15 points max) — age-relative + lifespan ───
+    # Two layers:
+    #   1) Age-relative: is this car driven more/less than 12k mi/yr?
+    #   2) Lifespan: how much of this make's expected life is used up?
+    # A Tacoma at 200k (67% of 300k lifespan) should score better than
+    # a Nissan at 200k (111% of 180k lifespan).
+    if mileage is not None and mileage > 0 and year:
+        from datetime import date
+        car_age_months = max(1, (date.today().year - year) * 12
+                            + date.today().month)
+        expected_miles = car_age_months * 1000          # 12k/yr baseline
+        age_ratio = mileage / expected_miles            # <1 = low mi, >1 = high
+
+        # Age-relative base score (0-15)
+        if age_ratio <= 0.50:
             mileage_score = 15.0
-        elif mileage < 60000:
-            mileage_score = round(15.0 - (mileage - 30000) / 30000 * 1.5, 1)
-        elif mileage < 100000:
-            mileage_score = round(13.5 - (mileage - 60000) / 40000 * 3.0, 1)
-        elif mileage < 130000:
-            mileage_score = round(10.5 - (mileage - 100000) / 30000 * 4.0, 1)
-        elif mileage < 160000:
-            mileage_score = round(6.5 - (mileage - 130000) / 30000 * 4.0, 1)
+        elif age_ratio <= 0.75:
+            mileage_score = round(15.0 - (age_ratio - 0.50) / 0.25 * 2.0, 1)
+        elif age_ratio <= 1.00:
+            mileage_score = round(13.0 - (age_ratio - 0.75) / 0.25 * 2.0, 1)
+        elif age_ratio <= 1.25:
+            mileage_score = round(11.0 - (age_ratio - 1.00) / 0.25 * 3.0, 1)
+        elif age_ratio <= 1.50:
+            mileage_score = round(8.0 - (age_ratio - 1.25) / 0.25 * 4.0, 1)
+        elif age_ratio <= 2.00:
+            mileage_score = round(4.0 - (age_ratio - 1.50) / 0.50 * 4.0, 1)
         else:
             mileage_score = 0.0
-        mileage_score = max(0.0, mileage_score)
+
+        # Lifespan adjustment: bonus/penalty based on % of expected life used.
+        # A Toyota at 60% life = bonus; a VW at 95% life = penalty.
+        make = car_query.split()[0].lower() if car_query else ""
+        lifespan = _EXPECTED_LIFESPAN.get(make, _DEFAULT_LIFESPAN)
+        life_used = mileage / lifespan
+        if life_used <= 0.40:
+            mileage_score += 2.0            # plenty of life left
+        elif life_used <= 0.60:
+            mileage_score += 1.0            # solid
+        elif life_used <= 0.80:
+            pass                            # neutral
+        elif life_used <= 1.00:
+            mileage_score -= 1.5            # nearing end of expected life
+        else:
+            mileage_score -= 3.0            # past expected lifespan
+
+        mileage_score = round(max(0.0, min(15.0, mileage_score)), 1)
+
+        # Build mileage reasoning
+        pct_of_expected = round(age_ratio * 100)
+        pct_life = round(life_used * 100)
+        if age_ratio <= 1.0:
+            direction = f"{100 - pct_of_expected}% below"
+        else:
+            direction = f"{pct_of_expected - 100}% above"
+        reasons["mileage"] = (f"{mileage:,.0f} mi is {direction} the "
+                              f"{expected_miles:,.0f} mi expected for a {year} "
+                              f"({pct_life}% of {make.title() or 'avg'} "
+                              f"{lifespan:,} mi lifespan)")
 
     # ── Reliability factor (10 points max) — NHTSA data ───────────
     if nhtsa_rating:
@@ -233,19 +351,36 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
         else:
             reliability_score += 2.5
 
+        # Complaint thresholds — popular cars naturally have more raw
+        # complaints, so thresholds are generous to avoid penalizing
+        # high-volume models like Civics and Tacomas unfairly.
         complaints = nhtsa_rating.get("complaints_count", 0)
-        if complaints < 50:
+        if complaints < 100:
             reliability_score += 5.0
-        elif complaints < 100:
+        elif complaints < 250:
             reliability_score += 4.0
-        elif complaints < 200:
+        elif complaints < 500:
             reliability_score += 2.5
-        elif complaints < 400:
+        elif complaints < 800:
             reliability_score += 1.0
     else:
         reliability_score = 5.0
 
     reliability_score = round(min(10.0, reliability_score), 1)
+
+    # Build reliability reasoning
+    if nhtsa_rating:
+        _stars = nhtsa_rating.get("overall_rating")
+        _comp = nhtsa_rating.get("complaints_count", 0)
+        _r_parts = []
+        if _stars is not None:
+            _r_parts.append(f"NHTSA {_stars}/5 stars")
+        else:
+            _r_parts.append("no NHTSA rating")
+        _r_parts.append(f"{_comp:,} complaints")
+        reasons["reliability"] = ", ".join(_r_parts)
+    else:
+        reasons["reliability"] = "No NHTSA data available — neutral score"
 
     # ── Drivetrain factor (10 points max) ─────────────────────────
     if is_awd_or_4wd(drivetrain):
@@ -263,12 +398,33 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
     else:
         drivetrain_score = 3.0
 
+    # Build drivetrain reasoning
+    dt_display = (drivetrain or "unknown").upper()
+    if is_awd_or_4wd(drivetrain):
+        _conf = "confirmed" if dt_source == "explicit" else "inferred"
+        reasons["drivetrain"] = f"{dt_display} ({_conf})"
+    elif drivetrain in ("fwd", "2wd"):
+        reasons["drivetrain"] = f"{dt_display} — no AWD/4WD bonus"
+    elif drivetrain == "rwd":
+        reasons["drivetrain"] = "RWD — partial credit"
+    else:
+        reasons["drivetrain"] = "Unknown drivetrain — neutral score"
+
     # ── Trim Value factor (5 points max) ──────────────────────────
     if trim_tier >= 2 and avg_price and avg_price > 0:
         overall_discount = (avg_price - price) / avg_price if price < avg_price else 0
         tier_mult = {2: 0.5, 3: 0.75, 4: 1.0}.get(trim_tier, 0)
         trim_score = round(min(5.0, overall_discount * 20.0 * tier_mult), 1)
     trim_score = max(0.0, trim_score)
+
+    # Build trim reasoning
+    if trim_tier >= 2 and trim_score > 0:
+        tier_names = {2: "Mid", 3: "High", 4: "Premium"}
+        reasons["trim"] = f"{tier_names.get(trim_tier, 'Higher')} trim at a discount"
+    elif trim_tier >= 2:
+        reasons["trim"] = "Higher trim but not priced below avg"
+    else:
+        reasons["trim"] = "Base/standard trim"
 
     # ── Freshness factor (5 points max) ──────────────────────────
     if days_listed <= 1:
@@ -283,6 +439,18 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
         freshness_score = 1.0
     else:
         freshness_score = 0.0
+
+    # Build freshness reasoning
+    if days_listed <= 1:
+        reasons["freshness"] = "Listed today — fresh find"
+    elif days_listed <= 3:
+        reasons["freshness"] = f"Listed {days_listed} days ago"
+    elif days_listed <= 7:
+        reasons["freshness"] = f"Listed {days_listed} days ago — still recent"
+    elif days_listed <= 30:
+        reasons["freshness"] = f"Listed {days_listed} days ago — getting stale"
+    else:
+        reasons["freshness"] = f"Listed {days_listed} days ago — old listing"
 
     # ── Raw total ─────────────────────────────────────────────────
     raw_total = round(price_score + condition_score + mileage_score
@@ -311,6 +479,7 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
         "condition_score": round(condition_score, 1),
         "trim_score": round(trim_score, 1),
         "freshness_score": round(freshness_score, 1),
+        "reasons": reasons,
     }
 
 
@@ -525,6 +694,7 @@ def find_deals(db, desired_cars, config):
                 drivetrain=dt,
                 dt_source=dt_source,
                 days_listed=days_listed,
+                car_query=car_query,
             )
             score = score_data["total"]
 
