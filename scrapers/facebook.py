@@ -8,6 +8,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
+from vin import extract_vin
 
 SCRIPT_DIR = Path(__file__).parent.parent
 COOKIE_FILE = SCRIPT_DIR / "fb_cookies.pkl"
@@ -146,11 +147,18 @@ class FacebookScraper(BaseScraper):
                 if description:
                     details["description"] = description
 
+                    # Try to extract VIN from the description
+                    vin = extract_vin(description)
+                    if vin:
+                        details["vin"] = vin
+
                 if details:
                     db.update_listing_details(href, **details)
                     enriched += 1
                     tt = details.get("title_type", "—")
-                    self.log(f"  Enriched: {row['car_name'][:40]} → title={tt}")
+                    vin_str = details.get("vin", "")
+                    self.log(f"  Enriched: {row['car_name'][:40]} → title={tt}"
+                             f"{' VIN=' + vin_str if vin_str else ''}")
                 else:
                     # Mark as 'unknown' so we don't re-visit
                     db.update_title_type(href, "unknown")

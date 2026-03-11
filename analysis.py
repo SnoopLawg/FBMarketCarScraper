@@ -327,6 +327,43 @@ def score_to_grade(score):
     return "F"
 
 
+def compute_market_range(prices):
+    """Compute percentile-based market value ranges from a list of prices.
+
+    Returns a dict with:
+        count: number of data points
+        low: 10th percentile (great deal territory)
+        fair: 25th percentile (below average)
+        avg: 50th percentile (median / fair market)
+        high: 75th percentile (above average)
+        premium: 90th percentile (overpriced)
+    or None if insufficient data (< 5 listings).
+    """
+    if not prices or len(prices) < 5:
+        return None
+
+    prices = sorted(prices)
+    n = len(prices)
+
+    def percentile(p):
+        """Linear interpolation percentile."""
+        k = (n - 1) * p / 100.0
+        f = int(k)
+        c = f + 1
+        if c >= n:
+            return round(prices[-1])
+        return round(prices[f] + (k - f) * (prices[c] - prices[f]))
+
+    return {
+        "count": n,
+        "low": percentile(10),
+        "fair": percentile(25),
+        "avg": percentile(50),
+        "high": percentile(75),
+        "premium": percentile(90),
+    }
+
+
 def _title_cap(title_type):
     """Score cap based on title type.  Used by template for UI warning."""
     t = (title_type or "").lower()
@@ -513,6 +550,7 @@ def find_deals(db, desired_cars, config):
                     "accident_history": row["accident_history"],
                     "distance": row["distance"],
                     "title_type": row["title_type"],
+                    "vin": row["vin"],
                     "trim_tier": trim_tier,
                     "trim_tier_name": tier_name(trim_tier),
                     "trim_label": trim_label,

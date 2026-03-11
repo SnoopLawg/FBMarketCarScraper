@@ -83,6 +83,9 @@ def main():
         # who put "salvage" / "clean title" etc. in the listing title)
         db.backfill_title_types()
 
+        # Backfill VINs from existing description text
+        db.backfill_vins()
+
         deals = run_analysis(config, db)
         logging.info(f"Found {len(deals)} deals total.")
     finally:

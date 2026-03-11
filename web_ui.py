@@ -7,7 +7,7 @@ from threading import Timer
 
 from flask import Flask, render_template, request, jsonify
 
-from analysis import title_group
+from analysis import title_group, compute_market_range
 from config import load_config, save_config
 from database import Database
 
@@ -42,6 +42,7 @@ def _append_to_file(filepath, value):
 def index():
     source_filter = request.args.get("source", "")
     car_filter = request.args.get("car", "")
+    title_filter = request.args.get("title", "")
     sort_by = request.args.get("sort", "score")
     search_query = request.args.get("q", "").strip().lower()
     year_min = request.args.get("year_min", "")
@@ -75,6 +76,18 @@ def index():
             continue
         if car_filter and d["car_query"] != car_filter:
             continue
+        if title_filter:
+            dt = (d.get("title_type") or "").lower()
+            if title_filter == "clean" and dt != "clean":
+                continue
+            elif title_filter == "rebuilt" and dt != "rebuilt":
+                continue
+            elif title_filter == "salvage" and dt != "salvage":
+                continue
+            elif title_filter == "lemon" and dt != "lemon":
+                continue
+            elif title_filter == "unknown" and dt not in ("", "unknown"):
+                continue
         if search_query:
             searchable = " ".join([
                 d.get("car_name") or "", d.get("car_query") or "",
@@ -109,6 +122,25 @@ def index():
     for d in filtered:
         d["price_history"] = price_histories.get(d["href"])
 
+    # Enrich with VIN decode data
+    deal_vins = [d["vin"] for d in filtered if d.get("vin")]
+    vin_data = _db.get_vin_data_batch(deal_vins) if _db and deal_vins else {}
+    for d in filtered:
+        d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
+
+    # Enrich with market value ranges (cached per car/year/title group)
+    _market_cache = {}
+    for d in filtered:
+        if not d.get("car_query") or not d.get("year"):
+            d["market_range"] = None
+            continue
+        grp = title_group(d.get("title_type"))
+        cache_key = (d["car_query"], d["year"], grp)
+        if cache_key not in _market_cache:
+            prices = _db.get_market_prices(d["car_query"], d["year"], grp) if _db else []
+            _market_cache[cache_key] = compute_market_range(prices)
+        d["market_range"] = _market_cache[cache_key]
+
     sources = sorted(set(d["source"] for d in _deals))
     cars = sorted(set(d["car_query"] for d in _deals))
 
@@ -120,6 +152,7 @@ def index():
         cars=cars,
         current_source=source_filter,
         current_car=car_filter,
+        current_title=title_filter,
         current_sort=sort_by,
         total=len(filtered),
         current_search=search_query,
@@ -160,6 +193,8 @@ def favorites_page():
         d["score_breakdown"] = None
         d["price_history"] = None
         d["nhtsa_rating"] = None
+        d["vin_data"] = None
+        d["market_range"] = None
         enriched.append(d)
 
     # Enrich with price history
@@ -167,6 +202,12 @@ def favorites_page():
     price_histories = _db.get_price_history_batch(deal_hrefs) if _db else {}
     for d in enriched:
         d["price_history"] = price_histories.get(d["href"])
+
+    # Enrich with VIN decode data
+    fav_vins = [d.get("vin") for d in enriched if d.get("vin")]
+    vin_data = _db.get_vin_data_batch(fav_vins) if _db and fav_vins else {}
+    for d in enriched:
+        d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
 
     return render_template(
         "favorites.html",
@@ -217,6 +258,31 @@ def delete():
         _append_to_file(_deleted_file, href)
         _db.delete_listing(href)
     return jsonify({"ok": True})
+
+
+@app.route("/api/market-range/<car_query>/<int:year>")
+def market_range_api(car_query, year):
+    """Get market value range for a car/year combo."""
+    grp = request.args.get("title_group", "clean")
+    if not _db:
+        return jsonify({"error": "Database not available"}), 500
+    prices = _db.get_market_prices(car_query, year, grp)
+    mrange = compute_market_range(prices)
+    if mrange:
+        return jsonify(mrange)
+    return jsonify({"error": "Not enough data", "count": len(prices)}), 404
+
+
+@app.route("/api/vin-decode/<vin>")
+def vin_decode_api(vin):
+    """Decode a VIN and return the result."""
+    from vin import decode_vin_cached
+    if not _db or not vin or len(vin) != 17:
+        return jsonify({"error": "Invalid VIN"}), 400
+    result = decode_vin_cached(_db, vin)
+    if result:
+        return jsonify(result)
+    return jsonify({"error": "VIN not found or decode failed"}), 404
 
 
 @app.route("/api/price-history/<path:href>")

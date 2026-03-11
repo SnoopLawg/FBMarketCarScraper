@@ -61,6 +61,39 @@
         </div>
         {% endif %}
 
+        {% if deal.market_range %}
+        <div class="market-range" style="margin:8px 0 4px;font-size:11px">
+            <div style="display:flex;justify-content:space-between;color:var(--text-muted);margin-bottom:3px">
+                <span>Market Range ({{ deal.market_range.count }} listings)</span>
+                {% if deal.price <= deal.market_range.low %}
+                <span style="color:var(--green);font-weight:600">Great Price</span>
+                {% elif deal.price <= deal.market_range.fair %}
+                <span style="color:var(--green)">Below Market</span>
+                {% elif deal.price <= deal.market_range.avg %}
+                <span style="color:var(--accent)">Fair Price</span>
+                {% elif deal.price <= deal.market_range.high %}
+                <span style="color:var(--yellow)">Above Average</span>
+                {% else %}
+                <span style="color:var(--red)">High Price</span>
+                {% endif %}
+            </div>
+            <div style="position:relative;height:6px;background:var(--border);border-radius:3px;overflow:visible">
+                <div style="position:absolute;left:{{ ((deal.market_range.fair - deal.market_range.low) / (deal.market_range.premium - deal.market_range.low) * 100)|round }}%;right:{{ (100 - (deal.market_range.high - deal.market_range.low) / (deal.market_range.premium - deal.market_range.low) * 100)|round }}%;height:100%;background:rgba(91,141,238,0.3);border-radius:3px"></div>
+                {% set bar_range = deal.market_range.premium - deal.market_range.low %}
+                {% if bar_range > 0 %}
+                {% set pos = ((deal.price - deal.market_range.low) / bar_range * 100) %}
+                {% set pos_clamped = [0, [pos, 100]|min]|max %}
+                <div style="position:absolute;left:{{ pos_clamped|round }}%;top:-2px;width:10px;height:10px;background:{% if deal.price <= deal.market_range.fair %}var(--green){% elif deal.price <= deal.market_range.avg %}var(--accent){% elif deal.price <= deal.market_range.high %}var(--yellow){% else %}var(--red){% endif %};border-radius:50%;transform:translateX(-5px);border:2px solid var(--bg-card)"></div>
+                {% endif %}
+            </div>
+            <div style="display:flex;justify-content:space-between;color:var(--text-muted);margin-top:2px;font-size:10px">
+                <span>${{ '{:,.0f}'.format(deal.market_range.low) }}</span>
+                <span>${{ '{:,.0f}'.format(deal.market_range.avg) }}</span>
+                <span>${{ '{:,.0f}'.format(deal.market_range.premium) }}</span>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="deal-details">
             {% if deal.trim %}
             <div class="deal-detail">
@@ -87,6 +120,23 @@
                 <span class="deal-detail-icon">&#9733;</span> NHTSA {{ deal.nhtsa_rating.overall_rating }}/5 stars
                 {% if deal.nhtsa_rating.complaints_count %}&middot; {{ deal.nhtsa_rating.complaints_count }} complaints{% endif %}
             </div>
+            {% endif %}
+            {% if deal.vin %}
+            <div class="deal-detail">
+                <span class="deal-detail-icon">V</span>
+                <span style="font-family:monospace;font-size:12px;letter-spacing:0.5px">{{ deal.vin }}</span>
+                {% if deal.vin_data %}
+                <span class="badge badge-info" style="margin-left:4px;font-size:10px">✓ Verified</span>
+                {% else %}
+                <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;margin-left:4px"
+                        onclick="decodeVin('{{ deal.vin }}', this)">Decode</button>
+                {% endif %}
+            </div>
+            {% if deal.vin_data %}
+            <div class="deal-detail deal-detail-muted" style="padding-left:22px;font-size:11px">
+                {{ deal.vin_data.year }} {{ deal.vin_data.make }} {{ deal.vin_data.model }}{% if deal.vin_data.trim %} {{ deal.vin_data.trim }}{% endif %}{% if deal.vin_data.drive_type %} &middot; {{ deal.vin_data.drive_type }}{% endif %}{% if deal.vin_data.fuel_type %} &middot; {{ deal.vin_data.fuel_type }}{% endif %}
+            </div>
+            {% endif %}
             {% endif %}
             {% if deal.created_at %}
             <div class="deal-detail deal-detail-muted">

@@ -80,6 +80,26 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_price_history_href
                 ON price_history(listing_href, source);
 
+            CREATE TABLE IF NOT EXISTS vin_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vin TEXT NOT NULL UNIQUE,
+                make TEXT,
+                model TEXT,
+                year INTEGER,
+                trim TEXT,
+                body_class TEXT,
+                drive_type TEXT,
+                fuel_type TEXT,
+                engine TEXT,
+                displacement TEXT,
+                cylinders TEXT,
+                plant_city TEXT,
+                plant_country TEXT,
+                error_code TEXT,
+                fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_vin_cache_vin ON vin_cache(vin);
+
             CREATE TABLE IF NOT EXISTS vehicle_ratings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 make TEXT NOT NULL,
@@ -153,6 +173,15 @@ class Database:
                 self.cur.execute("ALTER TABLE listings ADD COLUMN description TEXT")
                 self.conn.commit()
                 logging.info("description migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
+        if "vin" not in columns:
+            logging.info("Migrating DB: adding vin column...")
+            try:
+                self.cur.execute("ALTER TABLE listings ADD COLUMN vin TEXT")
+                self.conn.commit()
+                logging.info("vin migration complete.")
             except sqlite3.OperationalError:
                 pass
 
@@ -249,7 +278,7 @@ class Database:
             "SELECT href, price, mileage, year, location, source, "
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
-            "title_type "
+            "title_type, vin "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -364,7 +393,7 @@ class Database:
             SELECT href, image_url, price, car_name, car_query, location,
                    mileage, year, source, created_at, updated_at,
                    trim, seller, condition, deal_rating, accident_history,
-                   distance, title_type
+                   distance, title_type, vin
             FROM listings
             WHERE href IN ({placeholders}) AND deleted_at IS NULL
             ORDER BY updated_at DESC
@@ -445,7 +474,7 @@ class Database:
     def update_listing_details(self, href, **kwargs):
         """Update multiple detail fields for a listing."""
         allowed = {"title_type", "trim", "seller", "condition",
-                   "deal_rating", "accident_history", "description"}
+                   "deal_rating", "accident_history", "description", "vin"}
         sets = []
         vals = []
         for k, v in kwargs.items():
@@ -514,6 +543,172 @@ class Database:
         self.conn.commit()
         if updated:
             logging.info(f"Backfilled title_type for {updated} listings from car_name text.")
+        return updated
+
+    # ── VIN Cache ──────────────────────────────────────────────────
+
+    def get_vin_data(self, vin):
+        """Get cached VIN decode data."""
+        self.cur.execute(
+            "SELECT vin, make, model, year, trim, body_class, drive_type, "
+            "fuel_type, engine, displacement, cylinders, plant_city, "
+            "plant_country, error_code "
+            "FROM vin_cache WHERE vin = ?", (vin.upper(),))
+        row = self.cur.fetchone()
+        if not row:
+            return None
+        if row["error_code"] == "not_found":
+            return None
+        return {
+            "vin": row["vin"],
+            "make": row["make"],
+            "model": row["model"],
+            "year": row["year"],
+            "trim": row["trim"],
+            "body_class": row["body_class"],
+            "drive_type": row["drive_type"],
+            "fuel_type": row["fuel_type"],
+            "engine": row["engine"],
+            "displacement": row["displacement"],
+            "cylinders": row["cylinders"],
+            "plant_city": row["plant_city"],
+            "plant_country": row["plant_country"],
+            "error_code": row["error_code"],
+        }
+
+    def upsert_vin_data(self, vin, data):
+        """Insert or update VIN decode data."""
+        try:
+            self.cur.execute("""
+                INSERT INTO vin_cache
+                    (vin, make, model, year, trim, body_class, drive_type,
+                     fuel_type, engine, displacement, cylinders, plant_city,
+                     plant_country, error_code, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        CURRENT_TIMESTAMP)
+                ON CONFLICT(vin) DO UPDATE SET
+                    make = excluded.make, model = excluded.model,
+                    year = excluded.year, trim = excluded.trim,
+                    body_class = excluded.body_class,
+                    drive_type = excluded.drive_type,
+                    fuel_type = excluded.fuel_type,
+                    engine = excluded.engine,
+                    displacement = excluded.displacement,
+                    cylinders = excluded.cylinders,
+                    plant_city = excluded.plant_city,
+                    plant_country = excluded.plant_country,
+                    error_code = excluded.error_code,
+                    fetched_at = CURRENT_TIMESTAMP
+            """, (vin.upper(), data.get("make"), data.get("model"),
+                  data.get("year"), data.get("trim"), data.get("body_class"),
+                  data.get("drive_type"), data.get("fuel_type"),
+                  data.get("engine"), data.get("displacement"),
+                  data.get("cylinders"), data.get("plant_city"),
+                  data.get("plant_country"), data.get("error_code")))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB VIN upsert error: {e}")
+
+    def update_listing_vin(self, href, vin):
+        """Set the VIN for a listing."""
+        try:
+            self.cur.execute(
+                "UPDATE listings SET vin = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE href = ?", (vin.upper(), href))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB update VIN error: {e}")
+
+    def get_listings_missing_vin(self, limit=50):
+        """Get listings that have a description but no VIN yet."""
+        self.cur.execute(
+            "SELECT id, href, car_name, description FROM listings "
+            "WHERE (vin IS NULL OR vin = '') "
+            "AND description IS NOT NULL AND description != '' "
+            "AND deleted_at IS NULL "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,))
+        return self.cur.fetchall()
+
+    def get_vin_data_batch(self, vins):
+        """Get cached VIN decode data for multiple VINs at once."""
+        if not vins:
+            return {}
+        vins_upper = [v.upper() for v in vins if v]
+        if not vins_upper:
+            return {}
+        placeholders = ",".join("?" * len(vins_upper))
+        self.cur.execute(f"""
+            SELECT vin, make, model, year, trim, body_class, drive_type,
+                   fuel_type, engine, displacement, cylinders
+            FROM vin_cache
+            WHERE vin IN ({placeholders}) AND error_code != 'not_found'
+        """, vins_upper)
+        result = {}
+        for row in self.cur.fetchall():
+            result[row["vin"]] = {
+                "vin": row["vin"],
+                "make": row["make"],
+                "model": row["model"],
+                "year": row["year"],
+                "trim": row["trim"],
+                "body_class": row["body_class"],
+                "drive_type": row["drive_type"],
+                "fuel_type": row["fuel_type"],
+                "engine": row["engine"],
+                "displacement": row["displacement"],
+                "cylinders": row["cylinders"],
+            }
+        return result
+
+    def get_market_prices(self, car_query, year, title_grp="clean"):
+        """Get all active listing prices for a car/year/title combo.
+
+        Used to compute percentile-based market value ranges.
+        Returns a sorted list of prices.
+        """
+        if title_grp == "clean":
+            # Clean group includes NULL/unknown
+            self.cur.execute(
+                "SELECT price FROM listings "
+                "WHERE car_query = ? AND year = ? AND price IS NOT NULL "
+                "AND deleted_at IS NULL "
+                "AND (title_type IS NULL OR title_type = '' "
+                "     OR title_type = 'clean' OR title_type = 'unknown') "
+                "ORDER BY price",
+                (car_query, year))
+        else:
+            self.cur.execute(
+                "SELECT price FROM listings "
+                "WHERE car_query = ? AND year = ? AND price IS NOT NULL "
+                "AND deleted_at IS NULL AND LOWER(title_type) = ? "
+                "ORDER BY price",
+                (car_query, year, title_grp))
+        return [row["price"] for row in self.cur.fetchall()]
+
+    def backfill_vins(self):
+        """Extract VINs from existing descriptions and store them."""
+        from vin import extract_vin
+
+        rows = self.cur.execute(
+            "SELECT id, href, description FROM listings "
+            "WHERE (vin IS NULL OR vin = '') "
+            "AND description IS NOT NULL AND description != '' "
+            "AND deleted_at IS NULL"
+        ).fetchall()
+
+        updated = 0
+        for row in rows:
+            vin = extract_vin(row["description"])
+            if vin:
+                self.cur.execute(
+                    "UPDATE listings SET vin = ? WHERE id = ?",
+                    (vin, row["id"]))
+                updated += 1
+
+        self.conn.commit()
+        if updated:
+            logging.info(f"Backfilled VINs for {updated} listings from descriptions.")
         return updated
 
     def get_all_cached_ratings(self):

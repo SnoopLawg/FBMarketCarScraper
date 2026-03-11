@@ -113,6 +113,7 @@
 
 {% block body %}
 {% set filter_params = 'source=' ~ current_source ~ '&car=' ~ current_car
+    ~ ('&title=' ~ current_title if current_title else '')
     ~ ('&q=' ~ current_search if current_search else '')
     ~ ('&year_min=' ~ current_year_min if current_year_min else '')
     ~ ('&year_max=' ~ current_year_max if current_year_max else '')
@@ -135,6 +136,15 @@
             {% for c in cars %}
             <option value="{{ c }}" {{ 'selected' if c == current_car else '' }}>{{ c }}</option>
             {% endfor %}
+        </select>
+
+        <select class="input" style="width:auto" onchange="applyFilter('title', this.value)">
+            <option value="">All Titles</option>
+            <option value="clean" {{ 'selected' if current_title == 'clean' else '' }}>Clean</option>
+            <option value="rebuilt" {{ 'selected' if current_title == 'rebuilt' else '' }}>Rebuilt</option>
+            <option value="salvage" {{ 'selected' if current_title == 'salvage' else '' }}>Salvage</option>
+            <option value="lemon" {{ 'selected' if current_title == 'lemon' else '' }}>Lemon</option>
+            <option value="unknown" {{ 'selected' if current_title == 'unknown' else '' }}>Unknown</option>
         </select>
 
         <div class="sort-group">
@@ -249,6 +259,35 @@
             btn.textContent = '☆ Save';
             btn.style.color = '';
             btn.style.borderColor = '';
+        }
+    }
+
+    async function decodeVin(vin, btn) {
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+            const res = await fetch('/api/vin-decode/' + vin);
+            if (res.ok) {
+                const data = await res.json();
+                const parts = [data.year, data.make, data.model, data.trim].filter(Boolean);
+                const extra = [data.drive_type, data.fuel_type].filter(Boolean).join(' · ');
+                btn.outerHTML = '<span class="badge badge-info" style="margin-left:4px;font-size:10px">✓ Verified</span>';
+                // Add decoded info after the VIN line
+                const vinLine = btn.closest ? btn.closest('.deal-detail') : btn.parentElement;
+                if (vinLine && parts.length) {
+                    const info = document.createElement('div');
+                    info.className = 'deal-detail deal-detail-muted';
+                    info.style.cssText = 'padding-left:22px;font-size:11px';
+                    info.textContent = parts.join(' ') + (extra ? ' · ' + extra : '');
+                    vinLine.insertAdjacentElement('afterend', info);
+                }
+            } else {
+                btn.textContent = 'N/A';
+                btn.style.color = 'var(--red)';
+            }
+        } catch (e) {
+            btn.textContent = 'Error';
+            btn.style.color = 'var(--red)';
         }
     }
 
