@@ -37,7 +37,7 @@ def _send_webhook(webhook_url, payload):
     """Send a Discord webhook payload. Returns True on success."""
     try:
         data = json.dumps(payload).encode("utf-8")
-        req = Request(webhook_url, data=data, headers={"Content-Type": "application/json"})
+        req = Request(webhook_url, data=data, headers={"Content-Type": "application/json", "User-Agent": "CarScraper/1.0"})
         urlopen(req, timeout=10)
         return True
     except URLError as e:
