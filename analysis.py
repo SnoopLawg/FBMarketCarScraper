@@ -9,6 +9,7 @@ from epa import get_mpg_batch, estimate_monthly_fuel_cost
 from trim_tiers import get_trim_tier, tier_name
 from drivetrain import detect_drivetrain, drivetrain_label, is_awd_or_4wd
 from vin_validate import validate_vin_against_listing, compute_vin_penalty
+from parsing import parse_owner_count, parse_service_history
 
 
 def title_group(title_type):
@@ -167,7 +168,8 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
                        trim_tier=1, trim_avg_price=None,
                        drivetrain="unknown", dt_source="unknown",
                        days_listed=0, car_query="",
-                       vin_mismatches=None):
+                       vin_mismatches=None,
+                       owner_count=None, service_history=None):
     """Compute a composite deal score from 0-100 with 7 factors.
 
     Title & Condition is the DOMINANT factor (25 pts) because a bad
@@ -177,6 +179,11 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
     Factors:
       - Price vs Average: 30pts
       - Title & Condition: 25pts  ← THE biggest factor
+        - Title base: clean=15, unknown=3, bad=0
+        - Accident: no accident=+5, unknown=+1.5, reported=-3
+        - Owner count: 1-owner=+2, 2-owner=+1, unknown=+0.5, 3+=0
+        - Service history: positive=+1.5, unknown=+0, negative=0
+        - Deal rating: great=+1.5, good=+1, fair=+0.5, unknown=+0.5
       - Mileage: 15pts (age-relative — actual vs 12k mi/yr expected)
       - Reliability: 10pts (NHTSA safety + complaints)
       - Drivetrain: 10pts (AWD/4WD bonus — huge in snowy states)
@@ -224,66 +231,100 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
     # This is the BIGGEST factor.  A salvage title is a dealbreaker;
     # a clean title is the baseline expectation for a real deal.
     #
-    # Title base:  clean=18, unknown=4, rebuilt/salvage/lemon=0
-    # Accidents:   no accident=+5, unknown=+2.5, reported=0
-    # Deal rating: great=+2, good=+1.5, unknown=+1, fair=+0.5
+    # Sub-factors:
+    #   Title base:      clean=15, unknown=3, rebuilt/salvage/lemon=0
+    #   Accident:        no accident=+5, unknown=+1.5, reported=-3
+    #   Owner count:     1-owner=+2, 2-owner=+1, unknown=+0.5, 3+=0
+    #   Service history: positive=+1.5, unknown=+0, negative=0
+    #   Deal rating:     great=+1.5, good=+1, fair=+0.5, unknown=+0.5
     #
-    # Max: 18 + 5 + 2 = 25
+    # Max: 15 + 5 + 2 + 1.5 + 1.5 = 25
 
     title_lower = (title_type or "").lower()
 
     # Title base points (clean is the gold standard)
     if title_lower == "clean":
-        title_pts = 18.0
+        title_pts = 15.0
     elif not title_lower or title_lower == "unknown":
-        # Unknown = risky.  You wouldn't buy without checking.
-        # Heavily penalized vs clean to avoid inflated scores.
-        title_pts = 4.0
+        title_pts = 3.0
     else:
-        # Salvage, rebuilt, lemon — no title credit
         title_pts = 0.0
 
-    # Accident history — neutral default when data is missing
+    # Accident history — reported is now a REAL PENALTY.
+    # An accident typically drops resale value 20-40%, so a zero-credit
+    # treatment was far too generous.
     accident_lower = (accident_history or "").lower()
     if "no accident" in accident_lower:
         accident_pts = 5.0
     elif "accident reported" in accident_lower or "1 accident" in accident_lower:
-        accident_pts = 0.0
+        accident_pts = -3.0
     else:
-        # Unknown — give benefit of the doubt (most cars are clean)
-        accident_pts = 2.5
+        accident_pts = 1.5
 
-    # Deal rating from marketplace — neutral default when missing
-    rating_pts = 1.0  # baseline when marketplace hasn't rated it
+    # Owner count — 1-owner cars command premiums and indicate care.
+    if owner_count == 1:
+        owner_pts = 2.0
+    elif owner_count == 2:
+        owner_pts = 1.0
+    elif owner_count is not None and owner_count >= 3:
+        owner_pts = 0.0
+    else:
+        owner_pts = 0.5  # unknown — slight benefit of the doubt
+
+    # Service history — documented maintenance is a strong quality signal.
+    if service_history == "positive":
+        history_pts = 1.5
+    elif service_history == "negative":
+        history_pts = 0.0
+    else:
+        history_pts = 0.0  # no claim = no credit
+
+    # Deal rating from marketplace
+    rating_pts = 0.5
     if deal_rating:
         rating = deal_rating.lower()
         if "great" in rating:
-            rating_pts = 2.0
-        elif "good" in rating:
             rating_pts = 1.5
+        elif "good" in rating:
+            rating_pts = 1.0
         elif "fair" in rating:
             rating_pts = 0.5
 
-    condition_score = round(min(25.0, title_pts + accident_pts + rating_pts), 1)
+    condition_score = round(
+        max(0.0, min(25.0,
+                     title_pts + accident_pts + owner_pts
+                     + history_pts + rating_pts)), 1)
 
     # Build condition reasoning
     _cond_parts = []
     if title_lower == "clean":
-        _cond_parts.append("Clean title (+18)")
+        _cond_parts.append("Clean title (+15)")
     elif not title_lower or title_lower == "unknown":
-        _cond_parts.append("Unknown title (+4)")
+        _cond_parts.append("Unknown title (+3)")
     else:
         _cond_parts.append(f"{title_type or 'Bad'} title (+0)")
     if "no accident" in accident_lower:
         _cond_parts.append("no accidents (+5)")
     elif "accident reported" in accident_lower or "1 accident" in accident_lower:
-        _cond_parts.append("accident reported (+0)")
+        _cond_parts.append("accident reported (-3)")
     else:
-        _cond_parts.append("unknown accident history (+2.5)")
+        _cond_parts.append("unknown accident history (+1.5)")
+    if owner_count == 1:
+        _cond_parts.append("1-owner (+2)")
+    elif owner_count == 2:
+        _cond_parts.append("2-owner (+1)")
+    elif owner_count is not None and owner_count >= 3:
+        _cond_parts.append(f"{owner_count}-owner (+0)")
+    else:
+        _cond_parts.append("unknown owners (+0.5)")
+    if service_history == "positive":
+        _cond_parts.append("service records (+1.5)")
+    elif service_history == "negative":
+        _cond_parts.append("no service records (+0)")
     if deal_rating:
         _cond_parts.append(f"{deal_rating} rating (+{rating_pts})")
     else:
-        _cond_parts.append("no marketplace rating (+1)")
+        _cond_parts.append(f"no marketplace rating (+{rating_pts})")
     reasons["condition"] = ", ".join(_cond_parts)
 
     # ── Mileage factor (15 points max) — age-relative + lifespan ───
@@ -746,6 +787,13 @@ def find_deals(db, desired_cars, config):
                     })
                     vin_mismatches = val_result["mismatches"]
 
+            # Parse owner count and service history from description
+            desc_text = row["description"] or ""
+            car_name_text = row["car_name"] or ""
+            combined_text = f"{car_name_text} {desc_text}"
+            owner_count = parse_owner_count(combined_text)
+            service_history = parse_service_history(combined_text)
+
             score_data = compute_deal_score(
                 price=price,
                 avg_price=avg_price,
@@ -762,6 +810,8 @@ def find_deals(db, desired_cars, config):
                 days_listed=days_listed,
                 car_query=car_query,
                 vin_mismatches=vin_mismatches,
+                owner_count=owner_count,
+                service_history=service_history,
             )
             score = score_data["total"]
 
@@ -814,6 +864,8 @@ def find_deals(db, desired_cars, config):
                     "mpg_data": mpg_data,
                     "monthly_fuel_cost": monthly_fuel_cost,
                     "vin_mismatches": vin_mismatches,
+                    "owner_count": owner_count,
+                    "service_history": service_history,
                 })
 
     # Deduplicate — same car posted under multiple URLs

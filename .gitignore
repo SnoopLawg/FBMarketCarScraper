@@ -7,3 +7,4 @@ __pycache__/
 scrapers/__pycache__/
 *.pyc
 venv/
+screenshots/

@@ -1,4 +1,4 @@
-"""Background scraper worker with status tracking."""
+"""Background scraper worker with status tracking and run metrics."""
 
 import logging
 import threading
@@ -230,14 +230,69 @@ def _run_scrape(on_complete):
                     "message": f"Scraping {name} ({i+1}/{total_sources})...",
                 })
 
+                # Track this scrape run
+                run_start = datetime.now()
+                run_id = db.insert_scrape_run(name, run_start.isoformat())
+
                 try:
                     scraper = scraper_cls(driver, config, insert_fn)
                     scraper.scrape()
+
+                    # Record success metrics
+                    duration = (datetime.now() - run_start).total_seconds()
+                    yield_count = scraper.listing_count
+                    db.update_scrape_run(run_id,
+                        finished_at=datetime.now().isoformat(),
+                        status="completed",
+                        listings_found=yield_count,
+                        duration_seconds=round(duration, 1))
+
+                    logging.info(
+                        f"[{name}] Scrape complete: {yield_count} listings "
+                        f"in {duration:.1f}s")
+
+                    # Yield health check — warn if dramatically low
+                    health = db.get_scrape_health()
+                    src_health = health.get(name)
+                    if (src_health and src_health["runs_count"] >= 3
+                            and src_health["avg_yield"] > 0):
+                        ratio = yield_count / src_health["avg_yield"]
+                        if ratio < 0.2:
+                            logging.warning(
+                                f"[{name}] CRITICAL: Found only {yield_count} "
+                                f"listings vs {src_health['avg_yield']:.0f} avg "
+                                f"— scraper may be broken!")
+                        elif ratio < 0.5:
+                            logging.warning(
+                                f"[{name}] WARNING: Found {yield_count} listings "
+                                f"vs {src_health['avg_yield']:.0f} avg — "
+                                f"below expected yield")
+
                     # Keep reference to Facebook scraper for enrichment
                     if name == "facebook":
                         fb_scraper = scraper
+
                 except Exception as e:
                     logging.error(f"{name} scraper failed: {e}")
+                    # Capture screenshot on failure
+                    screenshot_path = None
+                    try:
+                        from scrapers.base import BaseScraper
+                        temp = type('_', (BaseScraper,), {
+                            'SOURCE_NAME': name, 'scrape': lambda s: None
+                        })(driver, config, insert_fn)
+                        screenshot_path = temp.capture_screenshot("crash")
+                    except Exception:
+                        pass
+
+                    duration = (datetime.now() - run_start).total_seconds()
+                    db.update_scrape_run(run_id,
+                        finished_at=datetime.now().isoformat(),
+                        status="failed",
+                        errors=1,
+                        error_message=str(e)[:500],
+                        screenshot_path=screenshot_path,
+                        duration_seconds=round(duration, 1))
 
             # Enrich Facebook listings with detail page data
             if fb_scraper:

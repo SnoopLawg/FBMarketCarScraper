@@ -136,6 +136,23 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_vehicle_recalls_lookup
                 ON vehicle_recalls(make, model, year);
+
+            CREATE TABLE IF NOT EXISTS scrape_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT DEFAULT 'running',
+                listings_found INTEGER DEFAULT 0,
+                listings_new INTEGER DEFAULT 0,
+                listings_updated INTEGER DEFAULT 0,
+                errors INTEGER DEFAULT 0,
+                error_message TEXT,
+                screenshot_path TEXT,
+                duration_seconds REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_scrape_runs_source
+                ON scrape_runs(source, started_at);
         """)
         self.conn.commit()
 
@@ -344,7 +361,7 @@ class Database:
             "SELECT href, price, mileage, year, location, source, "
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
-            "title_type, vin "
+            "title_type, vin, description "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -923,4 +940,116 @@ class Database:
                 "complaints_count": row["complaints_count"] or 0,
                 "recalls_count": row["recalls_count"] or 0,
             }
+        return result
+
+    # ── Scrape Run Tracking ─────────────────────────────────────────
+
+    def insert_scrape_run(self, source, started_at):
+        """Record the start of a scrape run. Returns the run ID."""
+        try:
+            self.cur.execute(
+                "INSERT INTO scrape_runs (source, started_at) VALUES (?, ?)",
+                (source, started_at))
+            self.conn.commit()
+            return self.cur.lastrowid
+        except sqlite3.Error as e:
+            logging.error(f"DB insert scrape_run error: {e}")
+            return None
+
+    def update_scrape_run(self, run_id, **kwargs):
+        """Update a scrape run with results."""
+        allowed = {"finished_at", "status", "listings_found", "listings_new",
+                   "listings_updated", "errors", "error_message",
+                   "screenshot_path", "duration_seconds"}
+        sets = []
+        vals = []
+        for k, v in kwargs.items():
+            if k in allowed:
+                sets.append(f"{k} = ?")
+                vals.append(v)
+        if not sets or not run_id:
+            return
+        vals.append(run_id)
+        try:
+            self.cur.execute(
+                f"UPDATE scrape_runs SET {', '.join(sets)} WHERE id = ?", vals)
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB update scrape_run error: {e}")
+
+    def get_recent_scrape_runs(self, limit=50):
+        """Get recent scrape runs, newest first."""
+        self.cur.execute(
+            "SELECT id, source, started_at, finished_at, status, "
+            "listings_found, listings_new, listings_updated, "
+            "errors, error_message, screenshot_path, duration_seconds "
+            "FROM scrape_runs ORDER BY started_at DESC LIMIT ?",
+            (limit,))
+        return [dict(row) for row in self.cur.fetchall()]
+
+    def get_scrape_health(self):
+        """Compute per-source scrape health by comparing recent runs to historical averages.
+
+        Returns dict: {source: {avg_yield, last_yield, last_status, last_run,
+                                 runs_count, health}}
+        health is 'good', 'warning', or 'critical'.
+        """
+        # Get per-source stats from last 30 completed runs
+        self.cur.execute("""
+            SELECT source,
+                   COUNT(*) as run_count,
+                   AVG(listings_found) as avg_yield,
+                   MAX(started_at) as last_run
+            FROM scrape_runs
+            WHERE status = 'completed'
+            GROUP BY source
+        """)
+        stats = {}
+        for row in self.cur.fetchall():
+            stats[row["source"]] = {
+                "avg_yield": round(row["avg_yield"] or 0, 1),
+                "runs_count": row["run_count"],
+                "last_run": row["last_run"],
+            }
+
+        # Get latest run per source (any status)
+        self.cur.execute("""
+            SELECT source, status, listings_found, errors, error_message,
+                   started_at, duration_seconds
+            FROM scrape_runs
+            WHERE id IN (
+                SELECT MAX(id) FROM scrape_runs GROUP BY source
+            )
+        """)
+        result = {}
+        for row in self.cur.fetchall():
+            src = row["source"]
+            historical = stats.get(src, {})
+            avg_yield = historical.get("avg_yield", 0)
+            last_yield = row["listings_found"] or 0
+
+            # Determine health status
+            if row["status"] == "failed":
+                health = "critical"
+            elif avg_yield > 0 and last_yield < avg_yield * 0.2:
+                health = "critical"  # < 20% of average
+            elif avg_yield > 0 and last_yield < avg_yield * 0.5:
+                health = "warning"   # < 50% of average
+            elif row["errors"] and row["errors"] > 0:
+                health = "warning"
+            else:
+                health = "good"
+
+            result[src] = {
+                "avg_yield": avg_yield,
+                "last_yield": last_yield,
+                "last_status": row["status"],
+                "last_run": row["started_at"],
+                "last_duration": row["duration_seconds"],
+                "last_errors": row["errors"] or 0,
+                "last_error_message": row["error_message"],
+                "runs_count": historical.get("runs_count", 0),
+                "health": health,
+            }
+
         return result

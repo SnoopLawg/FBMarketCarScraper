@@ -4,9 +4,13 @@ import time
 import random
 import logging
 from abc import ABC, abstractmethod
+from datetime import datetime
+from pathlib import Path
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+
+SCREENSHOTS_DIR = Path(__file__).parent.parent / "screenshots"
 
 
 class BaseScraper(ABC):
@@ -20,11 +24,22 @@ class BaseScraper(ABC):
         self.min_price = config["MinPrice"]
         self.max_price = config["MaxPrice"]
         self.scroll_count = config.get("ScrollCount", 10)
+        self._listing_count = 0
 
     @abstractmethod
     def scrape(self):
         """Scrape all desired cars from this source."""
         ...
+
+    @property
+    def listing_count(self):
+        """Number of listings found during this scrape session."""
+        return self._listing_count
+
+    def counted_insert(self, **kwargs):
+        """Wrapper around insert that counts successful calls."""
+        self.insert(**kwargs)
+        self._listing_count += 1
 
     # ── Shared helpers ─────────────────────────────────────────────
 
@@ -57,6 +72,20 @@ class BaseScraper(ABC):
             """)
         except Exception:
             pass
+
+    def capture_screenshot(self, context="error"):
+        """Save a browser screenshot for debugging. Returns the file path or None."""
+        try:
+            SCREENSHOTS_DIR.mkdir(exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{self.SOURCE_NAME}_{context}_{ts}.png"
+            filepath = SCREENSHOTS_DIR / filename
+            self.driver.save_screenshot(str(filepath))
+            self.log(f"Screenshot saved: {filepath}")
+            return str(filepath)
+        except Exception as e:
+            logging.warning(f"[{self.SOURCE_NAME}] Screenshot failed: {e}")
+            return None
 
     def log(self, msg):
         logging.info(f"[{self.SOURCE_NAME}] {msg}")

@@ -136,6 +136,22 @@
             </div>
         </div>
 
+        <!-- Scraper Health -->
+        <div class="chart-card full" id="healthCard" style="display:none; margin-bottom:24px;">
+            <div class="chart-title">Scraper Health</div>
+            <div id="health-badges" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
+            <table class="data-table" id="runsTable">
+                <thead>
+                    <tr>
+                        <th>Source</th><th>Time</th><th>Status</th>
+                        <th>Listings</th><th>vs Avg</th><th>Duration</th>
+                        <th>Errors</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
         <div class="chart-card" style="margin-bottom:24px;">
             <div class="chart-title">Top 20 Deals by Score</div>
             <table class="data-table" id="dealsTable">
@@ -553,6 +569,114 @@ function render(rawData) {
             tbody.appendChild(tr);
         });
     }
+}
+
+// ── Scraper Health ──────────────────────────────────────────
+const HEALTH_COLORS = {
+    'good': '#34d399',
+    'warning': '#fbbf24',
+    'critical': '#f87171',
+};
+const STATUS_COLORS = {
+    'completed': '#34d399',
+    'failed': '#f87171',
+    'running': '#5b8dee',
+};
+
+fetch('/api/health')
+    .then(r => r.json())
+    .then(data => {
+        if (!data.health || Object.keys(data.health).length === 0) return;
+        document.getElementById('healthCard').style.display = 'block';
+        renderHealth(data);
+    })
+    .catch(() => {});
+
+function renderHealth(data) {
+    const { health, recent_runs } = data;
+
+    // Health badges per source
+    const badgesEl = document.getElementById('health-badges');
+    badgesEl.innerHTML = '';
+    for (const [src, info] of Object.entries(health)) {
+        const color = HEALTH_COLORS[info.health] || '#5c5c74';
+        const statusIcon = info.health === 'good' ? '●' : info.health === 'warning' ? '▲' : '✕';
+        const yieldInfo = info.avg_yield > 0
+            ? `${info.last_yield} found (avg ${info.avg_yield})`
+            : `${info.last_yield} found`;
+        const runInfo = info.last_run
+            ? `Last: ${timeAgo(info.last_run)}`
+            : 'Never run';
+
+        badgesEl.innerHTML += `
+            <div style="background:var(--bg-card);border:1px solid ${color}40;border-radius:var(--radius-md);padding:14px 18px;min-width:180px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                    <span style="color:${color};font-size:14px;">${statusIcon}</span>
+                    <span style="font-weight:600;text-transform:capitalize;color:var(--text-primary)">${src}</span>
+                    <span class="badge" style="background:${color}20;color:${color};margin-left:auto;font-size:10px;padding:2px 8px;border-radius:10px;">${info.health}</span>
+                </div>
+                <div style="font-size:12px;color:var(--text-muted);">${yieldInfo}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${runInfo}${info.runs_count > 0 ? ' &middot; ' + info.runs_count + ' runs' : ''}</div>
+                ${info.last_error_message ? '<div style="font-size:11px;color:#f87171;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;" title="' + escHtml(info.last_error_message) + '">&#9888; ' + escHtml(info.last_error_message.substring(0, 60)) + '</div>' : ''}
+            </div>
+        `;
+    }
+
+    // Recent runs table
+    const tbody = document.querySelector('#runsTable tbody');
+    tbody.innerHTML = '';
+    const runs = (recent_runs || []).slice(0, 15);
+    if (runs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">No scrape runs recorded yet</td></tr>';
+        return;
+    }
+
+    for (const run of runs) {
+        const statusColor = STATUS_COLORS[run.status] || '#5c5c74';
+        const srcHealth = health[run.source];
+        const avgYield = srcHealth ? srcHealth.avg_yield : 0;
+        let yieldComparison = '&mdash;';
+        if (avgYield > 0 && run.listings_found != null && run.status === 'completed') {
+            const pct = Math.round((run.listings_found / avgYield) * 100);
+            const pctColor = pct < 20 ? '#f87171' : pct < 50 ? '#fbbf24' : pct > 120 ? '#34d399' : 'var(--text-secondary)';
+            yieldComparison = '<span style="color:' + pctColor + '">' + pct + '%</span>';
+        }
+
+        const duration = run.duration_seconds != null
+            ? run.duration_seconds.toFixed(0) + 's'
+            : '&mdash;';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="text-transform:capitalize;font-weight:500">${run.source}</td>
+            <td style="font-size:12px">${timeAgo(run.started_at)}</td>
+            <td><span style="color:${statusColor};font-weight:500">${run.status}</span></td>
+            <td>${run.listings_found != null ? run.listings_found : '&mdash;'}</td>
+            <td>${yieldComparison}</td>
+            <td>${duration}</td>
+            <td>${run.errors > 0 ? '<span style="color:#f87171">' + run.errors + '</span>' : '0'}</td>
+        `;
+        tbody.appendChild(tr);
+    }
+}
+
+function timeAgo(isoStr) {
+    if (!isoStr) return '&mdash;';
+    const d = new Date(isoStr);
+    const now = new Date();
+    const diffMs = now - d;
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + 'h ago';
+    const days = Math.floor(hours / 24);
+    if (days < 7) return days + 'd ago';
+    return d.toLocaleDateString();
+}
+
+function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 </script>
 {% endblock %}

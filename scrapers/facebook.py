@@ -100,7 +100,7 @@ class FacebookScraper(BaseScraper):
         elif "clean title" in full_text:
             title_type = "clean"
 
-        self.insert(
+        self.counted_insert(
             car_query=car_query, href=full_href, image_url=img_tag["src"],
             price=price, car_name=title, location=city,
             mileage_raw=miles, source=self.SOURCE_NAME,

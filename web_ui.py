@@ -444,6 +444,18 @@ def scrape_status():
     return jsonify(get_status())
 
 
+# ── Scraper Health ─────────────────────────────────────────────
+
+@app.route("/api/health")
+def scraper_health():
+    """Get scraper health status and recent run history."""
+    if not _db:
+        return jsonify({"error": "Database not available"}), 500
+    health = _db.get_scrape_health()
+    runs = _db.get_recent_scrape_runs(limit=30)
+    return jsonify({"health": health, "recent_runs": runs})
+
+
 # ── Startup ───────────────────────────────────────────────────────
 
 def start_web_ui(deals, port=5001):
