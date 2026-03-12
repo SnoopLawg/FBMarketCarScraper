@@ -9,7 +9,7 @@ from epa import get_mpg_batch, estimate_monthly_fuel_cost
 from trim_tiers import get_trim_tier, tier_name
 from drivetrain import detect_drivetrain, drivetrain_label, is_awd_or_4wd
 from vin_validate import validate_vin_against_listing, compute_vin_penalty
-from parsing import parse_owner_count, parse_service_history
+from parsing import parse_owner_count, parse_service_history, parse_listed_date
 
 
 def title_group(title_type):
@@ -764,9 +764,28 @@ def find_deals(db, desired_cars, config):
             # Detect drivetrain
             dt, dt_source = detect_drivetrain(row["car_name"], car_query)
 
-            # Days listed
+            # Days listed — prefer listed_at (actual listing date from source)
+            # over created_at (when we first scraped it)
             days_listed = 0
-            if row["created_at"]:
+            listed_at = row.get("listed_at")
+            if not listed_at and row.get("description") and row["source"] == "facebook":
+                # Parse "Listed N weeks ago" from FB page text
+                desc_flat = row["description"].replace("\n", " ")
+                scrape_date = None
+                if row.get("updated_at"):
+                    try:
+                        scrape_date = datetime.fromisoformat(row["updated_at"])
+                    except (ValueError, TypeError):
+                        pass
+                listed_at = parse_listed_date(desc_flat, scrape_date)
+
+            if listed_at:
+                try:
+                    listed_dt = datetime.fromisoformat(listed_at)
+                    days_listed = max(0, (now - listed_dt).days)
+                except (ValueError, TypeError):
+                    pass
+            elif row["created_at"]:
                 try:
                     created = datetime.fromisoformat(row["created_at"])
                     days_listed = max(0, (now - created).days)

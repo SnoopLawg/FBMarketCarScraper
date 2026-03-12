@@ -248,6 +248,15 @@ class Database:
             self.conn.commit()
             logging.info("owner_count/carfax_url migration complete.")
 
+        if "listed_at" not in columns:
+            logging.info("Migrating DB: adding listed_at column...")
+            try:
+                self.cur.execute("ALTER TABLE listings ADD COLUMN listed_at TEXT")
+                self.conn.commit()
+                logging.info("listed_at migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Migrate vehicle_ratings to include MPG columns
         self.cur.execute("PRAGMA table_info(vehicle_ratings)")
         vr_rows = self.cur.fetchall()
@@ -376,7 +385,7 @@ class Database:
             "SELECT href, price, mileage, year, location, source, "
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
-            "title_type, vin, description, owner_count, carfax_url "
+            "title_type, vin, description, owner_count, carfax_url, listed_at "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -401,6 +410,35 @@ class Database:
             "ORDER BY price ASC"
         )
         return self.cur.fetchall()
+
+    def backfill_listed_at(self):
+        """Parse 'Listed N days/weeks ago' from FB descriptions into listed_at."""
+        from parsing import parse_listed_date
+        self.cur.execute(
+            "SELECT id, description, updated_at FROM listings "
+            "WHERE source = 'facebook' AND listed_at IS NULL "
+            "AND description IS NOT NULL AND description != ''"
+        )
+        rows = self.cur.fetchall()
+        updated = 0
+        for row in rows:
+            desc_flat = row["description"].replace("\n", " ")
+            scrape_date = None
+            if row["updated_at"]:
+                try:
+                    from datetime import datetime
+                    scrape_date = datetime.fromisoformat(row["updated_at"])
+                except (ValueError, TypeError):
+                    pass
+            listed_at = parse_listed_date(desc_flat, scrape_date)
+            if listed_at:
+                self.cur.execute(
+                    "UPDATE listings SET listed_at = ? WHERE id = ?",
+                    (listed_at, row["id"]))
+                updated += 1
+        if updated:
+            self.conn.commit()
+            logging.info(f"Backfilled listed_at for {updated} Facebook listings")
 
     def delete_listing(self, href):
         self.cur.execute(

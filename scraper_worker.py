@@ -129,9 +129,10 @@ def _run_enrich(on_complete, limit):
         finally:
             driver.quit()
 
-        # Backfill any remaining from car_name keywords and VINs
+        # Backfill any remaining from car_name keywords, VINs, and listed dates
         db.backfill_title_types()
         db.backfill_vins()
+        db.backfill_listed_at()
 
         # Re-run analysis so scores update
         _status.update({
@@ -325,6 +326,7 @@ def _run_scrape(on_complete):
         })
         db.backfill_title_types()
         db.backfill_vins()
+        db.backfill_listed_at()
 
         _status.update({"message": "Cleaning listings..."})
         desired_cars = config["DesiredCar"]

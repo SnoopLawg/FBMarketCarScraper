@@ -137,6 +137,9 @@ def main():
         # Backfill VINs from existing description text
         db.backfill_vins()
 
+        # Backfill listed_at from FB "Listed N days ago" text
+        db.backfill_listed_at()
+
         deals = run_analysis(config, db)
         logging.info(f"Found {len(deals)} deals total.")
 

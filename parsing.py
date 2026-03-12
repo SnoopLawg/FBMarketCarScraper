@@ -1,6 +1,7 @@
 """Shared parsing helpers for price, mileage, and year extraction."""
 
 import re
+from datetime import datetime, timedelta
 
 
 def parse_price(price_str):
@@ -131,3 +132,46 @@ def parse_service_history(text):
     if _SERVICE_POSITIVE.search(text):
         return "positive"
     return None
+
+
+# ── Listing age detection ─────────────────────────────────────────
+
+_LISTED_AGO = re.compile(
+    r"Listed\s+(\d+)\s+(hour|day|week|month)s?\s+ago",
+    re.I,
+)
+
+
+def parse_listed_date(text, reference_date=None):
+    """Parse 'Listed N days/weeks/hours ago' into an ISO date string.
+
+    FB Marketplace shows this on detail pages. The text is captured
+    in the full-page description scrape, split across newlines, so
+    callers should replace newlines with spaces before passing.
+
+    Args:
+        text: Listing text (newlines should be replaced with spaces).
+        reference_date: When the text was scraped. Defaults to now.
+
+    Returns:
+        str: ISO date (e.g. '2026-02-05') or None if not found.
+    """
+    if not text:
+        return None
+    m = _LISTED_AGO.search(text)
+    if not m:
+        return None
+    n = int(m.group(1))
+    unit = m.group(2).lower()
+    ref = reference_date or datetime.now()
+    if unit == "hour":
+        dt = ref - timedelta(hours=n)
+    elif unit == "day":
+        dt = ref - timedelta(days=n)
+    elif unit == "week":
+        dt = ref - timedelta(weeks=n)
+    elif unit == "month":
+        dt = ref - timedelta(days=n * 30)
+    else:
+        return None
+    return dt.strftime("%Y-%m-%d")
