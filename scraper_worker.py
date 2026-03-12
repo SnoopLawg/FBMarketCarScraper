@@ -11,6 +11,7 @@ from database import Database
 from driver import create_driver
 from scrapers import ALL_SCRAPERS
 from analysis import clean_listings, calculate_averages, find_deals
+from notifications import notify_scrape_complete
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parent))
 
@@ -346,6 +347,12 @@ def _run_scrape(on_complete):
             "running": False,
             "deal_count": len(deals),
         })
+
+        # Send Discord notifications (if configured)
+        try:
+            notify_scrape_complete(config, deals)
+        except Exception as e:
+            logging.error(f"Discord notification failed: {e}")
 
         if on_complete:
             on_complete(deals)

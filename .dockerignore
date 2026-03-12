@@ -10,5 +10,6 @@ v5_*
 fb_market_scraper.py
 favorite_listings.txt
 deleted_listings.txt
+notified_deals.txt
 Config.json
 car_listings.db

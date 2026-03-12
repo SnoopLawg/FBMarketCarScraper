@@ -9,6 +9,7 @@ from pathlib import Path
 from config import load_config
 from database import Database
 from analysis import clean_listings, calculate_averages, find_deals
+from notifications import notify_scrape_complete
 from web_ui import start_web_ui
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parent))
@@ -138,6 +139,12 @@ def main():
 
         deals = run_analysis(config, db)
         logging.info(f"Found {len(deals)} deals total.")
+
+        if not skip_scrape:
+            try:
+                notify_scrape_complete(config, deals)
+            except Exception as e:
+                logging.error(f"Discord notification failed: {e}")
     finally:
         db.close()
 

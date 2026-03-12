@@ -1,6 +1,7 @@
 marketplace_listings.db
 deleted_listings.txt
 favorite_listings.txt
+notified_deals.txt
 viewed_listings.txt
 fb_cookies.pkl
 __pycache__/
