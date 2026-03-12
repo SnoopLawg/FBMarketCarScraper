@@ -787,11 +787,16 @@ def find_deals(db, desired_cars, config):
                     })
                     vin_mismatches = val_result["mismatches"]
 
-            # Parse owner count and service history from description
-            desc_text = row["description"] or ""
-            car_name_text = row["car_name"] or ""
-            combined_text = f"{car_name_text} {desc_text}"
-            owner_count = parse_owner_count(combined_text)
+            # Owner count — prefer structured data from scraper (Autotrader/
+            # Cars.com extract "1-Owner" badges), fall back to description parsing.
+            combined_text = f"{row['car_name'] or ''} {row['description'] or ''}"
+            db_owner = row["owner_count"]
+            if db_owner and str(db_owner).isdigit():
+                owner_count = int(db_owner)
+            else:
+                owner_count = parse_owner_count(combined_text)
+
+            # Service history — from description text
             service_history = parse_service_history(combined_text)
 
             score_data = compute_deal_score(
@@ -866,6 +871,7 @@ def find_deals(db, desired_cars, config):
                     "vin_mismatches": vin_mismatches,
                     "owner_count": owner_count,
                     "service_history": service_history,
+                    "carfax_url": row["carfax_url"] or "",
                 })
 
     # Deduplicate — same car posted under multiple URLs

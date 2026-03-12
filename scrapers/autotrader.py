@@ -144,9 +144,30 @@ class AutotraderScraper(BaseScraper):
                     accident_history = txt
                     break
 
+            # Owner count — e.g. "1-Owner" badge
+            owner_count = ""
+            card_text = card.get_text(" ", strip=True)
+            card_text_lower = card_text.lower()
+            owner_match = re.search(r'(\d+)[- ]?owner', card_text_lower)
+            if owner_match:
+                owner_count = owner_match.group(1)
+
+            # Carfax link — Autotrader often shows "Free CARFAX Report"
+            carfax_url = ""
+            for link in card.select("a[href*='carfax'], a[href*='CARFAX']"):
+                carfax_url = link.get("href", "")
+                if carfax_url:
+                    break
+            if not carfax_url:
+                # Sometimes the link text mentions Carfax
+                for link in card.select("a"):
+                    if "carfax" in (link.get_text(strip=True) or "").lower():
+                        carfax_url = link.get("href", "")
+                        if carfax_url:
+                            break
+
             # Title type — look for "clean title", "salvage", "rebuilt"
             title_type = ""
-            card_text_lower = card.get_text(" ", strip=True).lower()
             if "salvage" in card_text_lower:
                 title_type = "salvage"
             elif "rebuilt" in card_text_lower:
@@ -193,7 +214,8 @@ class AutotraderScraper(BaseScraper):
                 mileage_raw=mileage_str, source=self.SOURCE_NAME,
                 seller=seller, distance=distance, trim=trim,
                 deal_rating=deal_rating, accident_history=accident_history,
-                title_type=title_type,
+                title_type=title_type, owner_count=owner_count,
+                carfax_url=carfax_url,
             )
             return True
         except Exception as e:

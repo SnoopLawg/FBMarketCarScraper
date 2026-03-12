@@ -151,9 +151,12 @@ class CarsComScraper(BaseScraper):
             if img_el:
                 image_url = img_el.get("src", "") or img_el.get("data-src", "")
 
+            # Get full card text for pattern matching
+            card_text = card.get_text(" ", strip=True)
+            card_text_lower = card_text.lower()
+
             # Title type — search card text for salvage/rebuilt keywords
             title_type = ""
-            card_text_lower = card.get_text(" ", strip=True).lower()
             if "salvage" in card_text_lower:
                 title_type = "salvage"
             elif "rebuilt" in card_text_lower:
@@ -163,11 +166,49 @@ class CarsComScraper(BaseScraper):
             elif "clean title" in card_text_lower:
                 title_type = "clean"
 
+            # Deal rating — Cars.com shows "Great Deal", "Good Deal", etc.
+            deal_rating = ""
+            for el in card.select("[class*='deal'], [class*='badge'], [class*='price-badge']"):
+                txt = el.get_text(strip=True)
+                if txt and any(w in txt.lower() for w in ["deal", "price"]):
+                    deal_rating = txt
+                    break
+
+            # Accident history
+            accident_history = ""
+            if "no accident" in card_text_lower or "no accidents" in card_text_lower:
+                accident_history = "No Accidents"
+            elif "accident" in card_text_lower:
+                accident_history = "Accident Reported"
+
+            # Owner count — e.g. "1-Owner" or "One-Owner"
+            owner_count = ""
+            owner_match = re.search(r'(\d+)[- ]?owner', card_text_lower)
+            if owner_match:
+                owner_count = owner_match.group(1)
+            elif "one-owner" in card_text_lower or "one owner" in card_text_lower:
+                owner_count = "1"
+
+            # Carfax link — Cars.com often includes "Free CARFAX Report"
+            carfax_url = ""
+            for link in card.select("a[href*='carfax'], a[href*='CARFAX']"):
+                carfax_url = link.get("href", "")
+                if carfax_url:
+                    break
+            if not carfax_url:
+                for link in card.select("a"):
+                    if "carfax" in (link.get_text(strip=True) or "").lower():
+                        carfax_url = link.get("href", "")
+                        if carfax_url:
+                            break
+
             self.counted_insert(
                 car_query=car_query, href=href, image_url=image_url,
                 price=price_str, car_name=title, location=location,
                 mileage_raw=mileage_str, source=self.SOURCE_NAME,
                 seller=seller, distance=distance, title_type=title_type,
+                deal_rating=deal_rating, accident_history=accident_history,
+                owner_count=owner_count, carfax_url=carfax_url,
             )
             return True
         except Exception as e:

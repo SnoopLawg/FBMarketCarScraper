@@ -2,10 +2,12 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
-CONFIG_PATH = SCRIPT_DIR / "Config.json"
+DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
+CONFIG_PATH = DATA_DIR / "Config.json"
 
 
 def load_config(path=None):

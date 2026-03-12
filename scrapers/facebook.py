@@ -1,5 +1,6 @@
 """Facebook Marketplace scraper."""
 
+import os
 import time
 import pickle
 import logging
@@ -11,7 +12,8 @@ from scrapers.base import BaseScraper
 from vin import extract_vin
 
 SCRIPT_DIR = Path(__file__).parent.parent
-COOKIE_FILE = SCRIPT_DIR / "fb_cookies.pkl"
+DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
+COOKIE_FILE = DATA_DIR / "fb_cookies.pkl"
 
 
 class FacebookScraper(BaseScraper):

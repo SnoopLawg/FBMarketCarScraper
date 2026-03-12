@@ -1,6 +1,7 @@
 """Flask web UI for browsing car deals."""
 
 import logging
+import os
 import webbrowser
 from pathlib import Path
 from threading import Timer
@@ -12,6 +13,7 @@ from config import load_config, save_config
 from database import Database
 
 SCRIPT_DIR = Path(__file__).parent
+DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
 app = Flask(__name__, template_folder=str(SCRIPT_DIR / "templates"))
 
 # Shared state
@@ -19,8 +21,8 @@ _db = None
 _deals = []
 _favorites = set()
 _deleted = set()
-_favorites_file = SCRIPT_DIR / "favorite_listings.txt"
-_deleted_file = SCRIPT_DIR / "deleted_listings.txt"
+_favorites_file = DATA_DIR / "favorite_listings.txt"
+_deleted_file = DATA_DIR / "deleted_listings.txt"
 
 
 def _load_set_from_file(filepath):
@@ -411,6 +413,22 @@ def analytics_data():
     })
 
 
+# ── Cookie upload ─────────────────────────────────────────────────
+
+@app.route("/api/upload-cookies", methods=["POST"])
+def upload_cookies():
+    """Upload a fresh fb_cookies.pkl file."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "Empty filename"}), 400
+    cookie_path = DATA_DIR / "fb_cookies.pkl"
+    f.save(str(cookie_path))
+    logging.info(f"Cookies uploaded: {cookie_path}")
+    return jsonify({"ok": True, "message": "Cookies uploaded successfully."})
+
+
 # ── Scrape Now ────────────────────────────────────────────────────
 
 @app.route("/api/scrape", methods=["POST"])
@@ -468,9 +486,11 @@ def start_web_ui(deals, port=5001):
     _favorites = _load_set_from_file(_favorites_file)
     _deleted = _load_set_from_file(_deleted_file)
 
-    logging.info(f"Starting web UI at http://localhost:{port}")
+    host = os.environ.get("FLASK_HOST", "127.0.0.1")
+    logging.info(f"Starting web UI at http://{host}:{port}")
 
-    # Auto-open browser after a short delay
-    Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+    # Auto-open browser (skip in Docker)
+    if not os.environ.get("DOCKER_MODE"):
+        Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
 
-    app.run(host="127.0.0.1", port=port, debug=False)
+    app.run(host=host, port=port, debug=False)

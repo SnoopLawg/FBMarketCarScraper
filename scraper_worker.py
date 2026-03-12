@@ -1,6 +1,7 @@
 """Background scraper worker with status tracking and run metrics."""
 
 import logging
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,8 @@ from database import Database
 from driver import create_driver
 from scrapers import ALL_SCRAPERS
 from analysis import clean_listings, calculate_averages, find_deals
+
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parent))
 
 _lock = threading.Lock()
 _status = {
@@ -104,7 +107,7 @@ def _run_enrich(on_complete, limit):
             "message": f"Creating browser for {total_needed} listings...",
         })
 
-        driver = create_driver()
+        driver = create_driver(proxy_config=config.get("Proxy"))
 
         try:
             from scrapers.facebook import FacebookScraper
@@ -203,9 +206,9 @@ def _run_scrape(on_complete):
 
         # Phase 1: Scrape
         _status.update({"phase": "scraping", "message": "Creating browser..."})
-        driver = create_driver()
+        driver = create_driver(proxy_config=config.get("Proxy"))
 
-        deleted_file = Path(__file__).parent / "deleted_listings.txt"
+        deleted_file = DATA_DIR / "deleted_listings.txt"
         deleted_set = set()
         if deleted_file.exists():
             deleted_set = set(

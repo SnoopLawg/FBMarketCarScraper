@@ -1,5 +1,6 @@
 """Entry point: scrape → analyze → browse deals."""
 
+import os
 import sys
 import logging
 from datetime import datetime
@@ -9,6 +10,8 @@ from config import load_config
 from database import Database
 from analysis import clean_listings, calculate_averages, find_deals
 from web_ui import start_web_ui
+
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parent))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,8 +32,8 @@ def run_scrapers(config, db):
         logging.warning("No sources enabled in Config.json")
         return
 
-    driver = create_driver()
-    deleted_file = Path(__file__).parent / "deleted_listings.txt"
+    driver = create_driver(proxy_config=config.get("Proxy"))
+    deleted_file = DATA_DIR / "deleted_listings.txt"
     deleted_set = set()
     if deleted_file.exists():
         deleted_set = set(l.strip() for l in deleted_file.read_text().splitlines() if l.strip())

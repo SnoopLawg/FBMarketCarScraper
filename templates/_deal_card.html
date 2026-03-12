@@ -57,6 +57,8 @@
             {% if deal.vin_data and (deal.vin_mismatches is defined and deal.vin_mismatches is not none and deal.vin_mismatches|length == 0) %}
             <span class="badge" style="background:rgba(52,211,153,0.12);color:var(--green)">✓ VIN Match</span>
             {% endif %}
+            {% if deal.owner_count and deal.owner_count == 1 %}<span class="badge" style="background:rgba(52,211,153,0.12);color:var(--green)">1-Owner</span>{% endif %}
+            {% if deal.carfax_url %}<a class="badge" href="{{ deal.carfax_url }}" target="_blank" style="background:rgba(91,141,238,0.12);color:var(--accent);text-decoration:none;cursor:pointer">CARFAX Report</a>{% endif %}
             {% if deal.deal_rating %}<span class="badge badge-deal">{{ deal.deal_rating }}</span>{% endif %}
             {% if deal.accident_history %}<span class="badge badge-info">{{ deal.accident_history }}</span>{% endif %}
         </div>

@@ -1,13 +1,15 @@
 """Database connection, schema, migration, and CRUD operations."""
 
 import logging
+import os
 import sqlite3
 from pathlib import Path
 
 from parsing import parse_price, parse_mileage, extract_year
 
 SCRIPT_DIR = Path(__file__).parent
-DB_PATH = SCRIPT_DIR / "marketplace_listings.db"
+DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
+DB_PATH = DATA_DIR / "marketplace_listings.db"
 
 
 class Database:
@@ -236,6 +238,16 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        if "owner_count" not in columns:
+            logging.info("Migrating DB: adding owner_count and carfax_url columns...")
+            for col in ["owner_count", "carfax_url"]:
+                try:
+                    self.cur.execute(f"ALTER TABLE listings ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError:
+                    pass
+            self.conn.commit()
+            logging.info("owner_count/carfax_url migration complete.")
+
         # Migrate vehicle_ratings to include MPG columns
         self.cur.execute("PRAGMA table_info(vehicle_ratings)")
         vr_rows = self.cur.fetchall()
@@ -282,7 +294,8 @@ class Database:
     def insert_listing(self, *, car_query, href, image_url, price, car_name,
                        location, mileage_raw, source, deleted_set=None,
                        trim="", seller="", condition="", deal_rating="",
-                       accident_history="", distance="", title_type=""):
+                       accident_history="", distance="", title_type="",
+                       owner_count="", carfax_url=""):
         """Insert or update a listing, parsing raw price/mileage/year."""
         href = self._normalize_href(href)
 
@@ -317,9 +330,9 @@ class Database:
                     (href, image_url, price, car_name, car_query, location,
                      mileage, year, source, updated_at,
                      trim, seller, condition, deal_rating, accident_history,
-                     distance, title_type)
+                     distance, title_type, owner_count, carfax_url)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
-                        ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(href, source) DO UPDATE SET
                     price = excluded.price,
                     image_url = COALESCE(excluded.image_url, image_url),
@@ -329,12 +342,14 @@ class Database:
                     deal_rating = COALESCE(excluded.deal_rating, deal_rating),
                     accident_history = COALESCE(excluded.accident_history, accident_history),
                     distance = COALESCE(excluded.distance, distance),
-                    title_type = COALESCE(excluded.title_type, title_type)
+                    title_type = COALESCE(excluded.title_type, title_type),
+                    owner_count = COALESCE(excluded.owner_count, owner_count),
+                    carfax_url = COALESCE(excluded.carfax_url, carfax_url)
             """, (href, image_url, price_val, car_name, car_query, location,
                   mileage_val, year_val, source,
                   trim or None, seller or None, condition or None,
                   deal_rating or None, accident_history or None, distance or None,
-                  title_type or None))
+                  title_type or None, owner_count or None, carfax_url or None))
             self.conn.commit()
         except sqlite3.Error as e:
             logging.error(f"DB insert error: {e}")
@@ -361,7 +376,7 @@ class Database:
             "SELECT href, price, mileage, year, location, source, "
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
-            "title_type, vin, description "
+            "title_type, vin, description, owner_count, carfax_url "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)

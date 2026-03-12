@@ -23,7 +23,7 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 
 ## Configuration
 
-`Config.json` — defines desired cars, price range, location, and which sources to enable. Required keys: `DesiredCar`, `MinPrice`, `MaxPrice`, `PriceThreshold`. The `Sources` block controls which scrapers run and their source-specific settings (CityID, region, zip, etc.).
+`Config.json` — defines desired cars, price range, location, and which sources to enable. Required keys: `DesiredCar`, `MinPrice`, `MaxPrice`, `PriceThreshold`. The `Sources` block controls which scrapers run and their source-specific settings (CityID, region, zip, etc.). Optional `Proxy` key configures proxy rotation: `{"url": "socks5://host:port"}` for a single proxy or `{"urls": ["socks5://a:1080", "http://b:8080"]}` for random rotation (supports HTTP, SOCKS4, SOCKS5).
 
 ## Architecture
 
@@ -31,9 +31,9 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 
 ### Scraping Layer
 - `scrapers/base.py` — `BaseScraper` ABC with shared Selenium helpers (scrolling, anti-detection delays, stealth JS injection, screenshot-on-error, yield counting via `counted_insert()`)
-- `scrapers/facebook.py`, `craigslist.py`, `carscom.py`, `autotrader.py` — each implements `scrape()`, iterates over `DesiredCar` list, calls `counted_insert()` for each listing found
+- `scrapers/facebook.py`, `craigslist.py`, `carscom.py`, `autotrader.py` — each implements `scrape()`, iterates over `DesiredCar` list, calls `counted_insert()` for each listing found. Cars.com and Autotrader scrapers also extract vehicle history data (owner count, accident history, deal ratings, Carfax report URLs) from listing cards
 - `scrapers/__init__.py` — `ALL_SCRAPERS` registry dict mapping source name → scraper class
-- `driver.py` — Firefox WebDriver factory with anti-detection settings; uses a dedicated Firefox profile (`6kmbn0d4.fbscraper`) for FB cookies
+- `driver.py` — Firefox WebDriver factory with anti-detection settings; uses a dedicated Firefox profile (`6kmbn0d4.fbscraper`) for FB cookies; supports HTTP/SOCKS proxy configuration with random rotation
 - `scraper_worker.py` — background threading wrapper that exposes status tracking for the web UI to poll; records per-source run metrics to `scrape_runs` table and logs yield health warnings
 
 ### Data Layer
@@ -86,3 +86,5 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 - **Description parsing:** Owner count and service history signals are extracted from listing descriptions and car names via regex patterns in `parsing.py`, then fed into the scoring pipeline
 - **Yield tracking:** Every scraper run records metrics to `scrape_runs`; health checks compare yield to historical norms and flag breakage
 - **Screenshot on error:** `BaseScraper.capture_screenshot()` saves browser state to `screenshots/` when a scraper crashes, aiding diagnosis of selector changes or bot detection
+- **Proxy rotation:** `driver.py` accepts an optional `Proxy` config and applies HTTP or SOCKS proxy settings to Firefox. When multiple URLs are provided, one is chosen at random per driver instantiation
+- **Vehicle history extraction (Carfax-lite):** Cars.com and Autotrader scrapers extract owner count badges, accident history, deal ratings, and Carfax report URLs that are already displayed on listing cards — no paid API needed. Data stored in `owner_count` and `carfax_url` columns on `listings`, surfaced as badges on deal cards, and fed into the scoring pipeline
