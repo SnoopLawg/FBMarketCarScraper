@@ -767,12 +767,12 @@ def find_deals(db, desired_cars, config):
             # Days listed — prefer listed_at (actual listing date from source)
             # over created_at (when we first scraped it)
             days_listed = 0
-            listed_at = row.get("listed_at")
-            if not listed_at and row.get("description") and row["source"] == "facebook":
+            listed_at = row["listed_at"]
+            if not listed_at and row["description"] and row["source"] == "facebook":
                 # Parse "Listed N weeks ago" from FB page text
                 desc_flat = row["description"].replace("\n", " ")
                 scrape_date = None
-                if row.get("updated_at"):
+                if row["updated_at"]:
                     try:
                         scrape_date = datetime.fromisoformat(row["updated_at"])
                     except (ValueError, TypeError):
