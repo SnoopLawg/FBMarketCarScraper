@@ -1,12 +1,14 @@
 """Flask web UI for browsing car deals."""
 
+import csv
+import io
 import logging
 import os
 import webbrowser
 from pathlib import Path
 from threading import Timer
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 
 from analysis import title_group, compute_market_range
 from config import load_config, save_config
@@ -51,24 +53,22 @@ def index():
     year_max = request.args.get("year_max", "")
     mileage_min = request.args.get("mileage_min", "")
     mileage_max = request.args.get("mileage_max", "")
+    price_min = request.args.get("price_min", "")
+    price_max = request.args.get("price_max", "")
 
     # Parse numeric filters
-    try:
-        year_min_val = int(year_min) if year_min else None
-    except ValueError:
-        year_min_val = None
-    try:
-        year_max_val = int(year_max) if year_max else None
-    except ValueError:
-        year_max_val = None
-    try:
-        mileage_min_val = int(mileage_min) if mileage_min else None
-    except ValueError:
-        mileage_min_val = None
-    try:
-        mileage_max_val = int(mileage_max) if mileage_max else None
-    except ValueError:
-        mileage_max_val = None
+    def _int(val):
+        try:
+            return int(val) if val else None
+        except ValueError:
+            return None
+
+    year_min_val = _int(year_min)
+    year_max_val = _int(year_max)
+    mileage_min_val = _int(mileage_min)
+    mileage_max_val = _int(mileage_max)
+    price_min_val = _int(price_min)
+    price_max_val = _int(price_max)
 
     filtered = []
     for d in _deals:
@@ -105,6 +105,10 @@ def index():
         if mileage_min_val and (not d.get("mileage") or d["mileage"] < mileage_min_val):
             continue
         if mileage_max_val and (not d.get("mileage") or d["mileage"] > mileage_max_val):
+            continue
+        if price_min_val and (not d.get("price") or d["price"] < price_min_val):
+            continue
+        if price_max_val and (not d.get("price") or d["price"] > price_max_val):
             continue
         filtered.append(d)
 
@@ -162,6 +166,8 @@ def index():
         current_year_max=year_max,
         current_mileage_min=mileage_min,
         current_mileage_max=mileage_max,
+        current_price_min=price_min,
+        current_price_max=price_max,
     )
 
 
@@ -222,6 +228,127 @@ def favorites_page():
         favorites=_favorites,
         total=len(enriched),
     )
+
+
+# ── CSV Export ────────────────────────────────────────────────────
+
+@app.route("/api/export-csv")
+def export_csv():
+    """Export current deals as a CSV file, respecting active filters."""
+    # Re-apply the same filtering logic as the index route
+    source_filter = request.args.get("source", "")
+    car_filter = request.args.get("car", "")
+    title_filter = request.args.get("title", "")
+    search_query = request.args.get("q", "").strip().lower()
+    sort_by = request.args.get("sort", "score")
+
+    def _int(val):
+        try:
+            return int(val) if val else None
+        except ValueError:
+            return None
+
+    year_min_val = _int(request.args.get("year_min", ""))
+    year_max_val = _int(request.args.get("year_max", ""))
+    mileage_min_val = _int(request.args.get("mileage_min", ""))
+    mileage_max_val = _int(request.args.get("mileage_max", ""))
+    price_min_val = _int(request.args.get("price_min", ""))
+    price_max_val = _int(request.args.get("price_max", ""))
+
+    filtered = []
+    for d in _deals:
+        if d["href"] in _deleted:
+            continue
+        if source_filter and d["source"] != source_filter:
+            continue
+        if car_filter and d["car_query"] != car_filter:
+            continue
+        if title_filter:
+            dt = (d.get("title_type") or "").lower()
+            if title_filter == "unknown" and dt not in ("", "unknown"):
+                continue
+            elif title_filter != "unknown" and dt != title_filter:
+                continue
+        if search_query:
+            searchable = " ".join([
+                d.get("car_name") or "", d.get("car_query") or "",
+                d.get("seller") or "", d.get("location") or "",
+                d.get("trim") or "",
+            ]).lower()
+            if search_query not in searchable:
+                continue
+        if year_min_val and (not d.get("year") or d["year"] < year_min_val):
+            continue
+        if year_max_val and (not d.get("year") or d["year"] > year_max_val):
+            continue
+        if mileage_min_val and (not d.get("mileage") or d["mileage"] < mileage_min_val):
+            continue
+        if mileage_max_val and (not d.get("mileage") or d["mileage"] > mileage_max_val):
+            continue
+        if price_min_val and (not d.get("price") or d["price"] < price_min_val):
+            continue
+        if price_max_val and (not d.get("price") or d["price"] > price_max_val):
+            continue
+        filtered.append(d)
+
+    # Sort
+    if sort_by == "price":
+        filtered.sort(key=lambda d: d["price"])
+    elif sort_by == "mileage":
+        filtered.sort(key=lambda d: d.get("mileage") or 999999)
+    elif sort_by == "score":
+        filtered.sort(key=lambda d: d.get("deal_score", 0), reverse=True)
+    else:
+        filtered.sort(key=lambda d: d["price"] - d.get("avg_price", d["price"]))
+
+    # Build CSV
+    columns = [
+        "car_name", "price", "avg_price", "deal_score", "deal_grade",
+        "year", "mileage", "source", "location", "drivetrain",
+        "title_type", "trim", "seller", "owner_count", "accident_history",
+        "vin", "href",
+    ]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for d in filtered:
+        writer.writerow(d)
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=car_deals.csv"},
+    )
+
+
+# ── Comparison View ───────────────────────────────────────────────
+
+@app.route("/compare")
+def compare_page():
+    """Side-by-side comparison of selected deals."""
+    hrefs = request.args.getlist("href")
+    if not hrefs:
+        return render_template("compare.html", deals=[], favorites=_favorites)
+
+    deals = [d for d in _deals if d["href"] in hrefs]
+
+    # Enrich with price history and VIN data
+    price_histories = _db.get_price_history_batch(hrefs) if _db else {}
+    deal_vins = [d["vin"] for d in deals if d.get("vin")]
+    vin_data = _db.get_vin_data_batch(deal_vins) if _db and deal_vins else {}
+
+    for d in deals:
+        d["price_history"] = price_histories.get(d["href"])
+        d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
+        # Market range
+        if d.get("car_query") and d.get("year") and _db:
+            grp = title_group(d.get("title_type"))
+            prices = _db.get_market_prices(d["car_query"], d["year"], grp)
+            d["market_range"] = compute_market_range(prices)
+        else:
+            d["market_range"] = None
+
+    return render_template("compare.html", deals=deals, favorites=_favorites)
 
 
 # ── API endpoints ─────────────────────────────────────────────────

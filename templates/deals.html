@@ -162,7 +162,9 @@
     ~ ('&year_min=' ~ current_year_min if current_year_min else '')
     ~ ('&year_max=' ~ current_year_max if current_year_max else '')
     ~ ('&mileage_min=' ~ current_mileage_min if current_mileage_min else '')
-    ~ ('&mileage_max=' ~ current_mileage_max if current_mileage_max else '') %}
+    ~ ('&mileage_max=' ~ current_mileage_max if current_mileage_max else '')
+    ~ ('&price_min=' ~ current_price_min if current_price_min else '')
+    ~ ('&price_max=' ~ current_price_max if current_price_max else '') %}
 
 <div class="toolbar">
     <div class="toolbar-inner">
@@ -226,7 +228,18 @@
                    id="mileage-max" value="{{ current_mileage_max }}">
         </div>
 
+        <div class="flex items-center gap-2">
+            <span class="text-muted text-sm">Price:</span>
+            <input type="number" class="input" style="width:100px" placeholder="Min"
+                   id="price-min" value="{{ current_price_min }}">
+            <span class="text-muted">-</span>
+            <input type="number" class="input" style="width:100px" placeholder="Max"
+                   id="price-max" value="{{ current_price_max }}">
+        </div>
+
         <button class="btn btn-ghost btn-sm" onclick="clearFilters()">Clear</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportCSV()" title="Export filtered deals to CSV">Export CSV</button>
+        <button class="btn btn-ghost btn-sm" id="compare-btn" style="display:none" onclick="openCompare()">Compare (<span id="compare-count">0</span>)</button>
     </div>
 </div>
 
@@ -260,20 +273,16 @@
     function applyAllFilters() {
         const params = new URLSearchParams(window.location.search);
 
-        const q = document.getElementById('search-input').value;
-        if (q) params.set('q', q); else params.delete('q');
-
-        const yearMin = document.getElementById('year-min').value;
-        if (yearMin) params.set('year_min', yearMin); else params.delete('year_min');
-
-        const yearMax = document.getElementById('year-max').value;
-        if (yearMax) params.set('year_max', yearMax); else params.delete('year_max');
-
-        const miMin = document.getElementById('mileage-min').value;
-        if (miMin) params.set('mileage_min', miMin); else params.delete('mileage_min');
-
-        const miMax = document.getElementById('mileage-max').value;
-        if (miMax) params.set('mileage_max', miMax); else params.delete('mileage_max');
+        const fields = {
+            'q': 'search-input',
+            'year_min': 'year-min', 'year_max': 'year-max',
+            'mileage_min': 'mileage-min', 'mileage_max': 'mileage-max',
+            'price_min': 'price-min', 'price_max': 'price-max',
+        };
+        for (const [param, elId] of Object.entries(fields)) {
+            const val = document.getElementById(elId).value;
+            if (val) params.set(param, val); else params.delete(param);
+        }
 
         window.location.search = params.toString();
     }
@@ -283,10 +292,33 @@
     }
 
     // Apply filters on change for numeric inputs
-    ['year-min','year-max','mileage-min','mileage-max'].forEach(id => {
+    ['year-min','year-max','mileage-min','mileage-max','price-min','price-max'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener('change', applyAllFilters);
     });
+
+    // ── CSV Export ──
+    function exportCSV() {
+        const params = new URLSearchParams(window.location.search);
+        window.location.href = '/api/export-csv?' + params.toString();
+    }
+
+    // ── Compare ──
+    function updateCompare() {
+        const checked = document.querySelectorAll('.compare-cb:checked');
+        const btn = document.getElementById('compare-btn');
+        const count = document.getElementById('compare-count');
+        count.textContent = checked.length;
+        btn.style.display = checked.length > 0 ? '' : 'none';
+    }
+
+    function openCompare() {
+        const checked = document.querySelectorAll('.compare-cb:checked');
+        if (checked.length < 2) { alert('Select at least 2 deals to compare.'); return; }
+        const params = new URLSearchParams();
+        checked.forEach(cb => params.append('href', cb.value));
+        window.open('/compare?' + params.toString(), '_blank');
+    }
 
     async function toggleFav(btn, href) {
         const res = await fetch('/api/favorite', {

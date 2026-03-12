@@ -195,6 +195,11 @@
         <div class="deal-actions">
             <a class="btn btn-primary" href="{{ deal.href }}" target="_blank">View Listing</a>
             {% if show_save %}
+            <label class="btn btn-ghost btn-sm compare-toggle" title="Add to compare"
+                   style="cursor:pointer;display:flex;align-items:center;gap:4px">
+                <input type="checkbox" class="compare-cb" value="{{ deal.href }}"
+                       onchange="updateCompare()" style="margin:0"> Cmp
+            </label>
             <button class="btn btn-ghost {{ 'btn-saved' if deal.href in favorites else '' }}"
                     onclick="toggleFav(this, '{{ deal.href }}')"
                     style="{{ 'color:var(--yellow);border-color:var(--yellow)' if deal.href in favorites else '' }}">

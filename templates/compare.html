@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block title %}Compare - Car Deal Finder{% endblock %}
+
+{% block head %}
+<style>
+    .compare-container {
+        max-width: 1400px; margin: 0 auto; padding: var(--space-6);
+    }
+    .compare-header {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-bottom: var(--space-6);
+    }
+    .compare-header h2 { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+
+    .compare-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+    .compare-table th {
+        text-align: left;
+        color: var(--text-muted);
+        font-weight: 500;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        position: sticky; left: 0;
+        background: var(--bg-primary);
+        min-width: 130px;
+    }
+    .compare-table td {
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+        color: var(--text-secondary);
+        min-width: 260px;
+        vertical-align: top;
+    }
+    .compare-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .compare-img {
+        width: 240px; height: 150px; object-fit: cover;
+        border-radius: var(--radius-sm);
+        display: block;
+    }
+    .compare-img-empty {
+        width: 240px; height: 150px;
+        background: var(--bg-input);
+        border-radius: var(--radius-sm);
+        display: flex; align-items: center; justify-content: center;
+        color: var(--text-muted); font-size: 12px;
+    }
+    .compare-name {
+        font-weight: 600; color: var(--text-primary); font-size: 14px;
+        margin-bottom: 4px;
+    }
+    .compare-price {
+        font-size: 20px; font-weight: 700; color: var(--green);
+        font-variant-numeric: tabular-nums;
+    }
+    .compare-score {
+        display: inline-block; padding: 3px 10px; border-radius: 4px;
+        font-weight: 600; font-size: 13px;
+    }
+    .compare-good { color: var(--green); }
+    .compare-ok { color: var(--accent); }
+    .compare-warn { color: var(--yellow); }
+    .compare-bad { color: var(--red); }
+    .compare-savings { font-size: 12px; color: var(--green); font-weight: 500; }
+
+    .compare-link {
+        display: inline-block; padding: 6px 14px;
+        background: var(--accent); color: #fff;
+        border-radius: var(--radius-sm);
+        text-decoration: none; font-weight: 500; font-size: 12px;
+    }
+    .compare-link:hover { background: var(--accent-hover); }
+
+    .empty-state {
+        text-align: center; padding: 80px 20px;
+        color: var(--text-muted); font-size: 15px;
+    }
+
+    @media (max-width: 768px) {
+        .compare-container { padding: var(--space-3); }
+        .compare-table td { min-width: 200px; }
+    }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="compare-container">
+    <div class="compare-header">
+        <h2>Compare {{ deals|length }} Deal{{ 's' if deals|length != 1 else '' }}</h2>
+        <a href="/" class="btn btn-ghost btn-sm">Back to Deals</a>
+    </div>
+
+    {% if deals|length < 2 %}
+    <div class="empty-state">
+        <div style="font-size:40px; margin-bottom:12px;">Select at least 2 deals to compare</div>
+        <p><a href="/" style="color:var(--accent)">Go back</a> and check the "Cmp" boxes on deals you want to compare.</p>
+    </div>
+    {% else %}
+    <div style="overflow-x:auto">
+    <table class="compare-table">
+        <tr>
+            <th></th>
+            {% for deal in deals %}
+            <td>
+                {% if deal.image_url %}
+                <img class="compare-img" src="{{ deal.image_url }}" alt="{{ deal.car_name }}" loading="lazy"
+                     onerror="this.outerHTML='<div class=compare-img-empty>No image</div>'">
+                {% else %}
+                <div class="compare-img-empty">No image</div>
+                {% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Name</th>
+            {% for deal in deals %}
+            <td><div class="compare-name">{{ deal.car_name or deal.car_query }}</div></td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Price</th>
+            {% for deal in deals %}
+            <td>
+                <span class="compare-price">${{ '{:,.0f}'.format(deal.price) }}</span>
+                {% set eff_avg = deal.trim_avg_price if deal.trim_avg_price and deal.trim_avg_price > 0 else deal.avg_price %}
+                {% if eff_avg and eff_avg > 0 and eff_avg > deal.price %}
+                <br><span class="compare-savings">${{ '{:,.0f}'.format(eff_avg - deal.price) }} below avg</span>
+                {% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Score</th>
+            {% for deal in deals %}
+            <td>
+                {% if deal.deal_score is not none %}
+                <span class="compare-score
+                    {%- if deal.deal_score >= 80 %} compare-good
+                    {%- elif deal.deal_score >= 65 %} compare-ok
+                    {%- elif deal.deal_score >= 50 %} compare-warn
+                    {%- else %} compare-bad{% endif %}">
+                    {{ deal.deal_grade }} ({{ deal.deal_score|round(0)|int }})
+                </span>
+                {% else %}-{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Year</th>
+            {% for deal in deals %}<td>{{ deal.year or '-' }}</td>{% endfor %}
+        </tr>
+        <tr>
+            <th>Mileage</th>
+            {% for deal in deals %}
+            <td>{{ '{:,.0f}'.format(deal.mileage) if deal.mileage else '-' }} mi</td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Drivetrain</th>
+            {% for deal in deals %}
+            <td>{{ deal.drivetrain or '-' }}{% if deal.drivetrain_source == 'default' %}*{% endif %}</td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Title</th>
+            {% for deal in deals %}
+            <td class="{{ 'compare-bad' if deal.title_type in ['salvage','rebuilt','lemon'] else '' }}">
+                {{ (deal.title_type or 'Unknown')|title }}
+            </td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Trim</th>
+            {% for deal in deals %}<td>{{ deal.trim or '-' }}</td>{% endfor %}
+        </tr>
+        <tr>
+            <th>Location</th>
+            {% for deal in deals %}
+            <td>{{ deal.location or '-' }}{% if deal.distance %} ({{ deal.distance }}){% endif %}</td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Source</th>
+            {% for deal in deals %}<td>{{ deal.source }}</td>{% endfor %}
+        </tr>
+        <tr>
+            <th>Accident History</th>
+            {% for deal in deals %}
+            <td class="{{ 'compare-good' if deal.accident_history and 'no' in deal.accident_history|lower else ('compare-bad' if deal.accident_history and 'reported' in deal.accident_history|lower else '') }}">
+                {{ deal.accident_history or '-' }}
+            </td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Owner Count</th>
+            {% for deal in deals %}
+            <td>{{ deal.owner_count if deal.owner_count else '-' }}</td>
+            {% endfor %}
+        </tr>
+        {% if deals|selectattr("mpg_data")|list %}
+        <tr>
+            <th>MPG</th>
+            {% for deal in deals %}
+            <td>
+                {% if deal.mpg_data and deal.mpg_data.mpg_combined %}
+                {{ deal.mpg_data.mpg_combined }} ({{ deal.mpg_data.mpg_city }}/{{ deal.mpg_data.mpg_highway }})
+                {% if deal.monthly_fuel_cost %} ~${{ deal.monthly_fuel_cost }}/mo{% endif %}
+                {% else %}-{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endif %}
+        {% if deals|selectattr("nhtsa_rating")|list %}
+        <tr>
+            <th>NHTSA Rating</th>
+            {% for deal in deals %}
+            <td>
+                {% if deal.nhtsa_rating and deal.nhtsa_rating.overall_rating %}
+                {{ deal.nhtsa_rating.overall_rating }}/5 stars
+                {% if deal.nhtsa_rating.complaints_count %} ({{ deal.nhtsa_rating.complaints_count }} complaints){% endif %}
+                {% else %}-{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endif %}
+        <tr>
+            <th>VIN</th>
+            {% for deal in deals %}
+            <td style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.5px">
+                {{ deal.vin or '-' }}
+            </td>
+            {% endfor %}
+        </tr>
+        <tr>
+            <th>Seller</th>
+            {% for deal in deals %}<td>{{ deal.seller or '-' }}</td>{% endfor %}
+        </tr>
+        <tr>
+            <th></th>
+            {% for deal in deals %}
+            <td><a class="compare-link" href="{{ deal.href }}" target="_blank">View Listing</a></td>
+            {% endfor %}
+        </tr>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
