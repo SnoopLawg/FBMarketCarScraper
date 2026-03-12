@@ -400,7 +400,7 @@ class Database:
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
         )
-        return self.cur.fetchall()
+        return [dict(row) for row in self.cur.fetchall()]
 
     def get_averages(self, car_query):
         """Get all averages for a car_query, keyed by (year, title_group)."""
