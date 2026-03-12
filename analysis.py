@@ -902,3 +902,155 @@ def find_deals(db, desired_cars, config):
 
     logging.info(f"Found {len(deals)} deals (after dedup).")
     return deals
+
+
+# ── Sell Pricing ─────────────────────────────────────────────────
+
+_CONDITION_MULTIPLIER = {
+    "excellent": 1.05,
+    "very good": 1.02,
+    "good": 1.0,
+    "fair": 0.90,
+    "poor": 0.80,
+}
+
+
+def compute_sell_recommendation(db, sell_car, config):
+    """Compute a pricing recommendation for a car the user wants to sell.
+
+    Args:
+        db: Database instance
+        sell_car: dict with keys: name, year, mileage, title_type, trim,
+                  drivetrain, condition
+        config: app config dict
+
+    Returns:
+        dict with recommendation data, or None if insufficient market data.
+    """
+    name = sell_car["name"]
+    year = sell_car.get("year")
+    user_mileage = sell_car.get("mileage") or 0
+    user_title = sell_car.get("title_type", "clean")
+    user_trim = sell_car.get("trim", "")
+    user_drivetrain = sell_car.get("drivetrain", "")
+    user_condition = sell_car.get("condition", "good")
+
+    grp = title_group(user_title)
+
+    # Get comparable prices for this car/year/title group
+    prices = db.get_market_prices(name, year, grp) if year else []
+    # Also try adjacent years if sample is thin
+    if year and len(prices) < 5:
+        for adj in [year - 1, year + 1]:
+            prices.extend(db.get_market_prices(name, adj, grp))
+
+    market = compute_market_range(prices)
+    if not market:
+        return {
+            "car": sell_car,
+            "market_range": None,
+            "recommended_price": None,
+            "quick_sell_price": None,
+            "max_value_price": None,
+            "adjustments": [],
+            "comparable_count": 0,
+            "comparables": [],
+        }
+
+    # Start with median as base price
+    base = market["avg"]
+    adjustments = []
+
+    # Mileage adjustment — compute avg mileage from comparables
+    candidates = db.get_deal_candidates(name)
+    comp_mileages = [
+        r["mileage"] for r in candidates
+        if r["mileage"] and r.get("year") == year
+        and title_group(r.get("title_type")) == grp
+    ]
+    if comp_mileages and user_mileage:
+        avg_mileage = sum(comp_mileages) / len(comp_mileages)
+        diff = user_mileage - avg_mileage
+        # ~$0.05-0.10 per mile difference for most cars
+        per_mile = base * 0.000065
+        mileage_adj = round(-diff * per_mile)
+        mileage_adj = max(-5000, min(5000, mileage_adj))
+        if abs(mileage_adj) >= 100:
+            direction = "below" if diff < 0 else "above"
+            adjustments.append({
+                "factor": "Mileage",
+                "impact": mileage_adj,
+                "reason": f"{user_mileage:,.0f} mi vs {avg_mileage:,.0f} avg ({abs(diff):,.0f} {direction})",
+            })
+            base += mileage_adj
+
+    # Trim adjustment
+    if user_trim:
+        tier, _ = get_trim_tier("", name, user_trim)
+        if tier > 1:
+            trim_premium = round(base * (tier - 1) * 0.04)
+            adjustments.append({
+                "factor": "Trim",
+                "impact": trim_premium,
+                "reason": f"{user_trim} (Tier {tier}: {tier_name(tier)})",
+            })
+            base += trim_premium
+
+    # Drivetrain adjustment
+    if user_drivetrain and user_drivetrain.upper() in ("AWD", "4WD"):
+        awd_premium = round(base * 0.05)
+        adjustments.append({
+            "factor": "Drivetrain",
+            "impact": awd_premium,
+            "reason": f"{user_drivetrain} premium",
+        })
+        base += awd_premium
+
+    # Condition adjustment
+    cond_mult = _CONDITION_MULTIPLIER.get(user_condition.lower(), 1.0)
+    if cond_mult != 1.0:
+        cond_adj = round(base * (cond_mult - 1.0))
+        adjustments.append({
+            "factor": "Condition",
+            "impact": cond_adj,
+            "reason": f"{user_condition.title()} condition",
+        })
+        base += cond_adj
+
+    recommended = round(base / 100) * 100  # round to nearest $100
+    # Quick sell: ~90% of recommended, Max: ~110%
+    quick_sell = round(recommended * 0.90 / 100) * 100
+    max_value = round(recommended * 1.10 / 100) * 100
+
+    # Get comparable listings for display
+    comparables = []
+    for r in candidates:
+        if not r.get("year") or r["year"] != year:
+            continue
+        if title_group(r.get("title_type")) != grp:
+            continue
+        comparables.append(dict(r))
+    comparables.sort(key=lambda x: abs((x.get("price") or 0) - recommended))
+    comparables = comparables[:20]
+
+    return {
+        "car": sell_car,
+        "market_range": market,
+        "recommended_price": recommended,
+        "quick_sell_price": quick_sell,
+        "max_value_price": max_value,
+        "adjustments": adjustments,
+        "comparable_count": market["count"],
+        "comparables": comparables,
+    }
+
+
+def find_sell_data(db, sell_cars, config):
+    """Compute pricing recommendations for all sell cars."""
+    results = []
+    for sell_car in sell_cars:
+        if not sell_car.get("name"):
+            continue
+        rec = compute_sell_recommendation(db, sell_car, config)
+        results.append(rec)
+    return results

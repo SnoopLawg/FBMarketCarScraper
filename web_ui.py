@@ -10,7 +10,7 @@ from threading import Timer
 
 from flask import Flask, render_template, request, jsonify, Response
 
-from analysis import title_group, compute_market_range
+from analysis import title_group, compute_market_range, find_sell_data
 from config import load_config, save_config
 from database import Database
 
@@ -21,6 +21,7 @@ app = Flask(__name__, template_folder=str(SCRIPT_DIR / "templates"))
 # Shared state
 _db = None
 _deals = []
+_sell_data = []
 _favorites = set()
 _deleted = set()
 _favorites_file = DATA_DIR / "favorite_listings.txt"
@@ -351,6 +352,26 @@ def compare_page():
     return render_template("compare.html", deals=deals, favorites=_favorites)
 
 
+# ── Sell My Car ──────────────────────────────────────────────────
+
+@app.route("/sell")
+def sell_page():
+    return render_template("sell.html", sell_data=_sell_data)
+
+
+@app.route("/api/sell/refresh", methods=["POST"])
+def refresh_sell_data():
+    """Recompute sell pricing from current market data."""
+    global _sell_data
+    config = load_config()
+    sell_cars = config.get("SellCars", [])
+    if not sell_cars:
+        return jsonify({"ok": True, "count": 0})
+    if _db:
+        _sell_data = find_sell_data(_db, sell_cars, config)
+    return jsonify({"ok": True, "count": len(_sell_data)})
+
+
 # ── API endpoints ─────────────────────────────────────────────────
 
 @app.route("/api/favorite", methods=["POST"])
@@ -456,6 +477,8 @@ def update_settings():
         for name, enabled in data["sources"].items():
             if name in config.get("Sources", {}):
                 config["Sources"][name]["enabled"] = enabled
+    if "sell_cars" in data:
+        config["SellCars"] = data["sell_cars"]
 
     save_config(config)
     return jsonify({"ok": True})
@@ -562,9 +585,11 @@ def upload_cookies():
 def trigger_scrape():
     from scraper_worker import start_scrape
 
-    def on_complete(deals):
-        global _deals
+    def on_complete(deals, sell_data=None):
+        global _deals, _sell_data
         _deals = deals
+        if sell_data is not None:
+            _sell_data = sell_data
 
     started, msg = start_scrape(on_complete=on_complete)
     return jsonify({"started": started, "message": msg})
@@ -574,9 +599,11 @@ def trigger_scrape():
 def trigger_enrich():
     from scraper_worker import start_enrich
 
-    def on_complete(deals):
-        global _deals
+    def on_complete(deals, sell_data=None):
+        global _deals, _sell_data
         _deals = deals
+        if sell_data is not None:
+            _sell_data = sell_data
 
     limit = request.json.get("limit", 100) if request.is_json else 100
     started, msg = start_enrich(on_complete=on_complete, limit=limit)
@@ -603,11 +630,12 @@ def scraper_health():
 
 # ── Startup ───────────────────────────────────────────────────────
 
-def start_web_ui(deals, port=5001):
+def start_web_ui(deals, port=5001, sell_data=None):
     """Launch the Flask web UI with the given deals list."""
-    global _db, _deals, _favorites, _deleted
+    global _db, _deals, _sell_data, _favorites, _deleted
 
     _deals = deals
+    _sell_data = sell_data or []
     _db = Database()
     _db.open()
     _favorites = _load_set_from_file(_favorites_file)

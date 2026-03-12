@@ -6,9 +6,9 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from config import load_config
+from config import load_config, get_all_search_queries
 from database import Database
-from analysis import clean_listings, calculate_averages, find_deals
+from analysis import clean_listings, calculate_averages, find_deals, find_sell_data
 from notifications import notify_scrape_complete
 from web_ui import start_web_ui
 
@@ -106,12 +106,12 @@ def run_scrapers(config, db):
 
 def run_analysis(config, db):
     """Clean listings, compute averages, and find deals."""
-    desired_cars = config["DesiredCar"]
+    all_cars = get_all_search_queries(config)
     mileage_threshold = config.get("MileageMax") or 150000
 
-    clean_listings(db, desired_cars)
-    calculate_averages(db, desired_cars, mileage_threshold)
-    return find_deals(db, desired_cars, config)
+    clean_listings(db, all_cars)
+    calculate_averages(db, all_cars, mileage_threshold)
+    return find_deals(db, all_cars, config)
 
 
 def main():
@@ -143,6 +143,9 @@ def main():
         deals = run_analysis(config, db)
         logging.info(f"Found {len(deals)} deals total.")
 
+        # Compute sell pricing recommendations
+        sell_data = find_sell_data(db, config.get("SellCars", []), config)
+
         if not skip_scrape:
             try:
                 notify_scrape_complete(config, deals)
@@ -151,8 +154,8 @@ def main():
     finally:
         db.close()
 
-    if deals:
-        start_web_ui(deals)
+    if deals or sell_data:
+        start_web_ui(deals, sell_data=sell_data)
     else:
         logging.info("No deals found. Adjust config or run again later.")
 

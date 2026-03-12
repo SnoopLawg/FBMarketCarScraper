@@ -30,7 +30,25 @@ def load_config(path=None):
             "facebook": {"enabled": True, "CityID": config.get("CityID", "")},
         }
 
+    # Default SellCars if missing
+    if "SellCars" not in config:
+        config["SellCars"] = []
+
     return config
+
+
+def get_all_search_queries(config):
+    """Return deduplicated union of buy + sell car names for scraping."""
+    buy = list(config.get("DesiredCar", []))
+    sell = [c["name"] for c in config.get("SellCars", []) if c.get("name")]
+    seen = set()
+    combined = []
+    for name in buy + sell:
+        key = name.lower().strip()
+        if key not in seen:
+            seen.add(key)
+            combined.append(name)
+    return combined
 
 
 def save_config(config, path=None):

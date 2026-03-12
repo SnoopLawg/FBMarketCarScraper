@@ -77,15 +77,23 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 - Tracks already-notified deals in `notified_deals.txt` to prevent duplicate alerts
 - Configured via `Notifications.discord_webhook_url` in Config.json; no-op if unconfigured
 
+### Sell My Car
+- `analysis.py` — `compute_sell_recommendation()` uses market percentiles + adjustments for mileage, trim, drivetrain, condition to produce recommended/quick-sell/max-value prices
+- `config.py` — `SellCars` list in Config.json, `get_all_search_queries()` merges buy + sell car names (deduplicated) so scrapers collect data for both
+- Sell cars use richer config structure (name, year, mileage, title_type, trim, drivetrain, condition) vs flat `DesiredCar` strings
+- Scrapers see a combined deduplicated list; differentiation happens at analysis and display layers
+- `/sell` route shows pricing recommendations per sell car with market positioning, price adjustments, and comparable listings
+- Settings page includes "Cars to Sell" panel with multi-field form
+
 ### Web UI
-- `web_ui.py` — Flask app with routes for deals list, favorites, analytics, settings, and scraper health
-- `templates/` — Jinja2 templates (`base.html`, `deals.html`, `favorites.html`, `analytics.html`, `settings.html`, `_deal_card.html` partial)
+- `web_ui.py` — Flask app with routes for deals list, sell pricing, favorites, analytics, settings, and scraper health
+- `templates/` — Jinja2 templates (`base.html`, `deals.html`, `sell.html`, `favorites.html`, `analytics.html`, `settings.html`, `_deal_card.html` partial)
 - State files: `favorite_listings.txt`, `deleted_listings.txt` (line-delimited href sets)
 
 ## Key Patterns
 
 - **Title groups:** Listings are grouped by title status (clean, rebuilt, salvage, lemon) for fair average comparison — a rebuilt car is scored against other rebuilt cars
-- **Per-car keyword searches:** Each scraper iterates `DesiredCar` list and runs a separate search per car model, not a single broad search
+- **Per-car keyword searches:** Each scraper iterates the combined buy + sell car list (`get_all_search_queries()`) and runs a separate search per car model, not a single broad search
 - **Anti-detection:** Randomized delays, scroll patterns, and stealth JS injection throughout scrapers to avoid bot detection
 - **Upsert with price tracking:** Re-scraped listings update in place; price changes are logged to `price_history`
 - **Stale marking:** Listings not seen in 7 days get soft-deleted (`deleted_at` set)

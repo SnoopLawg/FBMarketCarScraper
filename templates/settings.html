@@ -143,6 +143,67 @@
     </div>
 
     <div class="panel">
+        <div class="panel-title">Cars to Sell</div>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+            Add cars you want to sell. They'll be scraped alongside your desired cars and you'll get market-based pricing recommendations on the Sell page.
+        </p>
+        <div id="sell-car-list">
+            {% for sc in config.SellCars %}
+            <div class="sell-car-entry" style="background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;margin-bottom:12px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                    <span style="font-weight:600;font-size:14px">{{ sc.name }}</span>
+                    <span class="remove" onclick="removeSellCar(this)" style="cursor:pointer;color:var(--text-muted);font-size:18px;transition:color 0.15s">&times;</span>
+                </div>
+                <div class="field-grid">
+                    <div class="field-group">
+                        <label class="label">Make/Model</label>
+                        <input type="text" class="input sc-name" value="{{ sc.name }}" placeholder="Toyota Camry">
+                    </div>
+                    <div class="field-group">
+                        <label class="label">Year</label>
+                        <input type="number" class="input sc-year" value="{{ sc.year or '' }}" placeholder="2019">
+                    </div>
+                    <div class="field-group">
+                        <label class="label">Mileage</label>
+                        <input type="number" class="input sc-mileage" value="{{ sc.mileage or '' }}" placeholder="45000">
+                    </div>
+                    <div class="field-group">
+                        <label class="label">Title Type</label>
+                        <select class="input sc-title">
+                            {% for t in ['clean','rebuilt','salvage','lemon'] %}
+                            <option value="{{ t }}" {{ 'selected' if sc.get('title_type','clean') == t else '' }}>{{ t|title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label class="label">Trim</label>
+                        <input type="text" class="input sc-trim" value="{{ sc.trim or '' }}" placeholder="SE, Limited...">
+                    </div>
+                    <div class="field-group">
+                        <label class="label">Drivetrain</label>
+                        <select class="input sc-drivetrain">
+                            <option value="" {{ 'selected' if not sc.get('drivetrain') else '' }}>Unknown</option>
+                            {% for dt in ['FWD','RWD','AWD','4WD'] %}
+                            <option value="{{ dt }}" {{ 'selected' if sc.get('drivetrain','') == dt else '' }}>{{ dt }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label class="label">Condition</label>
+                        <select class="input sc-condition">
+                            {% for c in ['excellent','very good','good','fair','poor'] %}
+                            <option value="{{ c }}" {{ 'selected' if sc.get('condition','good') == c else '' }}>{{ c|title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <button class="btn btn-ghost" onclick="addSellCar()" style="margin-top:8px">+ Add Car to Sell</button>
+    </div>
+
+    <div class="panel">
         <div class="panel-title">Sources</div>
         {% for name, src in config.Sources.items() %}
         <div class="source-row">
@@ -196,6 +257,51 @@
         btn.parentElement.remove();
     }
 
+    function addSellCar() {
+        const list = document.getElementById('sell-car-list');
+        const entry = document.createElement('div');
+        entry.className = 'sell-car-entry';
+        entry.style.cssText = 'background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;margin-bottom:12px';
+        entry.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                <span style="font-weight:600;font-size:14px">New Car</span>
+                <span class="remove" onclick="removeSellCar(this)" style="cursor:pointer;color:var(--text-muted);font-size:18px">&times;</span>
+            </div>
+            <div class="field-grid">
+                <div class="field-group"><label class="label">Make/Model</label><input type="text" class="input sc-name" placeholder="Toyota Camry"></div>
+                <div class="field-group"><label class="label">Year</label><input type="number" class="input sc-year" placeholder="2019"></div>
+                <div class="field-group"><label class="label">Mileage</label><input type="number" class="input sc-mileage" placeholder="45000"></div>
+                <div class="field-group"><label class="label">Title Type</label><select class="input sc-title"><option value="clean">Clean</option><option value="rebuilt">Rebuilt</option><option value="salvage">Salvage</option><option value="lemon">Lemon</option></select></div>
+                <div class="field-group"><label class="label">Trim</label><input type="text" class="input sc-trim" placeholder="SE, Limited..."></div>
+                <div class="field-group"><label class="label">Drivetrain</label><select class="input sc-drivetrain"><option value="">Unknown</option><option value="FWD">FWD</option><option value="RWD">RWD</option><option value="AWD">AWD</option><option value="4WD">4WD</option></select></div>
+                <div class="field-group"><label class="label">Condition</label><select class="input sc-condition"><option value="excellent">Excellent</option><option value="very good">Very Good</option><option value="good" selected>Good</option><option value="fair">Fair</option><option value="poor">Poor</option></select></div>
+            </div>`;
+        list.appendChild(entry);
+    }
+
+    function removeSellCar(btn) {
+        btn.closest('.sell-car-entry').remove();
+    }
+
+    function getSellCars() {
+        const entries = document.querySelectorAll('.sell-car-entry');
+        const cars = [];
+        entries.forEach(entry => {
+            const name = entry.querySelector('.sc-name').value.trim();
+            if (!name) return;
+            cars.push({
+                name: name,
+                year: parseInt(entry.querySelector('.sc-year').value) || null,
+                mileage: parseInt(entry.querySelector('.sc-mileage').value) || null,
+                title_type: entry.querySelector('.sc-title').value,
+                trim: entry.querySelector('.sc-trim').value.trim(),
+                drivetrain: entry.querySelector('.sc-drivetrain').value,
+                condition: entry.querySelector('.sc-condition').value,
+            });
+        });
+        return cars;
+    }
+
     async function saveSettings() {
         const sources = {};
         document.querySelectorAll('[data-source]').forEach(el => {
@@ -210,6 +316,7 @@
             price_threshold: document.getElementById('price-threshold').value,
             location_filter: document.getElementById('location-filter').value,
             sources: sources,
+            sell_cars: getSellCars(),
         };
 
         await fetch('/api/settings', {

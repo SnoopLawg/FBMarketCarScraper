@@ -6,11 +6,11 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from config import load_config
+from config import load_config, get_all_search_queries
 from database import Database
 from driver import create_driver
 from scrapers import ALL_SCRAPERS
-from analysis import clean_listings, calculate_averages, find_deals
+from analysis import clean_listings, calculate_averages, find_deals, find_sell_data
 from notifications import notify_scrape_complete
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parent))
@@ -141,13 +141,14 @@ def _run_enrich(on_complete, limit):
             "message": "Recalculating scores...",
         })
 
-        desired_cars = config["DesiredCar"]
+        all_cars = get_all_search_queries(config)
         mileage_threshold = config.get("MileageMax") or 150000
-        clean_listings(db, desired_cars)
-        calculate_averages(db, desired_cars, mileage_threshold)
+        clean_listings(db, all_cars)
+        calculate_averages(db, all_cars, mileage_threshold)
 
         _status.update({"progress": 90, "message": "Finding deals..."})
-        deals = find_deals(db, desired_cars, config)
+        deals = find_deals(db, all_cars, config)
+        sell_data = find_sell_data(db, config.get("SellCars", []), config)
         db.close()
 
         _status.update({
@@ -160,7 +161,7 @@ def _run_enrich(on_complete, limit):
         })
 
         if on_complete:
-            on_complete(deals)
+            on_complete(deals, sell_data)
 
     except Exception as e:
         logging.error(f"Background enrichment failed: {e}")
@@ -329,15 +330,16 @@ def _run_scrape(on_complete):
         db.backfill_listed_at()
 
         _status.update({"message": "Cleaning listings..."})
-        desired_cars = config["DesiredCar"]
+        all_cars = get_all_search_queries(config)
         mileage_threshold = config.get("MileageMax") or 150000
-        clean_listings(db, desired_cars)
+        clean_listings(db, all_cars)
 
         _status.update({"progress": 85, "message": "Calculating averages..."})
-        calculate_averages(db, desired_cars, mileage_threshold)
+        calculate_averages(db, all_cars, mileage_threshold)
 
         _status.update({"progress": 90, "message": "Finding deals..."})
-        deals = find_deals(db, desired_cars, config)
+        deals = find_deals(db, all_cars, config)
+        sell_data = find_sell_data(db, config.get("SellCars", []), config)
 
         db.close()
 
@@ -357,7 +359,7 @@ def _run_scrape(on_complete):
             logging.error(f"Discord notification failed: {e}")
 
         if on_complete:
-            on_complete(deals)
+            on_complete(deals, sell_data)
 
     except Exception as e:
         logging.error(f"Background scrape failed: {e}")

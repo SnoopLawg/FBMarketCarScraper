@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+{% block title %}Sell My Car - Car Deal Finder{% endblock %}
+{% block nav_sell %}active{% endblock %}
+
+{% block head %}
+<style>
+    .sell-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        margin-bottom: 20px;
+    }
+    .sell-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+    }
+    .sell-car-name {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.3px;
+    }
+    .sell-car-details {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+    }
+
+    .price-display {
+        text-align: center;
+        padding: 24px;
+        background: var(--bg-elevated);
+        border-radius: var(--radius-md);
+        margin-bottom: 20px;
+    }
+    .price-recommended {
+        font-size: 36px;
+        font-weight: 800;
+        color: var(--green);
+        letter-spacing: -1px;
+    }
+    .price-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+
+    .price-range-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+    .price-range-item {
+        text-align: center;
+        padding: 16px;
+        background: var(--bg-elevated);
+        border-radius: var(--radius-md);
+    }
+    .price-range-value {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+    }
+    .price-quick { color: var(--accent); }
+    .price-max { color: var(--yellow); }
+
+    .adjustments {
+        margin-bottom: 20px;
+    }
+    .adjustment-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+    }
+    .adjustment-row:last-child { border-bottom: none; }
+    .adj-factor { font-weight: 500; color: var(--text-primary); }
+    .adj-reason { color: var(--text-secondary); font-size: 12px; }
+    .adj-impact { font-weight: 700; font-family: var(--font-mono); }
+    .adj-positive { color: var(--green); }
+    .adj-negative { color: var(--red); }
+
+    .market-bar-container {
+        margin-bottom: 20px;
+        padding: 16px;
+        background: var(--bg-elevated);
+        border-radius: var(--radius-md);
+    }
+    .market-bar-label { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
+    .market-bar {
+        position: relative;
+        height: 32px;
+        background: linear-gradient(to right, var(--green), var(--accent), var(--yellow), var(--orange), var(--red));
+        border-radius: 6px;
+        margin-bottom: 8px;
+    }
+    .market-bar-marker {
+        position: absolute;
+        top: -6px;
+        width: 3px;
+        height: 44px;
+        background: #fff;
+        border-radius: 2px;
+        transform: translateX(-50%);
+    }
+    .market-bar-marker::after {
+        content: attr(data-label);
+        position: absolute;
+        top: -20px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-primary);
+        white-space: nowrap;
+    }
+    .market-bar-ticks {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+
+    .comparables-section { margin-top: 16px; }
+    .comp-header {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 12px;
+    }
+    .comp-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 10px;
+    }
+    .comp-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        background: var(--bg-elevated);
+        border-radius: var(--radius-sm);
+        font-size: 13px;
+        border: 1px solid var(--border);
+    }
+    .comp-price { font-weight: 700; font-family: var(--font-mono); }
+    .comp-miles { color: var(--text-secondary); font-size: 12px; }
+    .comp-source {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: rgba(255,255,255,0.06);
+        color: var(--text-muted);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 60px 24px;
+        color: var(--text-muted);
+    }
+    .empty-state h2 {
+        font-size: 18px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+    }
+    .empty-state p { font-size: 14px; margin-bottom: 20px; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+    <div class="flex items-center justify-between mb-4">
+        <h1 style="font-size:20px;font-weight:700;letter-spacing:-0.3px">Sell My Car</h1>
+        <button class="btn btn-ghost btn-sm" onclick="refreshSellData()">Refresh Prices</button>
+    </div>
+
+    {% if not sell_data %}
+    <div class="empty-state">
+        <h2>No cars to sell</h2>
+        <p>Add cars you want to sell in Settings to see pricing recommendations based on current market data.</p>
+        <a href="/settings" class="btn btn-primary">Go to Settings</a>
+    </div>
+    {% endif %}
+
+    {% for item in sell_data %}
+    {% set car = item.car %}
+    {% set mr = item.market_range %}
+    <div class="sell-card">
+        <div class="sell-card-header">
+            <div>
+                <div class="sell-car-name">{{ car.name }}{% if car.year %} ({{ car.year }}){% endif %}</div>
+                <div class="sell-car-details">
+                    {% if car.mileage %}<span class="badge badge-info">{{ "{:,.0f}".format(car.mileage) }} mi</span>{% endif %}
+                    {% if car.title_type %}<span class="badge {% if car.title_type|lower == 'clean' %}badge-title-clean{% elif car.title_type|lower in ['salvage','rebuilt','lemon'] %}badge-title-warning{% else %}badge-info{% endif %}">{{ car.title_type }}</span>{% endif %}
+                    {% if car.trim %}<span class="badge badge-info">{{ car.trim }}</span>{% endif %}
+                    {% if car.drivetrain %}<span class="badge badge-drivetrain{% if car.drivetrain|upper in ['AWD','4WD'] %}-awd{% endif %}">{{ car.drivetrain }}</span>{% endif %}
+                    {% if car.condition %}<span class="badge badge-info">{{ car.condition|title }}</span>{% endif %}
+                </div>
+            </div>
+            <span class="badge badge-info">{{ item.comparable_count }} comparables</span>
+        </div>
+
+        {% if item.recommended_price %}
+        <div class="price-display">
+            <div class="price-label">Recommended List Price</div>
+            <div class="price-recommended">${{ "{:,.0f}".format(item.recommended_price) }}</div>
+        </div>
+
+        <div class="price-range-row">
+            <div class="price-range-item">
+                <div class="price-label">Quick Sell</div>
+                <div class="price-range-value price-quick">${{ "{:,.0f}".format(item.quick_sell_price) }}</div>
+            </div>
+            <div class="price-range-item">
+                <div class="price-label">Fair Market</div>
+                <div class="price-range-value" style="color:var(--green)">${{ "{:,.0f}".format(item.recommended_price) }}</div>
+            </div>
+            <div class="price-range-item">
+                <div class="price-label">Max Value</div>
+                <div class="price-range-value price-max">${{ "{:,.0f}".format(item.max_value_price) }}</div>
+            </div>
+        </div>
+
+        {% if mr %}
+        <div class="market-bar-container">
+            <div class="market-bar-label">Market Position ({{ mr.count }} listings)</div>
+            {% set range_span = mr.premium - mr.low %}
+            {% if range_span > 0 %}
+            {% set rec_pct = ((item.recommended_price - mr.low) / range_span * 100)|round|int %}
+            {% set rec_pct = [0, [rec_pct, 100]|min]|max %}
+            <div class="market-bar">
+                <div class="market-bar-marker" style="left:{{ rec_pct }}%" data-label="${{ "{:,.0f}".format(item.recommended_price) }}"></div>
+            </div>
+            <div class="market-bar-ticks">
+                <span>${{ "{:,.0f}".format(mr.low) }}</span>
+                <span>${{ "{:,.0f}".format(mr.fair) }}</span>
+                <span>${{ "{:,.0f}".format(mr.avg) }}</span>
+                <span>${{ "{:,.0f}".format(mr.high) }}</span>
+                <span>${{ "{:,.0f}".format(mr.premium) }}</span>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if item.adjustments %}
+        <div class="adjustments">
+            <div class="comp-header">Price Adjustments</div>
+            {% for adj in item.adjustments %}
+            <div class="adjustment-row">
+                <div>
+                    <span class="adj-factor">{{ adj.factor }}</span>
+                    <span class="adj-reason"> &mdash; {{ adj.reason }}</span>
+                </div>
+                <span class="adj-impact {% if adj.impact >= 0 %}adj-positive{% else %}adj-negative{% endif %}">
+                    {{ "{:+,.0f}".format(adj.impact) }}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if item.comparables %}
+        <div class="comparables-section">
+            <div class="comp-header">Similar Listings ({{ item.comparables|length }})</div>
+            <div class="comp-grid">
+                {% for c in item.comparables[:12] %}
+                <a href="{{ c.href }}" target="_blank" class="comp-item" style="text-decoration:none;color:inherit">
+                    <div>
+                        <div style="font-weight:500">{{ c.car_name or car.name }}</div>
+                        <div class="comp-miles">{{ "{:,.0f}".format(c.mileage) if c.mileage else '?' }} mi</div>
+                    </div>
+                    <div style="text-align:right">
+                        <div class="comp-price">${{ "{:,.0f}".format(c.price) }}</div>
+                        <span class="comp-source">{{ c.source }}</span>
+                    </div>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="empty-state" style="padding:30px">
+            <p>Not enough market data yet. Pricing will appear after more scrape cycles collect comparable listings.</p>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function refreshSellData() {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+    try {
+        await fetch('/api/sell/refresh', {method: 'POST'});
+        window.location.reload();
+    } catch(e) {
+        btn.disabled = false;
+        btn.textContent = 'Refresh Prices';
+    }
+}
+</script>
+{% endblock %}

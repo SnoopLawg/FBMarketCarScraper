@@ -10,6 +10,8 @@ from pathlib import Path
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
+from config import get_all_search_queries
+
 SCREENSHOTS_DIR = Path(__file__).parent.parent / "screenshots"
 
 
@@ -20,7 +22,7 @@ class BaseScraper(ABC):
         self.driver = driver
         self.config = config
         self.insert = insert_fn
-        self.desired_cars = config["DesiredCar"]
+        self.desired_cars = get_all_search_queries(config)
         self.min_price = config["MinPrice"]
         self.max_price = config["MaxPrice"]
         self.scroll_count = config.get("ScrollCount", 10)
