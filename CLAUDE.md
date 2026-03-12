@@ -23,7 +23,7 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 
 ## Configuration
 
-`Config.json` — defines desired cars, price range, location, and which sources to enable. Required keys: `DesiredCar`, `MinPrice`, `MaxPrice`, `PriceThreshold`. The `Sources` block controls which scrapers run and their source-specific settings (CityID, region, zip, etc.). Optional `Proxy` key configures proxy rotation: `{"url": "socks5://host:port"}` for a single proxy or `{"urls": ["socks5://a:1080", "http://b:8080"]}` for random rotation (supports HTTP, SOCKS4, SOCKS5).
+`Config.json` — defines desired cars, price range, location, and which sources to enable. Required keys: `DesiredCar`, `MinPrice`, `MaxPrice`, `PriceThreshold`. The `Sources` block controls which scrapers run and their source-specific settings (CityID, region, zip, etc.). Optional `Proxy` key configures proxy rotation: `{"url": "socks5://host:port"}` for a single proxy or `{"urls": ["socks5://a:1080", "http://b:8080"]}` for random rotation (supports HTTP, SOCKS4, SOCKS5). Optional `Notifications` key configures Discord alerts: `{"discord_webhook_url": "https://discord.com/api/webhooks/...", "app_url": "https://cars.single10.app"}`.
 
 ## Architecture
 
@@ -69,6 +69,13 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 - On scraper crash, a browser screenshot is saved to `screenshots/` for debugging
 - `/api/health` endpoint returns per-source health (good/warning/critical) and recent run history
 - Analytics page renders health badges and a recent runs table with yield-vs-average percentages
+
+### Notifications
+- `notifications.py` — Discord webhook notifications triggered after each scrape completes
+- **Scrape summary:** embed with total deal count, Grade A/B counts, and per-source breakdown
+- **Grade A deal alerts:** individual embeds for each new Grade A deal with price, score, mileage, drivetrain, location, savings vs average, thumbnail image, and listing link
+- Tracks already-notified deals in `notified_deals.txt` to prevent duplicate alerts
+- Configured via `Notifications.discord_webhook_url` in Config.json; no-op if unconfigured
 
 ### Web UI
 - `web_ui.py` — Flask app with routes for deals list, favorites, analytics, settings, and scraper health
