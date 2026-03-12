@@ -88,3 +88,21 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 - **Screenshot on error:** `BaseScraper.capture_screenshot()` saves browser state to `screenshots/` when a scraper crashes, aiding diagnosis of selector changes or bot detection
 - **Proxy rotation:** `driver.py` accepts an optional `Proxy` config and applies HTTP or SOCKS proxy settings to Firefox. When multiple URLs are provided, one is chosen at random per driver instantiation
 - **Vehicle history extraction (Carfax-lite):** Cars.com and Autotrader scrapers extract owner count badges, accident history, deal ratings, and Carfax report URLs that are already displayed on listing cards — no paid API needed. Data stored in `owner_count` and `carfax_url` columns on `listings`, surfaced as badges on deal cards, and fed into the scoring pipeline
+
+## Deployment
+
+Runs on a home server (Dell Optiplex 7080 Micro, Ubuntu 24.04, hostname `mothership2`). Deployment config lives in sibling repo `../homelab/carscraper/`.
+
+**Pipeline:** push to `main` → GitHub Actions builds Docker image → GHCR (`ghcr.io/snooplawg/fbmarketcarscraper:latest`) → Watchtower auto-pulls on server
+
+**Container:**
+- Entrypoint: `server.py` (loads existing deals from DB, serves UI — no scraping on startup)
+- Port: 5001, memory limit 1.5 GB
+- Env: `DATA_DIR=/data`, `HEADLESS=1`, `DOCKER_MODE=1`, `FLASK_HOST=0.0.0.0`
+- Volume: `./data:/data` (Config.json, marketplace_listings.db, fb_cookies.pkl, favorites/deleted files)
+
+**Server cron:**
+- `0 6,18 * * *` — Scrape twice daily via `curl -s -X POST http://localhost:5001/api/scrape`
+- `0 3 * * *` — Nightly backup: `rsync` data dir to NAS (`/mnt/nas/backups/services/carscraper/`)
+
+**Access:** `https://cars.single10.app` — reverse-proxied through Caddy, protected by Authentik SSO (Google OAuth)
