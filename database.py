@@ -205,6 +205,20 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        if "enriched_at" not in columns:
+            logging.info("Migrating DB: adding enriched_at column...")
+            try:
+                self.cur.execute("ALTER TABLE listings ADD COLUMN enriched_at TEXT")
+                # Backfill: listings that already have title_type were already enriched
+                self.cur.execute(
+                    "UPDATE listings SET enriched_at = updated_at "
+                    "WHERE title_type IS NOT NULL AND title_type != ''"
+                )
+                self.conn.commit()
+                logging.info("enriched_at migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Migrate vehicle_ratings to include MPG columns
         self.cur.execute("PRAGMA table_info(vehicle_ratings)")
         vr_rows = self.cur.fetchall()
@@ -539,11 +553,22 @@ class Database:
         except sqlite3.Error as e:
             logging.error(f"DB vehicle rating upsert error: {e}")
 
+    def mark_enriched(self, href):
+        """Mark a listing as enriched (attempted) without changing any data."""
+        try:
+            self.cur.execute(
+                "UPDATE listings SET enriched_at = CURRENT_TIMESTAMP WHERE href = ?",
+                (href,))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB mark_enriched error: {e}")
+
     def update_title_type(self, href, title_type):
         """Update the title_type for a specific listing."""
         try:
             self.cur.execute(
-                "UPDATE listings SET title_type = ?, updated_at = CURRENT_TIMESTAMP "
+                "UPDATE listings SET title_type = ?, updated_at = CURRENT_TIMESTAMP, "
+                "enriched_at = CURRENT_TIMESTAMP "
                 "WHERE href = ?", (title_type, href))
             self.conn.commit()
         except sqlite3.Error as e:
@@ -562,6 +587,7 @@ class Database:
         if not sets:
             return
         sets.append("updated_at = CURRENT_TIMESTAMP")
+        sets.append("enriched_at = CURRENT_TIMESTAMP")
         vals.append(href)
         try:
             self.cur.execute(
@@ -573,19 +599,17 @@ class Database:
     def get_listings_missing_title_type(self, source=None, limit=50):
         """Get listings that need enrichment.
 
+        Only returns listings that have NEVER been enriched (enriched_at IS NULL).
         Prioritizes: missing title_type first, then missing description.
-        This way we always fill in the critical scoring data first,
-        and backfill descriptions with any remaining capacity.
         """
         q = ("SELECT id, href, car_name FROM listings "
-             "WHERE ((title_type IS NULL OR title_type = '') "
-             "       OR (description IS NULL OR description = '')) "
+             "WHERE enriched_at IS NULL "
              "AND deleted_at IS NULL")
         params = []
         if source:
             q += " AND source = ?"
             params.append(source)
-        # Sort: missing title_type first (most important), then missing description
+        # Sort: missing title_type first (most important), then by newest
         q += (" ORDER BY "
               "CASE WHEN title_type IS NULL OR title_type = '' THEN 0 ELSE 1 END, "
               "created_at DESC "

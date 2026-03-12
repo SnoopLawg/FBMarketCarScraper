@@ -1,7 +1,8 @@
-"""Craigslist scraper — single broad query, local car matching."""
+"""Craigslist scraper — per-car keyword search for targeted results."""
 
 import re
 import logging
+from urllib.parse import quote_plus
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -19,81 +20,72 @@ class CraigslistScraper(BaseScraper):
         region = cl_config.get("region", "saltlakecity")
         max_pages = cl_config.get("max_pages", 5)
 
-        # Build keyword patterns for local matching
-        self._car_patterns = {}
-        for car in self.desired_cars:
-            # "Ford Fusion" → match "ford" AND "fusion" anywhere in title
-            words = car.lower().split()
-            self._car_patterns[car] = words
-
-        # Single broad query: all cars+trucks in price range
-        url = (
-            f"https://{region}.craigslist.org/search/cta"
-            f"?min_price={self.min_price}&max_price={self.max_price}"
-        )
-
         total_found = 0
         total_matched = 0
 
-        for page in range(max_pages):
-            page_url = url if page == 0 else f"{url}#search=1~gallery~{page}"
-            self.log(f"Loading page {page + 1}...")
+        for i, car_query in enumerate(self.desired_cars):
+            self.log(f"Scraping: {car_query}")
+            if i > 0:
+                self.delay_between_searches()
 
-            try:
-                self.driver.get(page_url)
-            except Exception as e:
-                self.log(f"Failed to load page {page + 1}: {e}")
-                break
-
-            self.human_delay(3, 6)
-
-            try:
-                WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, ".cl-search-result, .result-row, .gallery-card")
-                    )
-                )
-            except Exception:
-                self.log(f"No results on page {page + 1}")
-                break
-
-            soup = BeautifulSoup(self.driver.page_source, "html.parser")
-            results = (
-                soup.select(".cl-search-result")
-                or soup.select(".result-row")
-                or soup.select(".gallery-card")
+            # Craigslist supports a query= parameter for keyword search
+            base_url = (
+                f"https://{region}.craigslist.org/search/cta"
+                f"?min_price={self.min_price}&max_price={self.max_price}"
+                f"&query={quote_plus(car_query)}"
             )
 
-            if not results:
-                break
+            for page in range(max_pages):
+                page_url = base_url if page == 0 else f"{base_url}#search=1~gallery~{page}"
+                self.log(f"  Page {page + 1}...")
 
-            total_found += len(results)
-            for item in results:
-                if self._process_listing(item, region):
-                    total_matched += 1
+                try:
+                    self.driver.get(page_url)
+                except Exception as e:
+                    self.log(f"  Failed to load page {page + 1}: {e}")
+                    break
 
-            self.log(f"Page {page + 1}: {len(results)} listings")
+                self.human_delay(3, 6)
 
-            # Check if there are more pages
-            next_btn = soup.select_one("button.cl-next-page, .next, a.next")
-            if not next_btn or next_btn.get("disabled"):
-                break
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, ".cl-search-result, .result-row, .gallery-card")
+                        )
+                    )
+                except Exception:
+                    self.log(f"  No results on page {page + 1}")
+                    break
 
-            if page < max_pages - 1:
-                self.human_delay(4, 8)
+                soup = BeautifulSoup(self.driver.page_source, "html.parser")
+                results = (
+                    soup.select(".cl-search-result")
+                    or soup.select(".result-row")
+                    or soup.select(".gallery-card")
+                )
 
-        self.log(f"Done: {total_found} total listings, {total_matched} matched desired cars")
+                if not results:
+                    break
 
-    def _match_car(self, title):
-        """Match a listing title against desired cars. Returns car_query or None."""
-        title_lower = title.lower()
-        for car_query, words in self._car_patterns.items():
-            if all(w in title_lower for w in words):
-                return car_query
-        return None
+                total_found += len(results)
+                for item in results:
+                    if self._process_listing(item, region, car_query):
+                        total_matched += 1
 
-    def _process_listing(self, item, region):
-        """Parse and insert a listing. Returns True if it matched a desired car."""
+                self.log(f"  Page {page + 1}: {len(results)} listings")
+
+                # Check if there are more pages
+                next_btn = soup.select_one("button.cl-next-page, .next, a.next")
+                if not next_btn or next_btn.get("disabled"):
+                    break
+
+                if page < max_pages - 1:
+                    self.human_delay(4, 8)
+
+        self.log(f"Done: {total_found} total listings, {total_matched} inserted")
+
+    def _process_listing(self, item, region, car_query):
+        """Parse and insert a listing. Returns True if inserted."""
         try:
             # Title and link
             title_el = (
@@ -107,11 +99,6 @@ class CraigslistScraper(BaseScraper):
                 return False
             title = title_el.get_text(strip=True)
             if not title:
-                return False
-
-            # Match against desired cars
-            car_query = self._match_car(title)
-            if not car_query:
                 return False
 
             href = title_el.get("href", "")

@@ -165,6 +165,11 @@ class FacebookScraper(BaseScraper):
 
             except Exception as e:
                 logging.warning(f"[Facebook] Enrich error for {href[:60]}: {e}")
+                # Still mark as attempted so we don't retry the same listing forever
+                try:
+                    db.mark_enriched(href)
+                except Exception:
+                    pass
 
             # Human-like delay between pages
             self.human_delay(1, 3)

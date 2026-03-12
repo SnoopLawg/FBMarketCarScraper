@@ -1,8 +1,7 @@
-"""Autotrader scraper — broad search with local car matching."""
+"""Autotrader scraper — per-car keyword search for targeted results."""
 
 import re
 import logging
-
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -20,76 +19,72 @@ class AutotraderScraper(BaseScraper):
         radius = at_config.get("search_radius", 100)
         max_pages = at_config.get("max_pages", 3)
 
-        # Build match patterns from desired cars
-        self._car_patterns = {}
-        for car in self.desired_cars:
-            words = car.lower().split()
-            self._car_patterns[car] = words
-
-        # Broad search: all used cars in price range
-        base_url = (
-            f"https://www.autotrader.com/cars-for-sale/used-cars"
-            f"?zip={zip_code}&searchRadius={radius}"
-            f"&minPrice={self.min_price}&maxPrice={self.max_price}"
-        )
-
         total_found = 0
         total_matched = 0
 
-        for page in range(max_pages):
-            url = base_url if page == 0 else f"{base_url}&firstRecord={page * 25}"
-            self.log(f"Loading page {page + 1}...")
+        for i, car_query in enumerate(self.desired_cars):
+            self.log(f"Scraping: {car_query}")
+            if i > 0:
+                self.delay_between_searches()
 
-            if page > 0:
-                self.human_delay(8, 18)
+            # Autotrader supports keyword search via the URL path + params
+            # e.g. /cars-for-sale/used-cars/toyota/tacoma/...
+            parts = car_query.lower().split()
+            make = parts[0] if parts else ""
+            model = "-".join(parts[1:]) if len(parts) > 1 else ""
+            base_url = (
+                f"https://www.autotrader.com/cars-for-sale/used-cars"
+                f"/{make}/{model}"
+                f"?zip={zip_code}&searchRadius={radius}"
+                f"&minPrice={self.min_price}&maxPrice={self.max_price}"
+            )
 
-            try:
-                self.driver.get(url)
-            except Exception as e:
-                self.log(f"Failed to load page {page + 1}: {e}")
-                break
+            for page in range(max_pages):
+                url = base_url if page == 0 else f"{base_url}&firstRecord={page * 25}"
+                self.log(f"  Page {page + 1}...")
 
-            self.human_delay(5, 10)
+                if page > 0:
+                    self.human_delay(8, 18)
 
-            try:
-                WebDriverWait(self.driver, 15).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR,
-                         "[data-cmp='inventoryListing'], .inventory-listing")
+                try:
+                    self.driver.get(url)
+                except Exception as e:
+                    self.log(f"  Failed to load page {page + 1}: {e}")
+                    break
+
+                self.human_delay(5, 10)
+
+                try:
+                    WebDriverWait(self.driver, 15).until(
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR,
+                             "[data-cmp='inventoryListing'], .inventory-listing")
+                        )
                     )
-                )
-            except Exception:
-                self.log(f"No results on page {page + 1}")
-                break
+                except Exception:
+                    self.log(f"  No results on page {page + 1}")
+                    break
 
-            self.scroll_page(count=4)
+                self.scroll_page(count=4)
 
-            soup = BeautifulSoup(self.driver.page_source, "html.parser")
-            cards = soup.select("[data-cmp='inventoryListing']")
-            if not cards:
-                cards = soup.select(".inventory-listing")
-            if not cards:
-                break
+                soup = BeautifulSoup(self.driver.page_source, "html.parser")
+                cards = soup.select("[data-cmp='inventoryListing']")
+                if not cards:
+                    cards = soup.select(".inventory-listing")
+                if not cards:
+                    break
 
-            total_found += len(cards)
-            for card in cards:
-                if self._process_listing(card):
-                    total_matched += 1
+                total_found += len(cards)
+                for card in cards:
+                    if self._process_listing(card, car_query):
+                        total_matched += 1
 
-            self.log(f"Page {page + 1}: {len(cards)} listings")
+                self.log(f"  Page {page + 1}: {len(cards)} listings")
 
-        self.log(f"Done: {total_found} total listings, {total_matched} matched desired cars")
+        self.log(f"Done: {total_found} total listings, {total_matched} inserted")
 
-    def _match_car(self, title):
-        """Match a listing title against desired cars. Returns car_query or None."""
-        title_lower = title.lower()
-        for car_query, words in self._car_patterns.items():
-            if all(w in title_lower for w in words):
-                return car_query
-        return None
-
-    def _process_listing(self, card):
-        """Parse and insert a listing. Returns True if it matched a desired car."""
+    def _process_listing(self, card, car_query):
+        """Parse and insert a listing. Returns True if inserted."""
         try:
             # Title
             title_el = (
@@ -100,11 +95,6 @@ class AutotraderScraper(BaseScraper):
             if not title_el:
                 return False
             title = title_el.get_text(strip=True)
-
-            # Match against desired cars
-            car_query = self._match_car(title)
-            if not car_query:
-                return False
 
             # Link
             link_el = (
