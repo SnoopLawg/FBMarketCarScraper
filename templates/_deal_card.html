@@ -1,13 +1,59 @@
 {# Shared deal card partial — used by deals.html and favorites.html
    Expects: deal (dict), card_id (string), show_save (bool), favorites (set) #}
 
-<div class="deal-card" id="{{ card_id }}">
-    {% if deal.image_url %}
-    <img class="deal-img" src="{{ deal.image_url }}" alt="{{ deal.car_name }}" loading="lazy"
-         onerror="this.outerHTML='<div class=deal-img-empty>No image available</div>'">
-    {% else %}
-    <div class="deal-img-empty">No image available</div>
-    {% endif %}
+<div class="deal-card" id="{{ card_id }}" data-href="{{ deal.href }}">
+    <div class="deal-img-wrapper">
+        {# ── Overlay actions: compare + delete ── #}
+        {% if show_save %}
+        <div class="card-overlay-actions">
+            <button class="overlay-btn overlay-compare" data-href="{{ deal.href }}"
+                    onclick="toggleCompare(this)" title="Compare">
+                <i data-lucide="columns-2"></i>
+            </button>
+            <button class="overlay-btn overlay-fav {% if deal.href in favorites %}active{% endif %}"
+                    onclick="toggleFav(this, '{{ deal.href }}')" title="Save">
+                <i data-lucide="heart"></i>
+            </button>
+            <button class="overlay-btn overlay-delete"
+                    onclick="deleteDeal('{{ deal.href }}', '{{ card_id }}')" title="Remove">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        {% endif %}
+
+        {# ── Swipe indicators ── #}
+        <div class="swipe-indicator swipe-fav">SAVE</div>
+        <div class="swipe-indicator swipe-delete">PASS</div>
+
+        {# ── Image carousel ── #}
+        {% set all_images = deal.image_urls if deal.image_urls else ([deal.image_url] if deal.image_url else []) %}
+        {% if all_images %}
+        <div class="carousel" data-index="0">
+            {% for img_url in all_images %}
+            <img class="carousel-slide{% if loop.first %} active{% endif %}"
+                 src="{% if loop.first %}{{ img_url }}{% endif %}"
+                 data-src="{{ img_url }}"
+                 alt="{{ deal.car_name }}" loading="lazy"
+                 onerror="this.style.display='none'">
+            {% endfor %}
+            {% if all_images|length > 1 %}
+            <button class="carousel-btn carousel-prev" onclick="carouselNav(this,-1)">
+                <i data-lucide="chevron-left"></i>
+            </button>
+            <button class="carousel-btn carousel-next" onclick="carouselNav(this,1)">
+                <i data-lucide="chevron-right"></i>
+            </button>
+            <div class="carousel-dots">
+                {% for _ in all_images %}
+                <span class="carousel-dot{% if loop.first %} active{% endif %}"></span>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        <div class="deal-img-empty">No image</div>
+        {% endif %}
+    </div>
 
     <div class="deal-body">
         {# ── Primary badges: score + source + critical warnings ── #}
@@ -30,7 +76,7 @@
             <span class="badge badge-vin-mismatch"
                   style="background:var(--red);color:#fff"
                   title="{% for mm in deal.vin_mismatches %}{{ mm.field }}: listing says {{ mm.listing_value }}, VIN says {{ mm.vin_value }}{% if not loop.last %}; {% endif %}{% endfor %}">
-                ⚠ VIN Mismatch
+                VIN Mismatch
             </span>
             {% endif %}
         </div>
@@ -51,14 +97,14 @@
                   data-recalls='{{ deal.recalls|tojson }}'
                   data-recalls-title="{{ deal.year }} {{ deal.car_query }}"
                   onclick="showRecallsModal(JSON.parse(this.dataset.recalls), this.dataset.recallsTitle)">
-                ⚠ {{ deal.recalls_count }} Recall{{ 's' if deal.recalls_count != 1 else '' }}
+                {{ deal.recalls_count }} Recall{{ 's' if deal.recalls_count != 1 else '' }}
             </span>
             {% endif %}
             {% if deal.vin_data and (deal.vin_mismatches is defined and deal.vin_mismatches is not none and deal.vin_mismatches|length == 0) %}
-            <span class="badge" style="background:rgba(52,211,153,0.12);color:var(--green)">✓ VIN Match</span>
+            <span class="badge" style="background:rgba(52,211,153,0.12);color:var(--green)">VIN Match</span>
             {% endif %}
             {% if deal.owner_count and deal.owner_count == 1 %}<span class="badge" style="background:rgba(52,211,153,0.12);color:var(--green)">1-Owner</span>{% endif %}
-            {% if deal.carfax_url %}<a class="badge" href="{{ deal.carfax_url }}" target="_blank" style="background:rgba(91,141,238,0.12);color:var(--accent);text-decoration:none;cursor:pointer">CARFAX Report</a>{% endif %}
+            {% if deal.carfax_url %}<a class="badge" href="{{ deal.carfax_url }}" target="_blank" style="background:rgba(91,141,238,0.12);color:var(--accent);text-decoration:none;cursor:pointer">CARFAX</a>{% endif %}
             {% if deal.deal_rating %}<span class="badge badge-deal">{{ deal.deal_rating }}</span>{% endif %}
             {% if deal.accident_history %}<span class="badge badge-info">{{ deal.accident_history }}</span>{% endif %}
         </div>
@@ -166,7 +212,7 @@
                     <span class="deal-detail-icon"><i data-lucide="scan-line"></i></span>
                     <span style="font-family:var(--font-mono);font-size:12px;letter-spacing:0.5px">{{ deal.vin }}</span>
                     {% if deal.vin_data %}
-                    <span class="badge badge-info" style="margin-left:4px;font-size:10px">&#x2713; Decoded</span>
+                    <span class="badge badge-info" style="margin-left:4px;font-size:10px">Decoded</span>
                     {% else %}
                     <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;margin-left:4px"
                             onclick="decodeVin('{{ deal.vin }}', this)">Decode</button>
@@ -194,20 +240,7 @@
 
         <div class="deal-actions">
             <a class="btn btn-primary" href="{{ deal.href }}" target="_blank">View Listing</a>
-            {% if show_save %}
-            <label class="btn btn-ghost btn-sm compare-toggle" title="Add to compare"
-                   style="cursor:pointer;display:flex;align-items:center;gap:4px">
-                <input type="checkbox" class="compare-cb" value="{{ deal.href }}"
-                       onchange="updateCompare()" style="margin:0"> Cmp
-            </label>
-            <button class="btn btn-ghost {{ 'btn-saved' if deal.href in favorites else '' }}"
-                    onclick="toggleFav(this, '{{ deal.href }}')"
-                    style="{{ 'color:var(--yellow);border-color:var(--yellow)' if deal.href in favorites else '' }}">
-                {{ '★ Saved' if deal.href in favorites else '☆ Save' }}
-            </button>
-            <button class="btn btn-danger btn-sm"
-                    onclick="deleteDeal('{{ deal.href }}', '{{ card_id }}')">✕</button>
-            {% else %}
+            {% if not show_save %}
             <button class="btn btn-danger"
                     onclick="removeFav('{{ deal.href }}', '{{ card_id }}')">
                 Remove

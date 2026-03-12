@@ -1,6 +1,8 @@
 """Facebook Marketplace scraper."""
 
+import json
 import os
+import re
 import time
 import pickle
 import logging
@@ -154,6 +156,11 @@ class FacebookScraper(BaseScraper):
                     if vin:
                         details["vin"] = vin
 
+                # Extract all listing images from detail page
+                image_urls = self._extract_images(page_source)
+                if image_urls:
+                    details["image_urls"] = json.dumps(image_urls)
+
                 if details:
                     db.update_listing_details(href, **details)
                     enriched += 1
@@ -230,6 +237,33 @@ class FacebookScraper(BaseScraper):
             return text if len(text) > 50 else None
         except Exception:
             return None
+
+    def _extract_images(self, page_source):
+        """Extract all listing images from a FB detail page.
+
+        Returns a deduplicated list of image URLs (up to 10).
+        Filters for FB CDN images (scontent) and skips tiny icons/avatars.
+        """
+        try:
+            # Use regex to find scontent image URLs — faster than full parse
+            urls = re.findall(
+                r'https://scontent[^"\'&\s]+\.(?:jpg|jpeg|png|webp)[^"\'&\s]*',
+                page_source, re.I
+            )
+            # Deduplicate while preserving order
+            seen = set()
+            unique = []
+            for url in urls:
+                # Normalize: strip query params after the extension for dedup
+                key = url.split("?")[0]
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(url)
+            # Skip very short URLs (likely tracking pixels)
+            unique = [u for u in unique if len(u) > 80]
+            return unique[:10]
+        except Exception:
+            return []
 
     def _extract_detail_info(self, page_text):
         """Extract title type, condition, and other info from a FB listing detail page."""

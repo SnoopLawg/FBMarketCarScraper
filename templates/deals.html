@@ -8,11 +8,11 @@
         position: sticky; top: 56px; z-index: 90;
         background: var(--bg-primary);
         border-bottom: 1px solid var(--border);
-        padding: 14px 0;
+        padding: 10px 0;
     }
     .toolbar-inner {
         max-width: 1320px; margin: 0 auto; padding: 0 24px;
-        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     }
     .toolbar-count {
         font-size: 13px; color: var(--text-muted); font-weight: 500;
@@ -27,48 +27,129 @@
     .sort-btn:hover { color: var(--text-secondary); }
     .sort-btn.active { background: rgba(255,255,255,0.08); color: var(--text-primary); }
 
+    .filter-toggle-mobile {
+        display: none;
+        padding: 5px 10px; font-size: 12px;
+        background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+        border-radius: var(--radius-sm); color: var(--text-secondary);
+        cursor: pointer; font-family: var(--font); font-weight: 500;
+    }
+    .filter-toggle-mobile:hover { color: var(--text-primary); border-color: var(--border-hover); }
+
     .filter-row {
-        max-width: 1320px; margin: 0 auto; padding: 10px 24px 0;
-        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        max-width: 1320px; margin: 0 auto; padding: 8px 24px 0;
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     }
     .filter-row .input { font-size: 13px; padding: 7px 10px; }
 
     /* ── Card Grid ── */
     .deal-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-        gap: var(--space-5);
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 16px;
     }
 
     .deal-card {
+        position: relative;
         background: var(--bg-card);
         border: 1px solid var(--border);
         border-radius: var(--radius-lg);
         overflow: hidden;
         transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
         box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        touch-action: pan-y;
+        will-change: transform;
     }
     .deal-card:hover {
         border-color: var(--border-hover);
         transform: translateY(-2px);
         box-shadow: 0 8px 24px rgba(0,0,0,0.35);
     }
+    .deal-card.swiping { transition: none !important; }
+    .deal-card.swiping:hover { transform: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
 
-    .deal-img {
-        width: 100%;
-        aspect-ratio: 16 / 10;
-        object-fit: cover;
-        display: block;
+    /* ── Image wrapper & overlays ── */
+    .deal-img-wrapper {
+        position: relative;
+        overflow: hidden;
         background: var(--bg-input);
     }
-    .deal-img-empty {
-        width: 100%; aspect-ratio: 16 / 10;
+    .card-overlay-actions {
+        position: absolute; top: 8px; right: 8px;
+        display: flex; gap: 6px; z-index: 5;
+        opacity: 0; transition: opacity 0.2s;
+    }
+    .deal-card:hover .card-overlay-actions { opacity: 1; }
+    @media (hover: none) { .card-overlay-actions { opacity: 1; } }
+
+    .overlay-btn {
+        width: 34px; height: 34px; border-radius: 50%;
+        background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        border: none; color: rgba(255,255,255,0.8); cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: background 0.15s, transform 0.15s, color 0.15s;
+    }
+    .overlay-btn .lucide { width: 16px; height: 16px; }
+    .overlay-btn:hover { background: rgba(0,0,0,0.75); transform: scale(1.1); color: #fff; }
+    .overlay-btn.overlay-compare.active { background: var(--accent); color: #fff; }
+    .overlay-btn.overlay-fav.active { background: var(--yellow); color: #000; }
+    .overlay-btn.overlay-delete:hover { background: rgba(220,38,38,0.8); }
+
+    /* ── Swipe indicators ── */
+    .swipe-indicator {
+        position: absolute; top: 50%; transform: translateY(-50%);
+        font-size: 20px; font-weight: 800; padding: 6px 14px;
+        border-radius: 8px; border: 3px solid; opacity: 0;
+        pointer-events: none; z-index: 10;
+        letter-spacing: 1px;
+    }
+    .swipe-fav { left: 14px; color: var(--green); border-color: var(--green); background: rgba(0,0,0,0.4); }
+    .swipe-delete { right: 14px; color: var(--red); border-color: var(--red); background: rgba(0,0,0,0.4); }
+
+    /* ── Image carousel ── */
+    .carousel {
+        position: relative;
+        aspect-ratio: 16 / 10;
         background: var(--bg-input);
+    }
+    .carousel-slide {
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        object-fit: cover;
+        opacity: 0;
+        transition: opacity 0.25s;
+    }
+    .carousel-slide.active { opacity: 1; z-index: 1; }
+    .carousel-btn {
+        position: absolute; top: 50%; transform: translateY(-50%);
+        width: 30px; height: 30px; border-radius: 50%;
+        background: rgba(0,0,0,0.5); border: none; color: #fff;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        opacity: 0; transition: opacity 0.2s;
+        z-index: 4;
+    }
+    .carousel-btn .lucide { width: 16px; height: 16px; }
+    .carousel:hover .carousel-btn { opacity: 1; }
+    .carousel-prev { left: 8px; }
+    .carousel-next { right: 8px; }
+    .carousel-dots {
+        position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 5px; z-index: 4;
+    }
+    .carousel-dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: rgba(255,255,255,0.4); transition: background 0.2s;
+    }
+    .carousel-dot.active { background: #fff; }
+
+    .deal-img-empty {
+        aspect-ratio: 16 / 10;
         display: flex; align-items: center; justify-content: center;
         color: var(--text-muted); font-size: 13px;
     }
 
-    .deal-body { padding: var(--space-5); }
+    .deal-body { padding: 16px; }
 
     .deal-badges-primary { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
     .deal-badges-secondary { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: var(--space-3); }
@@ -136,11 +217,10 @@
     .deal-details-toggle .lucide { width: 12px; height: 12px; transition: transform 0.2s; }
     .deal-card.expanded .deal-details-toggle .lucide { transform: rotate(180deg); }
 
-    .deal-divider { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: var(--space-4) 0; }
+    .deal-divider { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 12px 0; }
 
     .deal-actions { display: flex; gap: var(--space-2); }
-    .deal-actions .btn:first-child { flex: 2; justify-content: center; }
-    .deal-actions .btn:not(:first-child) { flex: 1; justify-content: center; }
+    .deal-actions .btn { flex: 1; justify-content: center; }
 
     .empty-state {
         text-align: center; padding: 80px 20px;
@@ -148,9 +228,20 @@
     }
     .empty-state p { margin-top: 8px; font-size: 13px; }
 
+    /* ── Mobile ── */
     @media (max-width: 640px) {
-        .deal-grid { grid-template-columns: 1fr; }
-        .toolbar-inner, .filter-row { padding: 0 16px; }
+        .deal-grid { grid-template-columns: 1fr; gap: 12px; }
+        .toolbar { top: 56px; padding: 8px 0; }
+        .toolbar-inner { padding: 0 12px; gap: 8px; }
+        .filter-row { display: none; padding: 8px 12px 0; }
+        .filter-row.open { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+        .filter-row.open .flex { width: 100%; }
+        .filter-row.open .input { width: 100% !important; }
+        .filter-toggle-mobile { display: inline-flex; align-items: center; gap: 4px; }
+        .sort-group { overflow-x: auto; flex-wrap: nowrap; }
+        .page { padding: 12px; }
+        .deal-body { padding: 12px; }
+        .carousel-btn { opacity: 1; }
     }
 </style>
 {% endblock %}
@@ -169,6 +260,10 @@
 <div class="toolbar">
     <div class="toolbar-inner">
         <span class="toolbar-count">{{ total }} deal{{ 's' if total != 1 else '' }}</span>
+
+        <button class="filter-toggle-mobile" onclick="toggleMobileFilters()">
+            <i data-lucide="sliders-horizontal" style="width:14px;height:14px"></i> Filters
+        </button>
 
         <select class="input" style="width:auto" onchange="applyFilter('source', this.value)">
             <option value="">All Sources</option>
@@ -205,7 +300,7 @@
         </div>
     </div>
 
-    <div class="filter-row">
+    <div class="filter-row" id="filter-row">
         <input type="text" class="input" style="width:180px" placeholder="Search cars..."
                id="search-input" value="{{ current_search }}"
                onkeydown="if(event.key==='Enter') applyAllFilters()">
@@ -238,7 +333,7 @@
         </div>
 
         <button class="btn btn-ghost btn-sm" onclick="clearFilters()">Clear</button>
-        <button class="btn btn-ghost btn-sm" onclick="exportCSV()" title="Export filtered deals to CSV">Export CSV</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportCSV()">CSV</button>
         <button class="btn btn-ghost btn-sm" id="compare-btn" style="display:none" onclick="openCompare()">Compare (<span id="compare-count">0</span>)</button>
     </div>
 </div>
@@ -263,6 +358,7 @@
 
 {% block scripts %}
 <script>
+    /* ── Filters ── */
     function applyFilter(key, value) {
         const params = new URLSearchParams(window.location.search);
         if (value) params.set(key, value);
@@ -272,7 +368,6 @@
 
     function applyAllFilters() {
         const params = new URLSearchParams(window.location.search);
-
         const fields = {
             'q': 'search-input',
             'year_min': 'year-min', 'year_max': 'year-max',
@@ -283,12 +378,13 @@
             const val = document.getElementById(elId).value;
             if (val) params.set(param, val); else params.delete(param);
         }
-
         window.location.search = params.toString();
     }
 
-    function clearFilters() {
-        window.location.href = '/';
+    function clearFilters() { window.location.href = '/'; }
+
+    function toggleMobileFilters() {
+        document.getElementById('filter-row').classList.toggle('open');
     }
 
     // Apply filters on change for numeric inputs
@@ -297,29 +393,35 @@
         if (el) el.addEventListener('change', applyAllFilters);
     });
 
-    // ── CSV Export ──
+    /* ── CSV Export ── */
     function exportCSV() {
         const params = new URLSearchParams(window.location.search);
         window.location.href = '/api/export-csv?' + params.toString();
     }
 
-    // ── Compare ──
+    /* ── Compare (overlay button version) ── */
+    function toggleCompare(btn) {
+        btn.classList.toggle('active');
+        updateCompare();
+    }
+
     function updateCompare() {
-        const checked = document.querySelectorAll('.compare-cb:checked');
+        const selected = document.querySelectorAll('.overlay-compare.active');
         const btn = document.getElementById('compare-btn');
         const count = document.getElementById('compare-count');
-        count.textContent = checked.length;
-        btn.style.display = checked.length > 0 ? '' : 'none';
+        count.textContent = selected.length;
+        btn.style.display = selected.length > 0 ? '' : 'none';
     }
 
     function openCompare() {
-        const checked = document.querySelectorAll('.compare-cb:checked');
-        if (checked.length < 2) { alert('Select at least 2 deals to compare.'); return; }
+        const selected = document.querySelectorAll('.overlay-compare.active');
+        if (selected.length < 2) { alert('Select at least 2 deals to compare.'); return; }
         const params = new URLSearchParams();
-        checked.forEach(cb => params.append('href', cb.value));
+        selected.forEach(btn => params.append('href', btn.dataset.href));
         window.open('/compare?' + params.toString(), '_blank');
     }
 
+    /* ── Favorite ── */
     async function toggleFav(btn, href) {
         const res = await fetch('/api/favorite', {
             method: 'POST',
@@ -327,17 +429,24 @@
             body: JSON.stringify({href})
         });
         const data = await res.json();
-        if (data.saved) {
-            btn.textContent = '★ Saved';
-            btn.style.color = 'var(--yellow)';
-            btn.style.borderColor = 'var(--yellow)';
-        } else {
-            btn.textContent = '☆ Save';
-            btn.style.color = '';
-            btn.style.borderColor = '';
-        }
+        btn.classList.toggle('active', data.saved);
     }
 
+    /* ── Delete ── */
+    async function deleteDeal(href, cardId) {
+        await fetch('/api/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({href})
+        });
+        const card = document.getElementById(cardId);
+        card.style.transition = 'opacity 0.3s, transform 0.3s';
+        card.style.opacity = '0';
+        card.style.transform = 'scale(0.95)';
+        setTimeout(() => card.remove(), 300);
+    }
+
+    /* ── VIN Decode ── */
     async function decodeVin(vin, btn) {
         btn.disabled = true;
         btn.textContent = '...';
@@ -347,8 +456,7 @@
                 const data = await res.json();
                 const parts = [data.year, data.make, data.model, data.trim].filter(Boolean);
                 const extra = [data.drive_type, data.fuel_type].filter(Boolean).join(' · ');
-                btn.outerHTML = '<span class="badge badge-info" style="margin-left:4px;font-size:10px">✓ Verified</span>';
-                // Add decoded info after the VIN line
+                btn.outerHTML = '<span class="badge badge-info" style="margin-left:4px;font-size:10px">Verified</span>';
                 const vinLine = btn.closest ? btn.closest('.deal-detail') : btn.parentElement;
                 if (vinLine && parts.length) {
                     const info = document.createElement('div');
@@ -367,7 +475,7 @@
         }
     }
 
-    // Update "Show more" / "Show less" text on toggle
+    /* ── Show more / Show less toggle ── */
     document.addEventListener('click', function(e) {
         const toggle = e.target.closest('.deal-details-toggle');
         if (!toggle) return;
@@ -376,21 +484,114 @@
         if (label) {
             label.textContent = card.classList.contains('expanded') ? 'Show less' : 'Show more';
         }
-        // Re-render any Lucide icons that might have been added
         if (typeof lucide !== 'undefined') lucide.createIcons();
     });
 
-    async function deleteDeal(href, cardId) {
-        await fetch('/api/delete', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({href})
+    /* ── Image Carousel ── */
+    function carouselNav(btn, dir) {
+        const carousel = btn.closest('.carousel');
+        const slides = carousel.querySelectorAll('.carousel-slide');
+        const dots = carousel.querySelectorAll('.carousel-dot');
+        let idx = parseInt(carousel.dataset.index || 0) + dir;
+        idx = (idx + slides.length) % slides.length;
+        carousel.dataset.index = idx;
+        slides.forEach((s, i) => {
+            s.classList.toggle('active', i === idx);
+            // Lazy-load: set src from data-src when becoming active
+            if (i === idx && !s.src && s.dataset.src) s.src = s.dataset.src;
         });
-        const card = document.getElementById(cardId);
-        card.style.transition = 'opacity 0.3s, transform 0.3s';
-        card.style.opacity = '0';
-        card.style.transform = 'scale(0.95)';
-        setTimeout(() => card.remove(), 300);
+        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
     }
+
+    /* ── Touch Swipe (mobile: left=delete, right=favorite) ── */
+    (function() {
+        if (!('ontouchstart' in window)) return;
+
+        let startX, startY, currentCard, swiping = false;
+        const THRESHOLD = 100;
+
+        document.addEventListener('touchstart', function(e) {
+            const card = e.target.closest('.deal-card');
+            if (!card) return;
+            // Don't swipe if touching inside a multi-image carousel
+            const carousel = e.target.closest('.carousel');
+            if (carousel && carousel.querySelectorAll('.carousel-slide').length > 1) return;
+
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            currentCard = card;
+            swiping = false;
+        }, {passive: true});
+
+        document.addEventListener('touchmove', function(e) {
+            if (!currentCard) return;
+            const dx = e.touches[0].clientX - startX;
+            const dy = e.touches[0].clientY - startY;
+
+            // Only swipe if horizontal movement dominates
+            if (!swiping && Math.abs(dx) > 15 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                swiping = true;
+                currentCard.classList.add('swiping');
+            }
+            if (!swiping) return;
+
+            e.preventDefault();
+            const rotate = dx * 0.04;
+            currentCard.style.transform = `translateX(${dx}px) rotate(${rotate}deg)`;
+
+            // Show swipe indicators
+            const favInd = currentCard.querySelector('.swipe-fav');
+            const delInd = currentCard.querySelector('.swipe-delete');
+            if (favInd) favInd.style.opacity = dx > 30 ? Math.min(1, (dx - 30) / 80) : 0;
+            if (delInd) delInd.style.opacity = dx < -30 ? Math.min(1, (-dx - 30) / 80) : 0;
+        }, {passive: false});
+
+        document.addEventListener('touchend', function(e) {
+            if (!currentCard || !swiping) { currentCard = null; return; }
+            const dx = e.changedTouches[0].clientX - startX;
+            const card = currentCard;
+            currentCard = null;
+
+            // Reset indicators
+            const favInd = card.querySelector('.swipe-fav');
+            const delInd = card.querySelector('.swipe-delete');
+
+            if (dx > THRESHOLD) {
+                // Swipe right → favorite
+                const href = card.dataset.href;
+                fetch('/api/favorite', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({href})
+                });
+                const favBtn = card.querySelector('.overlay-fav');
+                if (favBtn) favBtn.classList.add('active');
+                card.style.transition = 'transform 0.3s ease';
+                card.style.transform = 'translateX(0)';
+                if (favInd) favInd.style.opacity = 0;
+                if (delInd) delInd.style.opacity = 0;
+                setTimeout(() => { card.classList.remove('swiping'); card.style.transition = ''; }, 300);
+            } else if (dx < -THRESHOLD) {
+                // Swipe left → delete
+                const href = card.dataset.href;
+                fetch('/api/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({href})
+                });
+                card.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
+                card.style.transform = 'translateX(-120%) rotate(-8deg)';
+                card.style.opacity = '0';
+                setTimeout(() => card.remove(), 300);
+            } else {
+                // Snap back
+                card.style.transition = 'transform 0.25s ease';
+                card.style.transform = 'translateX(0)';
+                if (favInd) favInd.style.opacity = 0;
+                if (delInd) delInd.style.opacity = 0;
+                setTimeout(() => { card.classList.remove('swiping'); card.style.transition = ''; }, 250);
+            }
+        }, {passive: true});
+    })();
 </script>
 {% endblock %}

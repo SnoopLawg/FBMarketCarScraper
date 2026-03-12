@@ -257,6 +257,15 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        if "image_urls" not in columns:
+            logging.info("Migrating DB: adding image_urls column...")
+            try:
+                self.cur.execute("ALTER TABLE listings ADD COLUMN image_urls TEXT")
+                self.conn.commit()
+                logging.info("image_urls migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Migrate vehicle_ratings to include MPG columns
         self.cur.execute("PRAGMA table_info(vehicle_ratings)")
         vr_rows = self.cur.fetchall()
@@ -385,7 +394,8 @@ class Database:
             "SELECT href, price, mileage, year, location, source, "
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
-            "title_type, vin, description, owner_count, carfax_url, listed_at "
+            "title_type, vin, description, owner_count, carfax_url, listed_at, "
+            "image_urls "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -543,7 +553,7 @@ class Database:
             SELECT href, image_url, price, car_name, car_query, location,
                    mileage, year, source, created_at, updated_at,
                    trim, seller, condition, deal_rating, accident_history,
-                   distance, title_type, vin
+                   distance, title_type, vin, image_urls
             FROM listings
             WHERE href IN ({placeholders}) AND deleted_at IS NULL
             ORDER BY updated_at DESC
@@ -647,7 +657,8 @@ class Database:
     def update_listing_details(self, href, **kwargs):
         """Update multiple detail fields for a listing."""
         allowed = {"title_type", "trim", "seller", "condition",
-                   "deal_rating", "accident_history", "description", "vin"}
+                   "deal_rating", "accident_history", "description", "vin",
+                   "image_urls"}
         sets = []
         vals = []
         for k, v in kwargs.items():

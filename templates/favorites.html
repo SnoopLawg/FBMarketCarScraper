@@ -7,11 +7,12 @@
     /* ── Card Grid ── */
     .deal-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-        gap: var(--space-5);
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 16px;
     }
 
     .deal-card {
+        position: relative;
         background: var(--bg-card);
         border: 1px solid var(--border);
         border-radius: var(--radius-lg);
@@ -25,21 +26,52 @@
         box-shadow: 0 8px 24px rgba(0,0,0,0.35);
     }
 
-    .deal-img {
-        width: 100%;
-        aspect-ratio: 16 / 10;
-        object-fit: cover;
-        display: block;
+    /* ── Image wrapper & carousel ── */
+    .deal-img-wrapper {
+        position: relative;
+        overflow: hidden;
         background: var(--bg-input);
     }
-    .deal-img-empty {
-        width: 100%; aspect-ratio: 16 / 10;
+    .carousel {
+        position: relative;
+        aspect-ratio: 16 / 10;
         background: var(--bg-input);
+    }
+    .carousel-slide {
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        object-fit: cover;
+        opacity: 0; transition: opacity 0.25s;
+    }
+    .carousel-slide.active { opacity: 1; z-index: 1; }
+    .carousel-btn {
+        position: absolute; top: 50%; transform: translateY(-50%);
+        width: 30px; height: 30px; border-radius: 50%;
+        background: rgba(0,0,0,0.5); border: none; color: #fff;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        opacity: 0; transition: opacity 0.2s; z-index: 4;
+    }
+    .carousel-btn .lucide { width: 16px; height: 16px; }
+    .carousel:hover .carousel-btn { opacity: 1; }
+    .carousel-prev { left: 8px; }
+    .carousel-next { right: 8px; }
+    .carousel-dots {
+        position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 5px; z-index: 4;
+    }
+    .carousel-dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: rgba(255,255,255,0.4); transition: background 0.2s;
+    }
+    .carousel-dot.active { background: #fff; }
+    .deal-img-empty {
+        aspect-ratio: 16 / 10;
         display: flex; align-items: center; justify-content: center;
         color: var(--text-muted); font-size: 13px;
     }
+    .swipe-indicator { display: none; }
 
-    .deal-body { padding: var(--space-5); }
+    .deal-body { padding: 16px; }
 
     .deal-badges-primary { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
     .deal-badges-secondary { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: var(--space-3); }
@@ -58,7 +90,6 @@
     .price-drop { color: var(--green); font-weight: 500; }
     .price-up { color: var(--red); font-weight: 500; }
 
-    /* Market range container */
     .market-range {
         margin: var(--space-3) 0 var(--space-2);
         padding: 10px 12px;
@@ -68,18 +99,13 @@
         font-size: 11px;
     }
     .market-range-bar {
-        position: relative;
-        height: 8px;
-        background: var(--border);
-        border-radius: 4px;
-        overflow: visible;
+        position: relative; height: 8px;
+        background: var(--border); border-radius: 4px; overflow: visible;
     }
     .market-range-dot {
-        width: 14px; height: 14px;
-        border-radius: 50%;
+        width: 14px; height: 14px; border-radius: 50%;
         border: 2px solid var(--bg-card);
-        box-shadow: 0 0 0 2px rgba(0,0,0,0.3);
-        z-index: 1;
+        box-shadow: 0 0 0 2px rgba(0,0,0,0.3); z-index: 1;
     }
 
     .deal-details { margin: var(--space-3) 0 0 0; }
@@ -92,11 +118,7 @@
     .deal-detail-icon .lucide { width: 14px; height: 14px; stroke-width: 2; }
     .deal-detail-muted { color: var(--text-muted); font-size: 12px; }
 
-    /* Progressive disclosure for secondary details */
-    .deal-details-extra {
-        max-height: 0; overflow: hidden;
-        transition: max-height 0.3s ease;
-    }
+    .deal-details-extra { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
     .deal-card.expanded .deal-details-extra { max-height: 200px; }
     .deal-details-toggle {
         font-size: 12px; color: var(--text-muted); cursor: pointer;
@@ -107,11 +129,10 @@
     .deal-details-toggle .lucide { width: 12px; height: 12px; transition: transform 0.2s; }
     .deal-card.expanded .deal-details-toggle .lucide { transform: rotate(180deg); }
 
-    .deal-divider { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: var(--space-4) 0; }
+    .deal-divider { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 12px 0; }
 
     .deal-actions { display: flex; gap: var(--space-2); }
-    .deal-actions .btn:first-child { flex: 2; justify-content: center; }
-    .deal-actions .btn:not(:first-child) { flex: 1; justify-content: center; }
+    .deal-actions .btn { flex: 1; justify-content: center; }
 
     .empty-state {
         text-align: center; padding: 80px 20px;
@@ -120,14 +141,15 @@
     .empty-state p { margin-top: 8px; font-size: 13px; }
 
     @media (max-width: 640px) {
-        .deal-grid { grid-template-columns: 1fr; }
+        .deal-grid { grid-template-columns: 1fr; gap: 12px; }
+        .carousel-btn { opacity: 1; }
     }
 </style>
 {% endblock %}
 
 {% block body %}
 <div class="page">
-    <div style="margin-bottom:20px;" class="flex items-center justify-between">
+    <div style="margin-bottom:16px;" class="flex items-center justify-between">
         <span class="text-secondary text-sm">{{ total }} favorite{{ 's' if total != 1 else '' }}</span>
     </div>
 
@@ -172,7 +194,7 @@ async function decodeVin(vin, btn) {
             const data = await res.json();
             const parts = [data.year, data.make, data.model, data.trim].filter(Boolean);
             const extra = [data.drive_type, data.fuel_type].filter(Boolean).join(' · ');
-            btn.outerHTML = '<span class="badge badge-info" style="margin-left:4px;font-size:10px">✓ Verified</span>';
+            btn.outerHTML = '<span class="badge badge-info" style="margin-left:4px;font-size:10px">Verified</span>';
             const vinLine = btn.closest ? btn.closest('.deal-detail') : btn.parentElement;
             if (vinLine && parts.length) {
                 const info = document.createElement('div');
@@ -191,7 +213,20 @@ async function decodeVin(vin, btn) {
     }
 }
 
-// Toggle "Show more" / "Show less" text
+function carouselNav(btn, dir) {
+    const carousel = btn.closest('.carousel');
+    const slides = carousel.querySelectorAll('.carousel-slide');
+    const dots = carousel.querySelectorAll('.carousel-dot');
+    let idx = parseInt(carousel.dataset.index || 0) + dir;
+    idx = (idx + slides.length) % slides.length;
+    carousel.dataset.index = idx;
+    slides.forEach((s, i) => {
+        s.classList.toggle('active', i === idx);
+        if (i === idx && !s.src && s.dataset.src) s.src = s.dataset.src;
+    });
+    dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+}
+
 document.addEventListener('click', function(e) {
     const toggle = e.target.closest('.deal-details-toggle');
     if (!toggle) return;

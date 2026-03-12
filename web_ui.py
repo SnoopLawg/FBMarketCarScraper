@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 import logging
 import os
 import webbrowser
@@ -209,6 +210,7 @@ def favorites_page():
         d["mpg_data"] = None
         d["monthly_fuel_cost"] = None
         d["vin_mismatches"] = None
+        d["image_urls"] = json.loads(d["image_urls"]) if d.get("image_urls") else []
         enriched.append(d)
 
     # Enrich with price history

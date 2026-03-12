@@ -1,5 +1,6 @@
 """Listing cleanup, average price calculation, and deal scoring."""
 
+import json
 import logging
 from collections import defaultdict
 from datetime import datetime
@@ -891,6 +892,7 @@ def find_deals(db, desired_cars, config):
                     "owner_count": owner_count,
                     "service_history": service_history,
                     "carfax_url": row["carfax_url"] or "",
+                    "image_urls": json.loads(row["image_urls"]) if row["image_urls"] else [],
                 })
 
     # Deduplicate — same car posted under multiple URLs
