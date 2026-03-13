@@ -578,20 +578,17 @@
             const delInd = card.querySelector('.swipe-delete');
 
             if (dx > THRESHOLD) {
-                // Swipe right → favorite
+                // Swipe right → favorite & remove from deals
                 const href = card.dataset.href;
                 fetch('/api/favorite', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({href})
                 });
-                const favBtn = card.querySelector('.overlay-fav');
-                if (favBtn) favBtn.classList.add('active');
-                card.style.transition = 'transform 0.3s ease';
-                card.style.transform = 'translateX(0)';
-                if (favInd) favInd.style.opacity = 0;
-                if (delInd) delInd.style.opacity = 0;
-                setTimeout(() => { card.classList.remove('swiping'); card.style.transition = ''; }, 300);
+                card.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
+                card.style.transform = 'translateX(120%) rotate(8deg)';
+                card.style.opacity = '0';
+                setTimeout(() => card.remove(), 300);
             } else if (dx < -THRESHOLD) {
                 // Swipe left → delete
                 const href = card.dataset.href;
