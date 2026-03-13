@@ -489,13 +489,24 @@
 
     /* ── Image Carousel ── */
     function carouselImgError(img) {
-        // If carousel image fails, try fallback thumbnail from listing card
         const carousel = img.closest('.carousel');
         const fallback = carousel && carousel.dataset.fallback;
-        if (fallback && img.src !== fallback) {
+        if (fallback && img.src !== fallback && !img.dataset.triedFallback) {
+            img.dataset.triedFallback = '1';
             img.src = fallback;
         } else {
             img.style.display = 'none';
+            // If the active slide failed, show "No image" placeholder
+            if (img.classList.contains('active') && carousel) {
+                const wrapper = carousel.closest('.deal-img-wrapper');
+                if (wrapper && !wrapper.querySelector('.deal-img-empty')) {
+                    carousel.style.display = 'none';
+                    const ph = document.createElement('div');
+                    ph.className = 'deal-img-empty';
+                    ph.textContent = 'No image';
+                    wrapper.appendChild(ph);
+                }
+            }
         }
     }
     function carouselNav(btn, dir) {
