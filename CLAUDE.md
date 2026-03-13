@@ -78,11 +78,13 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 - Configured via `Notifications.discord_webhook_url` in Config.json; no-op if unconfigured
 
 ### Sell My Car
-- `analysis.py` — `compute_sell_recommendation()` uses market percentiles + adjustments for mileage, trim, drivetrain, condition to produce recommended/quick-sell/max-value prices
-- `config.py` — `SellCars` list in Config.json, `get_all_search_queries()` merges buy + sell car names (deduplicated) so scrapers collect data for both
+- `analysis.py` — `compute_sell_recommendation()` uses market percentiles + adjustments for mileage, trim, drivetrain, condition to produce recommended/quick-sell/max-value prices. Falls back to external valuations when fewer than 5 marketplace comparables exist
+- `valuations.py` — External valuation lookups from KBB, Edmunds, and CarGurus via headless Selenium. KBB embeds pricing in `__NEXT_DATA__` JSON (Apollo state); overview page gives base `fppPrice` per trim, trim pages give condition-adjusted values (may be WAF-blocked). Edmunds loads the appraisal-value page, extracts style IDs from `__PRELOADED_STATE__`, then calls the internal TMV API via browser `fetch()` for mileage-adjusted private party/trade-in/dealer retail values. CarGurus uses the research/price-trends page with entity ID slugs (configurable via `cargurus_entity_id` in sell car config) for per-year average dealer prices. Results cached in `valuation_cache` table with 7-day TTL
+- `config.py` — `SellCars` list in Config.json, `get_all_search_queries()` merges buy + sell car names (deduplicated) so scrapers collect data for both. Zip code for valuations pulled from `Sources.carscom.zip` or `Sources.autotrader.zip`
 - Sell cars use richer config structure (name, year, mileage, title_type, trim, drivetrain, condition) vs flat `DesiredCar` strings
 - Scrapers see a combined deduplicated list; differentiation happens at analysis and display layers
-- `/sell` route shows pricing recommendations per sell car with market positioning, price adjustments, and comparable listings
+- `/sell` route shows pricing recommendations per sell car with market positioning, price adjustments, comparable listings, and external valuation cards (KBB, Edmunds, CarGurus)
+- `/api/sell/valuations` endpoint triggers on-demand external valuation refresh
 - Settings page includes "Cars to Sell" panel with multi-field form
 
 ### Web UI

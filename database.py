@@ -155,6 +155,25 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_scrape_runs_source
                 ON scrape_runs(source, started_at);
+
+            CREATE TABLE IF NOT EXISTS valuation_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                car_key TEXT NOT NULL,
+                source TEXT NOT NULL,
+                source_label TEXT,
+                private_party_low REAL,
+                private_party_high REAL,
+                private_party_mid REAL,
+                trade_in_value REAL,
+                dealer_retail REAL,
+                source_url TEXT,
+                condition_used TEXT,
+                zip_code TEXT,
+                fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(car_key, source)
+            );
+            CREATE INDEX IF NOT EXISTS idx_valuation_cache_key
+                ON valuation_cache(car_key, source);
         """)
         self.conn.commit()
 
@@ -1005,6 +1024,50 @@ class Database:
                 "recalls_count": row["recalls_count"] or 0,
             }
         return result
+
+    # ── Valuation Cache ──────────────────────────────────────────────
+
+    def get_cached_valuations(self, car_key):
+        """Get all cached valuations for a car_key. Returns list of Row or []."""
+        self.cur.execute(
+            "SELECT source, source_label, private_party_low, private_party_high, "
+            "private_party_mid, trade_in_value, dealer_retail, source_url, "
+            "condition_used, zip_code, fetched_at "
+            "FROM valuation_cache WHERE car_key = ?",
+            (car_key,))
+        return self.cur.fetchall()
+
+    def upsert_valuation(self, car_key, source, source_label=None,
+                         private_party_low=None, private_party_high=None,
+                         private_party_mid=None, trade_in_value=None,
+                         dealer_retail=None, source_url=None,
+                         condition_used=None, zip_code=None):
+        """Insert or update a cached valuation."""
+        try:
+            self.cur.execute("""
+                INSERT INTO valuation_cache
+                    (car_key, source, source_label, private_party_low,
+                     private_party_high, private_party_mid, trade_in_value,
+                     dealer_retail, source_url, condition_used, zip_code,
+                     fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(car_key, source) DO UPDATE SET
+                    source_label = excluded.source_label,
+                    private_party_low = excluded.private_party_low,
+                    private_party_high = excluded.private_party_high,
+                    private_party_mid = excluded.private_party_mid,
+                    trade_in_value = excluded.trade_in_value,
+                    dealer_retail = excluded.dealer_retail,
+                    source_url = excluded.source_url,
+                    condition_used = excluded.condition_used,
+                    zip_code = excluded.zip_code,
+                    fetched_at = CURRENT_TIMESTAMP
+            """, (car_key, source, source_label, private_party_low,
+                  private_party_high, private_party_mid, trade_in_value,
+                  dealer_retail, source_url, condition_used, zip_code))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB valuation upsert error: {e}")
 
     # ── Scrape Run Tracking ─────────────────────────────────────────
 

@@ -33,5 +33,17 @@
       "zip": "84101",
       "search_radius": 100
     }
-  }
+  },
+  "SellCars": [
+    {
+      "name": "Ford Escape",
+      "year": 2016,
+      "mileage": 183000,
+      "title_type": "clean",
+      "trim": "SE Ecoboost",
+      "drivetrain": "AWD",
+      "condition": "very good",
+      "cargurus_entity_id": "d330"
+    }
+  ]
 }

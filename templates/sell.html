@@ -130,6 +130,77 @@
         color: var(--text-muted);
     }
 
+    /* ── External Valuations ── */
+    .ext-valuations {
+        margin-bottom: 20px;
+    }
+    .ext-val-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px;
+    }
+    .ext-val-card {
+        padding: 16px;
+        background: var(--bg-elevated);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        text-align: center;
+    }
+    .ext-val-source {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+    }
+    .ext-val-source.kbb { color: #0068d8; }
+    .ext-val-source.edmunds { color: #f47920; }
+    .ext-val-source.cargurus { color: #6dc24b; }
+    .ext-val-price {
+        font-size: 24px;
+        font-weight: 800;
+        color: var(--text-primary);
+        letter-spacing: -0.5px;
+    }
+    .ext-val-range {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 4px;
+    }
+    .ext-val-details {
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--text-secondary);
+    }
+    .ext-val-link {
+        display: inline-block;
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--accent);
+        text-decoration: none;
+    }
+    .ext-val-link:hover { text-decoration: underline; }
+    .ext-val-meta {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 6px;
+    }
+    .ext-unavailable {
+        text-align: center;
+        padding: 20px;
+        color: var(--text-muted);
+        font-size: 13px;
+        background: var(--bg-elevated);
+        border-radius: var(--radius-md);
+    }
+    .price-source-note {
+        text-align: center;
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 12px;
+        font-style: italic;
+    }
+
     .comparables-section { margin-top: 16px; }
     .comp-header {
         font-size: 13px;
@@ -214,6 +285,9 @@
         </div>
 
         {% if item.recommended_price %}
+        {% if item.price_source == 'external' %}
+        <div class="price-source-note">Based on external valuations (insufficient local marketplace data)</div>
+        {% endif %}
         <div class="price-display">
             <div class="price-label">Recommended List Price</div>
             <div class="price-recommended">${{ "{:,.0f}".format(item.recommended_price) }}</div>
@@ -254,6 +328,52 @@
             {% endif %}
         </div>
         {% endif %}
+
+        {# ── External Valuations ── #}
+        <div class="ext-valuations">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                <div class="comp-header" style="margin-bottom:0">External Valuations</div>
+                <button class="btn btn-ghost btn-sm" onclick="fetchValuations({{ loop.index0 }}, this)">
+                    Refresh
+                </button>
+            </div>
+            {% if item.external_valuations %}
+            <div class="ext-val-grid">
+                {% for val in item.external_valuations %}
+                <div class="ext-val-card">
+                    <div class="ext-val-source {{ val.source }}">{{ val.source_label }}</div>
+                    <div class="ext-val-price">${{ "{:,.0f}".format(val.private_party_mid) }}</div>
+                    {% if val.source == 'cargurus' %}
+                    <div class="ext-val-range" style="color:var(--text-muted);font-style:italic">Avg dealer price (all mileages)</div>
+                    {% endif %}
+                    {% if val.private_party_low and val.private_party_high %}
+                    <div class="ext-val-range">
+                        ${{ "{:,.0f}".format(val.private_party_low) }} &ndash; ${{ "{:,.0f}".format(val.private_party_high) }}
+                    </div>
+                    {% endif %}
+                    <div class="ext-val-details">
+                        {% if val.trade_in_value %}
+                        Trade-in: ${{ "{:,.0f}".format(val.trade_in_value) }}<br>
+                        {% endif %}
+                        {% if val.dealer_retail %}
+                        Dealer retail: ${{ "{:,.0f}".format(val.dealer_retail) }}
+                        {% endif %}
+                    </div>
+                    {% if val.url %}
+                    <a class="ext-val-link" href="{{ val.url }}" target="_blank">View on {{ val.source_label }}</a>
+                    {% endif %}
+                    {% if val.fetched_at %}
+                    <div class="ext-val-meta">Updated {{ val.fetched_at[:10] }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="ext-unavailable">
+                No external valuations available yet. Click Refresh to fetch from KBB, Edmunds, and CarGurus.
+            </div>
+            {% endif %}
+        </div>
 
         {% if item.adjustments %}
         <div class="adjustments">
@@ -314,6 +434,32 @@ async function refreshSellData() {
     } catch(e) {
         btn.disabled = false;
         btn.textContent = 'Refresh Prices';
+    }
+}
+
+async function fetchValuations(index, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Fetching...';
+    try {
+        const res = await fetch('/api/sell/valuations', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({index})
+        });
+        const data = await res.json();
+        if (data.ok) {
+            // Refresh the whole page to show updated valuations
+            await fetch('/api/sell/refresh', {method: 'POST'});
+            window.location.reload();
+        } else {
+            btn.textContent = 'Failed';
+            btn.disabled = false;
+            setTimeout(() => { btn.textContent = 'Refresh'; }, 2000);
+        }
+    } catch(e) {
+        btn.textContent = 'Error';
+        btn.disabled = false;
+        setTimeout(() => { btn.textContent = 'Refresh'; }, 2000);
     }
 }
 </script>

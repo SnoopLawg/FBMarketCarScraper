@@ -917,6 +917,46 @@ _CONDITION_MULTIPLIER = {
 }
 
 
+def _weighted_external_price(valuations):
+    """Compute a weighted price from external valuations.
+
+    Mileage-adjusted private party sources (Edmunds TMV) are weighted 3x.
+    Non-adjusted private party sources (KBB base) get 2x.
+    Dealer / all-mileage averages (CarGurus) get 1x.
+
+    Returns rounded price or None.
+    """
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    for v in valuations:
+        pp = v.get("private_party_mid")
+        if not pp or pp <= 0:
+            continue
+
+        source = v.get("source", "")
+
+        # Edmunds TMV API returns mileage-adjusted values — most reliable
+        # for private party. KBB overview fppPrice is not mileage-adjusted.
+        # CarGurus price trends are dealer averages across all mileages.
+        if source == "edmunds" and v.get("trade_in_value"):
+            # Has trade-in → came from TMV API → mileage-adjusted
+            weight = 3.0
+        elif source == "kbb":
+            weight = 2.0
+        else:
+            # CarGurus or other dealer/aggregate sources
+            weight = 1.0
+
+        weighted_sum += pp * weight
+        total_weight += weight
+
+    if total_weight == 0:
+        return None
+
+    return round(weighted_sum / total_weight / 100) * 100
+
+
 def compute_sell_recommendation(db, sell_car, config):
     """Compute a pricing recommendation for a car the user wants to sell.
 
@@ -948,6 +988,32 @@ def compute_sell_recommendation(db, sell_car, config):
 
     market = compute_market_range(prices)
     if not market:
+        # Still try external valuations even without marketplace data
+        external_valuations = []
+        try:
+            from valuations import get_external_valuations
+            external_valuations = get_external_valuations(db, sell_car, config)
+        except Exception as e:
+            logging.warning(f"External valuations failed: {e}")
+
+        # If we have external data, compute a weighted recommendation.
+        # Sources that provide mileage-adjusted private party values are
+        # weighted higher than sources that show dealer or all-mileage prices.
+        rec = _weighted_external_price(external_valuations) if external_valuations else None
+        if rec:
+            return {
+                "car": sell_car,
+                "market_range": None,
+                "recommended_price": rec,
+                "quick_sell_price": round(rec * 0.90 / 100) * 100,
+                "max_value_price": round(rec * 1.10 / 100) * 100,
+                "adjustments": [],
+                "comparable_count": 0,
+                "comparables": [],
+                "external_valuations": external_valuations,
+                "price_source": "external",
+            }
+
         return {
             "car": sell_car,
             "market_range": None,
@@ -957,6 +1023,7 @@ def compute_sell_recommendation(db, sell_car, config):
             "adjustments": [],
             "comparable_count": 0,
             "comparables": [],
+            "external_valuations": external_valuations,
         }
 
     # Start with median as base price
@@ -1035,6 +1102,14 @@ def compute_sell_recommendation(db, sell_car, config):
     comparables.sort(key=lambda x: abs((x.get("price") or 0) - recommended))
     comparables = comparables[:20]
 
+    # Fetch external valuations (KBB, Edmunds, CarGurus)
+    external_valuations = []
+    try:
+        from valuations import get_external_valuations
+        external_valuations = get_external_valuations(db, sell_car, config)
+    except Exception as e:
+        logging.warning(f"External valuations failed: {e}")
+
     return {
         "car": sell_car,
         "market_range": market,
@@ -1044,6 +1119,7 @@ def compute_sell_recommendation(db, sell_car, config):
         "adjustments": adjustments,
         "comparable_count": market["count"],
         "comparables": comparables,
+        "external_valuations": external_valuations,
     }
 
 

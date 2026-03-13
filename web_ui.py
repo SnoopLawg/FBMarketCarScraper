@@ -374,6 +374,42 @@ def refresh_sell_data():
     return jsonify({"ok": True, "count": len(_sell_data)})
 
 
+@app.route("/api/sell/valuations", methods=["POST"])
+def fetch_valuations():
+    """Force-refresh external valuations for a specific sell car."""
+    data = request.json or {}
+    car_index = data.get("index", 0)
+    config = load_config()
+    sell_cars = config.get("SellCars", [])
+    if car_index >= len(sell_cars) or not _db:
+        return jsonify({"ok": False, "error": "Invalid car index"})
+
+    sell_car = sell_cars[car_index]
+    try:
+        from valuations import fetch_external_valuations, _make_cache_key, _get_zip_code
+        results = fetch_external_valuations(sell_car, config)
+        # Save to cache
+        cache_key = _make_cache_key(sell_car)
+        for val in results:
+            _db.upsert_valuation(
+                car_key=cache_key,
+                source=val["source"],
+                source_label=val["source_label"],
+                private_party_low=val.get("private_party_low"),
+                private_party_high=val.get("private_party_high"),
+                private_party_mid=val.get("private_party_mid"),
+                trade_in_value=val.get("trade_in_value"),
+                dealer_retail=val.get("dealer_retail"),
+                source_url=val.get("url"),
+                condition_used=val.get("condition_used"),
+                zip_code=_get_zip_code(config),
+            )
+        return jsonify({"ok": True, "valuations": results})
+    except Exception as e:
+        logging.error(f"Valuation fetch error: {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
+
 # ── API endpoints ─────────────────────────────────────────────────
 
 @app.route("/api/favorite", methods=["POST"])
