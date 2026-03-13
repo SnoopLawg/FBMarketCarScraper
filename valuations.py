@@ -800,15 +800,22 @@ def fetch_external_valuations(sell_car, config):
     return results
 
 
+_ALL_SOURCES = {"kbb", "edmunds", "cargurus"}
+
+
 def get_external_valuations(db, sell_car, config):
-    """Get external valuations with database caching (7-day TTL)."""
+    """Get external valuations with database caching (7-day TTL).
+
+    If the cache is missing sources (e.g., only KBB cached but Edmunds/
+    CarGurus now available), fetches the missing ones and merges.
+    """
     cache_key = _make_cache_key(sell_car)
 
     # Check cache
     cached = db.get_cached_valuations(cache_key)
+    fresh = []
     if cached:
         cutoff = datetime.utcnow() - timedelta(days=_CACHE_DAYS)
-        fresh = []
         for row in cached:
             fetched = datetime.fromisoformat(row["fetched_at"])
             if fetched > cutoff:
@@ -824,14 +831,19 @@ def get_external_valuations(db, sell_car, config):
                     "condition_used": row["condition_used"],
                     "fetched_at": row["fetched_at"],
                 })
-        if fresh:
-            return fresh
 
-    # Fetch fresh data
+    # Check if any sources are missing from cache
+    cached_sources = {v["source"] for v in fresh}
+    missing = _ALL_SOURCES - cached_sources
+
+    if fresh and not missing:
+        return fresh
+
+    # Fetch missing sources (or all if cache is empty)
     logging.info(f"Fetching external valuations for {sell_car.get('name')}...")
     new_results = fetch_external_valuations(sell_car, config)
 
-    # Save to cache
+    # Save all new results to cache
     for val in new_results:
         db.upsert_valuation(
             car_key=cache_key,
@@ -847,4 +859,12 @@ def get_external_valuations(db, sell_car, config):
             zip_code=_get_zip_code(config),
         )
 
-    return new_results
+    # Merge: keep cached entries for sources that didn't return new data,
+    # prefer new data for sources that did
+    new_sources = {v["source"] for v in new_results}
+    merged = list(new_results)
+    for v in fresh:
+        if v["source"] not in new_sources:
+            merged.append(v)
+
+    return merged
