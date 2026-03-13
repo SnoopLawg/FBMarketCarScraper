@@ -1040,10 +1040,12 @@ def compute_sell_recommendation(db, sell_car, config):
     if comp_mileages and user_mileage:
         avg_mileage = sum(comp_mileages) / len(comp_mileages)
         diff = user_mileage - avg_mileage
-        # ~$0.05-0.10 per mile difference for most cars
-        per_mile = base * 0.000065
+        # ~$0.03-0.05 per mile, capped at 40% of base so high-mileage
+        # cars don't get unreasonably crushed
+        per_mile = base * 0.000045
         mileage_adj = round(-diff * per_mile)
-        mileage_adj = max(-5000, min(5000, mileage_adj))
+        max_adj = round(base * 0.40)
+        mileage_adj = max(-max_adj, min(max_adj, mileage_adj))
         if abs(mileage_adj) >= 100:
             direction = "below" if diff < 0 else "above"
             adjustments.append({
@@ -1086,10 +1088,7 @@ def compute_sell_recommendation(db, sell_car, config):
         })
         base += cond_adj
 
-    recommended = round(base / 100) * 100  # round to nearest $100
-    # Quick sell: ~90% of recommended, Max: ~110%
-    quick_sell = round(recommended * 0.90 / 100) * 100
-    max_value = round(recommended * 1.10 / 100) * 100
+    marketplace_price = round(base / 100) * 100  # round to nearest $100
 
     # Get comparable listings for display
     comparables = []
@@ -1099,7 +1098,7 @@ def compute_sell_recommendation(db, sell_car, config):
         if title_group(r.get("title_type")) != grp:
             continue
         comparables.append(dict(r))
-    comparables.sort(key=lambda x: abs((x.get("price") or 0) - recommended))
+    comparables.sort(key=lambda x: abs((x.get("price") or 0) - marketplace_price))
     comparables = comparables[:20]
 
     # Fetch external valuations (KBB, Edmunds, CarGurus)
@@ -1109,6 +1108,20 @@ def compute_sell_recommendation(db, sell_car, config):
         external_valuations = get_external_valuations(db, sell_car, config)
     except Exception as e:
         logging.warning(f"External valuations failed: {e}")
+
+    # Blend marketplace estimate with external valuations when available.
+    # Marketplace data reflects local supply/demand but has crude mileage
+    # adjustments. External sources (especially Edmunds) are mileage-aware.
+    ext_price = _weighted_external_price(external_valuations) if external_valuations else None
+    if ext_price:
+        # 40% marketplace (local reality), 60% external (mileage-adjusted)
+        recommended = round((marketplace_price * 0.4 + ext_price * 0.6) / 100) * 100
+    else:
+        recommended = marketplace_price
+
+    # Quick sell: ~90% of recommended, Max: ~110%
+    quick_sell = round(recommended * 0.90 / 100) * 100
+    max_value = round(recommended * 1.10 / 100) * 100
 
     return {
         "car": sell_car,
