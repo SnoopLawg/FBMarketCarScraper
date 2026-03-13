@@ -12,7 +12,8 @@ from threading import Timer
 from flask import Flask, render_template, request, jsonify, Response
 
 from analysis import title_group, compute_market_range, find_sell_data
-from config import load_config, save_config
+from config import (load_config, save_config, load_discovery_cars,
+                    get_discovery_category_map, DISCOVERY_CATEGORIES)
 from database import Database
 
 SCRIPT_DIR = Path(__file__).parent
@@ -23,6 +24,7 @@ app = Flask(__name__, template_folder=str(SCRIPT_DIR / "templates"))
 _db = None
 _deals = []
 _sell_data = []
+_discovery_deals = []
 _favorites = set()
 _deleted = set()
 _favorites_file = DATA_DIR / "favorite_listings.txt"
@@ -74,7 +76,7 @@ def index():
 
     filtered = []
     for d in _deals:
-        if d["href"] in _deleted:
+        if d["href"] in _deleted or d["href"] in _favorites:
             continue
         if source_filter and d["source"] != source_filter:
             continue
@@ -177,53 +179,80 @@ def index():
 
 @app.route("/favorites")
 def favorites_page():
-    fav_listings = _db.get_listings_by_hrefs(list(_favorites)) if _db else []
-
-    config = load_config()
-    mileage_threshold = config.get("MileageMax") or 150000
+    # Build lookup from enriched in-memory deals
+    deals_by_href = {d["href"]: d for d in _deals}
 
     enriched = []
-    for row in fav_listings:
-        d = dict(row)
-        # Compute avg_price for display (title-group aware)
-        avg_price = 0
-        if d.get("car_query") and d.get("year"):
-            avgs = _db.get_averages(d["car_query"])
-            grp = title_group(d.get("title_type"))
-            avg_key = (d["year"], grp)
-            if avg_key not in avgs:
-                avg_key = (d["year"], "all")
-            if avg_key in avgs:
-                avg_lower, avg_higher = avgs[avg_key]
-                mileage = d.get("mileage") or 0
-                avg_price = avg_lower if mileage <= mileage_threshold else avg_higher
-        d["avg_price"] = avg_price
-        d["deal_score"] = None
-        d["deal_grade"] = None
-        d["score_breakdown"] = None
-        d["price_history"] = None
-        d["nhtsa_rating"] = None
-        d["vin_data"] = None
-        d["market_range"] = None
-        d["recalls"] = []
-        d["recalls_count"] = 0
-        d["mpg_data"] = None
-        d["monthly_fuel_cost"] = None
-        d["vin_mismatches"] = None
-        d["image_urls"] = json.loads(d["image_urls"]) if d.get("image_urls") else []
-        enriched.append(d)
+    # Use fully enriched deal data when available
+    for href in _favorites:
+        if href in deals_by_href:
+            enriched.append(deals_by_href[href])
+
+    # For favorites not in _deals (e.g. scored out or stale), fall back to DB
+    missing_hrefs = [h for h in _favorites if h not in deals_by_href]
+    if missing_hrefs and _db:
+        config = load_config()
+        mileage_threshold = config.get("MileageMax") or 150000
+        fav_listings = _db.get_listings_by_hrefs(missing_hrefs)
+        for row in fav_listings:
+            d = dict(row)
+            avg_price = 0
+            if d.get("car_query") and d.get("year"):
+                avgs = _db.get_averages(d["car_query"])
+                grp = title_group(d.get("title_type"))
+                avg_key = (d["year"], grp)
+                if avg_key not in avgs:
+                    avg_key = (d["year"], "all")
+                if avg_key in avgs:
+                    avg_lower, avg_higher = avgs[avg_key]
+                    mileage = d.get("mileage") or 0
+                    avg_price = avg_lower if mileage <= mileage_threshold else avg_higher
+            d["avg_price"] = avg_price
+            d["deal_score"] = None
+            d["deal_grade"] = None
+            d["score_breakdown"] = None
+            d["price_history"] = None
+            d["nhtsa_rating"] = None
+            d["vin_data"] = None
+            d["market_range"] = None
+            d["recalls"] = []
+            d["recalls_count"] = 0
+            d["mpg_data"] = None
+            d["monthly_fuel_cost"] = None
+            d["vin_mismatches"] = None
+            d["image_urls"] = json.loads(d["image_urls"]) if d.get("image_urls") else []
+            enriched.append(d)
+
+    # Sort favorites by score (best first), falling back to price
+    enriched.sort(key=lambda d: d.get("deal_score") or 0, reverse=True)
 
     # Enrich with price history
     deal_hrefs = [d["href"] for d in enriched]
     price_histories = _db.get_price_history_batch(deal_hrefs) if _db else {}
     for d in enriched:
-        d["price_history"] = price_histories.get(d["href"])
+        d["price_history"] = price_histories.get(d["href"], d.get("price_history"))
 
     # Enrich with VIN decode data
     fav_vins = [d.get("vin") for d in enriched if d.get("vin")]
     vin_data = _db.get_vin_data_batch(fav_vins) if _db and fav_vins else {}
     for d in enriched:
-        d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
+        if not d.get("vin_data"):
+            d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
+
+    # Enrich with market value ranges
+    _market_cache = {}
+    for d in enriched:
+        if d.get("market_range"):
+            continue
+        if not d.get("car_query") or not d.get("year"):
+            d["market_range"] = None
+            continue
+        grp = title_group(d.get("title_type"))
+        cache_key = (d["car_query"], d["year"], grp)
+        if cache_key not in _market_cache:
+            prices = _db.get_market_prices(d["car_query"], d["year"], grp) if _db else []
+            _market_cache[cache_key] = compute_market_range(prices)
+        d["market_range"] = _market_cache[cache_key]
 
     return render_template(
         "favorites.html",
@@ -260,7 +289,7 @@ def export_csv():
 
     filtered = []
     for d in _deals:
-        if d["href"] in _deleted:
+        if d["href"] in _deleted or d["href"] in _favorites:
             continue
         if source_filter and d["source"] != source_filter:
             continue
@@ -410,6 +439,161 @@ def fetch_valuations():
         return jsonify({"ok": False, "error": str(e)})
 
 
+# ── Discover ──────────────────────────────────────────────────────
+
+@app.route("/discover")
+def discover_page():
+    category_filter = request.args.get("category", "")
+    source_filter = request.args.get("source", "")
+    title_filter = request.args.get("title", "")
+    sort_by = request.args.get("sort", "score")
+    search_query = request.args.get("q", "").strip().lower()
+    year_min = request.args.get("year_min", "")
+    year_max = request.args.get("year_max", "")
+    mileage_min = request.args.get("mileage_min", "")
+    mileage_max = request.args.get("mileage_max", "")
+    price_min = request.args.get("price_min", "")
+    price_max = request.args.get("price_max", "")
+
+    def _int(val):
+        try:
+            return int(val) if val else None
+        except ValueError:
+            return None
+
+    year_min_val = _int(year_min)
+    year_max_val = _int(year_max)
+    mileage_min_val = _int(mileage_min)
+    mileage_max_val = _int(mileage_max)
+    price_min_val = _int(price_min)
+    price_max_val = _int(price_max)
+
+    filtered = []
+    for d in _discovery_deals:
+        if d["href"] in _deleted or d["href"] in _favorites:
+            continue
+        if category_filter and d.get("category") != category_filter:
+            continue
+        if source_filter and d["source"] != source_filter:
+            continue
+        if title_filter:
+            dt = (d.get("title_type") or "").lower()
+            if title_filter == "clean" and dt != "clean":
+                continue
+            elif title_filter == "rebuilt" and dt != "rebuilt":
+                continue
+            elif title_filter == "salvage" and dt != "salvage":
+                continue
+            elif title_filter == "unknown" and dt not in ("", "unknown"):
+                continue
+        if search_query:
+            searchable = " ".join([
+                d.get("car_name") or "", d.get("car_query") or "",
+                d.get("location") or "", d.get("trim") or "",
+            ]).lower()
+            if search_query not in searchable:
+                continue
+        if year_min_val and (not d.get("year") or d["year"] < year_min_val):
+            continue
+        if year_max_val and (not d.get("year") or d["year"] > year_max_val):
+            continue
+        if mileage_min_val and (not d.get("mileage") or d["mileage"] < mileage_min_val):
+            continue
+        if mileage_max_val and (not d.get("mileage") or d["mileage"] > mileage_max_val):
+            continue
+        if price_min_val and (not d.get("price") or d["price"] < price_min_val):
+            continue
+        if price_max_val and (not d.get("price") or d["price"] > price_max_val):
+            continue
+        filtered.append(d)
+
+    # Sorting
+    if sort_by == "price":
+        filtered.sort(key=lambda d: d["price"])
+    elif sort_by == "mileage":
+        filtered.sort(key=lambda d: d.get("mileage") or 999999)
+    elif sort_by == "score":
+        filtered.sort(key=lambda d: d.get("deal_score", 0), reverse=True)
+    else:
+        filtered.sort(key=lambda d: d["price"] - d.get("avg_price", d["price"]))
+
+    # Enrich with price history
+    deal_hrefs = [d["href"] for d in filtered]
+    price_histories = _db.get_price_history_batch(deal_hrefs) if _db else {}
+    for d in filtered:
+        d["price_history"] = price_histories.get(d["href"])
+
+    # Enrich with VIN decode data
+    deal_vins = [d["vin"] for d in filtered if d.get("vin")]
+    vin_data = _db.get_vin_data_batch(deal_vins) if _db and deal_vins else {}
+    for d in filtered:
+        d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
+
+    # Enrich with market value ranges
+    _market_cache = {}
+    for d in filtered:
+        if not d.get("car_query") or not d.get("year"):
+            d["market_range"] = None
+            continue
+        grp = title_group(d.get("title_type"))
+        cache_key = (d["car_query"], d["year"], grp)
+        if cache_key not in _market_cache:
+            prices = _db.get_market_prices(d["car_query"], d["year"], grp) if _db else []
+            _market_cache[cache_key] = compute_market_range(prices)
+        d["market_range"] = _market_cache[cache_key]
+
+    sources = sorted(set(d["source"] for d in _discovery_deals))
+    cars = sorted(set(d["car_query"] for d in _discovery_deals))
+
+    # Category counts for tab badges
+    category_counts = {}
+    for d in _discovery_deals:
+        cat = d.get("category", "")
+        if cat:
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+    return render_template(
+        "discover.html",
+        deals=filtered,
+        favorites=_favorites,
+        sources=sources,
+        cars=cars,
+        categories=DISCOVERY_CATEGORIES,
+        category_counts=category_counts,
+        current_category=category_filter,
+        current_source=source_filter,
+        current_title=title_filter,
+        current_sort=sort_by,
+        total=len(filtered),
+        total_all=len(_discovery_deals),
+        current_search=search_query,
+        current_year_min=year_min,
+        current_year_max=year_max,
+        current_mileage_min=mileage_min,
+        current_mileage_max=mileage_max,
+        current_price_min=price_min,
+        current_price_max=price_max,
+    )
+
+
+@app.route("/api/track-car", methods=["POST"])
+def track_car():
+    """Promote a discovery car to DesiredCar in config."""
+    data = request.json or {}
+    car_name = data.get("car_name", "").strip()
+    if not car_name:
+        return jsonify({"ok": False, "error": "No car name provided"}), 400
+
+    config = load_config()
+    existing = [c.lower().strip() for c in config.get("DesiredCar", [])]
+    if car_name.lower().strip() in existing:
+        return jsonify({"ok": True, "message": "Already tracked"})
+
+    config["DesiredCar"].append(car_name)
+    save_config(config)
+    return jsonify({"ok": True, "message": f"Now tracking {car_name}"})
+
+
 # ── API endpoints ─────────────────────────────────────────────────
 
 @app.route("/api/favorite", methods=["POST"])
@@ -491,7 +675,25 @@ def price_history_api(href):
 @app.route("/settings")
 def settings():
     config = load_config()
-    return render_template("settings.html", config=config)
+    disc_cars = load_discovery_cars(config)
+    disc_config = config.get("DiscoveryCars", {})
+    # Count cars per category
+    cat_counts = {}
+    for c in disc_cars:
+        cat_counts[c["category"]] = cat_counts.get(c["category"], 0) + 1
+    return render_template(
+        "settings.html", config=config,
+        discovery_categories=DISCOVERY_CATEGORIES,
+        discovery_cat_counts=cat_counts,
+        discovery_enabled=disc_config is not False and (
+            not isinstance(disc_config, dict)
+            or disc_config.get("enabled", True)),
+        discovery_disabled_cats=set(
+            disc_config.get("disabled_categories", [])
+            if isinstance(disc_config, dict) else []),
+        discovery_custom_cars=disc_config.get("custom_cars", [])
+            if isinstance(disc_config, dict) else [],
+    )
 
 
 @app.route("/api/settings", methods=["POST"])
@@ -517,6 +719,16 @@ def update_settings():
                 config["Sources"][name]["enabled"] = enabled
     if "sell_cars" in data:
         config["SellCars"] = data["sell_cars"]
+    if "discovery" in data:
+        disc = data["discovery"]
+        disc_config = config.get("DiscoveryCars", {})
+        if not isinstance(disc_config, dict):
+            disc_config = {}
+        disc_config["enabled"] = disc.get("enabled", True)
+        disc_config["disabled_categories"] = disc.get(
+            "disabled_categories", [])
+        disc_config["custom_cars"] = disc.get("custom_cars", [])
+        config["DiscoveryCars"] = disc_config
 
     save_config(config)
     return jsonify({"ok": True})
@@ -623,11 +835,13 @@ def upload_cookies():
 def trigger_scrape():
     from scraper_worker import start_scrape
 
-    def on_complete(deals, sell_data=None):
-        global _deals, _sell_data
+    def on_complete(deals, sell_data=None, discovery_deals=None):
+        global _deals, _sell_data, _discovery_deals
         _deals = deals
         if sell_data is not None:
             _sell_data = sell_data
+        if discovery_deals is not None:
+            _discovery_deals = discovery_deals
 
     started, msg = start_scrape(on_complete=on_complete)
     return jsonify({"started": started, "message": msg})
@@ -637,11 +851,13 @@ def trigger_scrape():
 def trigger_enrich():
     from scraper_worker import start_enrich
 
-    def on_complete(deals, sell_data=None):
-        global _deals, _sell_data
+    def on_complete(deals, sell_data=None, discovery_deals=None):
+        global _deals, _sell_data, _discovery_deals
         _deals = deals
         if sell_data is not None:
             _sell_data = sell_data
+        if discovery_deals is not None:
+            _discovery_deals = discovery_deals
 
     limit = request.json.get("limit", 100) if request.is_json else 100
     started, msg = start_enrich(on_complete=on_complete, limit=limit)
@@ -668,12 +884,13 @@ def scraper_health():
 
 # ── Startup ───────────────────────────────────────────────────────
 
-def start_web_ui(deals, port=5001, sell_data=None):
+def start_web_ui(deals, port=5001, sell_data=None, discovery_deals=None):
     """Launch the Flask web UI with the given deals list."""
-    global _db, _deals, _sell_data, _favorites, _deleted
+    global _db, _deals, _sell_data, _discovery_deals, _favorites, _deleted
 
     _deals = deals
     _sell_data = sell_data or []
+    _discovery_deals = discovery_deals or []
     _db = Database()
     _db.open()
     _favorites = _load_set_from_file(_favorites_file)

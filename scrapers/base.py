@@ -18,11 +18,11 @@ SCREENSHOTS_DIR = Path(__file__).parent.parent / "screenshots"
 class BaseScraper(ABC):
     SOURCE_NAME = ""
 
-    def __init__(self, driver, config, insert_fn):
+    def __init__(self, driver, config, insert_fn, car_list=None):
         self.driver = driver
         self.config = config
         self.insert = insert_fn
-        self.desired_cars = get_all_search_queries(config)
+        self.desired_cars = car_list if car_list is not None else get_all_search_queries(config)
         self.min_price = config["MinPrice"]
         self.max_price = config["MaxPrice"]
         self.scroll_count = config.get("ScrollCount", 10)

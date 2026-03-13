@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from config import load_config, get_all_search_queries
+from config import load_config, get_all_search_queries, load_discovery_cars, get_discovery_batch
 from database import Database
 from analysis import clean_listings, calculate_averages, find_deals, find_sell_data
 from notifications import notify_scrape_complete
@@ -103,6 +103,38 @@ def run_scrapers(config, db):
     finally:
         driver.quit()
 
+    # Discovery scrape phase
+    disc_cars = load_discovery_cars(config)
+    if disc_cars:
+        logging.info("=== Starting discovery scrape phase ===")
+        disc_driver = create_driver(proxy_config=config.get("Proxy"))
+
+        def disc_insert_fn(**kwargs):
+            db.insert_listing(**kwargs, deleted_set=deleted_set,
+                             is_discovery=True)
+
+        try:
+            for name in enabled:
+                scraper_cls = ALL_SCRAPERS.get(name)
+                if not scraper_cls:
+                    continue
+                batch = get_discovery_batch(config, name, db)
+                if not batch:
+                    continue
+                logging.info(
+                    f"[discovery:{name}] Scraping {len(batch)} car models")
+                try:
+                    scraper = scraper_cls(disc_driver, config,
+                                         disc_insert_fn, car_list=batch)
+                    scraper.scrape()
+                    logging.info(
+                        f"[discovery:{name}] Found "
+                        f"{scraper.listing_count} listings")
+                except Exception as e:
+                    logging.error(f"[discovery:{name}] Failed: {e}")
+        finally:
+            disc_driver.quit()
+
 
 def run_analysis(config, db):
     """Clean listings, compute averages, and find deals."""
@@ -146,6 +178,22 @@ def main():
         # Compute sell pricing recommendations
         sell_data = find_sell_data(db, config.get("SellCars", []), config)
 
+        # Compute discovery deals
+        discovery_deals = []
+        disc_cars = load_discovery_cars(config)
+        if disc_cars:
+            disc_names = [c["name"] for c in disc_cars]
+            with_data = [c for c in disc_names
+                         if db.has_listings_for_query(c)]
+            if with_data:
+                mileage_threshold = config.get("MileageMax") or 150000
+                clean_listings(db, with_data)
+                calculate_averages(db, with_data, mileage_threshold)
+                discovery_deals = find_deals(
+                    db, with_data, config, is_discovery=True)
+                logging.info(
+                    f"Found {len(discovery_deals)} discovery deals.")
+
         if not skip_scrape:
             try:
                 notify_scrape_complete(config, deals)
@@ -154,8 +202,9 @@ def main():
     finally:
         db.close()
 
-    if deals or sell_data:
-        start_web_ui(deals, sell_data=sell_data)
+    if deals or sell_data or discovery_deals:
+        start_web_ui(deals, sell_data=sell_data,
+                     discovery_deals=discovery_deals)
     else:
         logging.info("No deals found. Adjust config or run again later.")
 

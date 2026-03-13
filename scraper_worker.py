@@ -6,7 +6,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from config import load_config, get_all_search_queries
+from config import (load_config, get_all_search_queries,
+                    load_discovery_cars, get_discovery_batch)
 from database import Database
 from driver import create_driver
 from scrapers import ALL_SCRAPERS
@@ -150,6 +151,20 @@ def _run_enrich(on_complete, limit):
         _status.update({"progress": 90, "message": "Finding deals..."})
         deals = find_deals(db, all_cars, config)
         sell_data = find_sell_data(db, config.get("SellCars", []), config)
+
+        # Discovery deals
+        discovery_deals = []
+        disc_cars = load_discovery_cars(config)
+        if disc_cars:
+            disc_names = [c["name"] for c in disc_cars]
+            with_data = [c for c in disc_names
+                         if db.has_listings_for_query(c)]
+            if with_data:
+                clean_listings(db, with_data)
+                calculate_averages(db, with_data, mileage_threshold)
+                discovery_deals = find_deals(
+                    db, with_data, config, is_discovery=True)
+
         db.close()
 
         _status.update({
@@ -162,7 +177,8 @@ def _run_enrich(on_complete, limit):
         })
 
         if on_complete:
-            on_complete(deals, sell_data)
+            on_complete(deals, sell_data,
+                        discovery_deals=discovery_deals)
 
     except Exception as e:
         logging.error(f"Background enrichment failed: {e}")
@@ -320,6 +336,51 @@ def _run_scrape(on_complete):
             if stale:
                 logging.info(f"Marked {stale} stale {source} listings")
 
+        # Phase 1b: Discovery scrape
+        discovery_cars = load_discovery_cars(config)
+        if discovery_cars:
+            _status.update({
+                "phase": "discovery",
+                "progress": 73,
+                "message": "Running discovery scrape...",
+            })
+
+            # Create a new driver for discovery (primary one is quit above)
+            disc_driver = create_driver(proxy_config=config.get("Proxy"))
+            try:
+                def disc_insert_fn(**kwargs):
+                    db.insert_listing(**kwargs, deleted_set=deleted_set,
+                                     is_discovery=True)
+
+                for i, name in enumerate(enabled):
+                    scraper_cls = ALL_SCRAPERS.get(name)
+                    if not scraper_cls:
+                        continue
+
+                    batch = get_discovery_batch(config, name, db)
+                    if not batch:
+                        continue
+
+                    _status.update({
+                        "source": f"discovery:{name}",
+                        "message": (f"Discovery: {name} "
+                                    f"({len(batch)} cars)..."),
+                    })
+
+                    try:
+                        scraper = scraper_cls(disc_driver, config,
+                                             disc_insert_fn, car_list=batch)
+                        scraper.scrape()
+                        logging.info(
+                            f"[discovery:{name}] Found "
+                            f"{scraper.listing_count} listings "
+                            f"from {len(batch)} car models")
+                    except Exception as e:
+                        logging.error(
+                            f"[discovery:{name}] Failed: {e}")
+            finally:
+                disc_driver.quit()
+
         # Phase 2: Analysis
         _status.update({
             "phase": "analyzing",
@@ -343,6 +404,21 @@ def _run_scrape(on_complete):
         deals = find_deals(db, all_cars, config)
         sell_data = find_sell_data(db, config.get("SellCars", []), config)
 
+        # Discovery analysis
+        discovery_deals = []
+        disc_cars = load_discovery_cars(config)
+        if disc_cars:
+            _status.update({"progress": 95,
+                            "message": "Scoring discovery deals..."})
+            disc_names = [c["name"] for c in disc_cars]
+            with_data = [c for c in disc_names
+                         if db.has_listings_for_query(c)]
+            if with_data:
+                clean_listings(db, with_data)
+                calculate_averages(db, with_data, mileage_threshold)
+                discovery_deals = find_deals(
+                    db, with_data, config, is_discovery=True)
+
         db.close()
 
         _status.update({
@@ -361,7 +437,8 @@ def _run_scrape(on_complete):
             logging.error(f"Discord notification failed: {e}")
 
         if on_complete:
-            on_complete(deals, sell_data)
+            on_complete(deals, sell_data,
+                        discovery_deals=discovery_deals)
 
     except Exception as e:
         logging.error(f"Background scrape failed: {e}")

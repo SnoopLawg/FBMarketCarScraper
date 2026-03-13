@@ -54,7 +54,14 @@ class Database:
                 accident_history TEXT,
                 distance TEXT,
                 title_type TEXT,
-                description TEXT
+                description TEXT,
+                vin TEXT,
+                enriched_at TEXT,
+                owner_count TEXT,
+                carfax_url TEXT,
+                listed_at TEXT,
+                image_urls TEXT,
+                is_discovery INTEGER DEFAULT 0
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_href_source ON listings(href, source);
             CREATE INDEX IF NOT EXISTS idx_listings_car_query ON listings(car_query);
@@ -174,6 +181,12 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_valuation_cache_key
                 ON valuation_cache(car_key, source);
+
+            CREATE TABLE IF NOT EXISTS discovery_rotation (
+                source TEXT PRIMARY KEY,
+                last_index INTEGER DEFAULT 0,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         self.conn.commit()
 
@@ -285,6 +298,16 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        if "is_discovery" not in columns:
+            logging.info("Migrating DB: adding is_discovery column...")
+            try:
+                self.cur.execute(
+                    "ALTER TABLE listings ADD COLUMN is_discovery INTEGER DEFAULT 0")
+                self.conn.commit()
+                logging.info("is_discovery migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Migrate vehicle_ratings to include MPG columns
         self.cur.execute("PRAGMA table_info(vehicle_ratings)")
         vr_rows = self.cur.fetchall()
@@ -332,7 +355,7 @@ class Database:
                        location, mileage_raw, source, deleted_set=None,
                        trim="", seller="", condition="", deal_rating="",
                        accident_history="", distance="", title_type="",
-                       owner_count="", carfax_url=""):
+                       owner_count="", carfax_url="", is_discovery=False):
         """Insert or update a listing, parsing raw price/mileage/year."""
         href = self._normalize_href(href)
 
@@ -367,9 +390,10 @@ class Database:
                     (href, image_url, price, car_name, car_query, location,
                      mileage, year, source, updated_at,
                      trim, seller, condition, deal_rating, accident_history,
-                     distance, title_type, owner_count, carfax_url)
+                     distance, title_type, owner_count, carfax_url,
+                     is_discovery)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(href, source) DO UPDATE SET
                     price = excluded.price,
                     image_url = COALESCE(excluded.image_url, image_url),
@@ -381,12 +405,14 @@ class Database:
                     distance = COALESCE(excluded.distance, distance),
                     title_type = COALESCE(excluded.title_type, title_type),
                     owner_count = COALESCE(excluded.owner_count, owner_count),
-                    carfax_url = COALESCE(excluded.carfax_url, carfax_url)
+                    carfax_url = COALESCE(excluded.carfax_url, carfax_url),
+                    is_discovery = MIN(is_discovery, excluded.is_discovery)
             """, (href, image_url, price_val, car_name, car_query, location,
                   mileage_val, year_val, source,
                   trim or None, seller or None, condition or None,
                   deal_rating or None, accident_history or None, distance or None,
-                  title_type or None, owner_count or None, carfax_url or None))
+                  title_type or None, owner_count or None, carfax_url or None,
+                  1 if is_discovery else 0))
             self.conn.commit()
         except sqlite3.Error as e:
             logging.error(f"DB insert error: {e}")
@@ -1202,3 +1228,35 @@ class Database:
             }
 
         return result
+
+    # ── Discovery Rotation ────────────────────────────────────────
+
+    def get_rotation_index(self, source):
+        """Return the last rotation index for a source."""
+        self.cur.execute(
+            "SELECT last_index FROM discovery_rotation WHERE source = ?",
+            (source,))
+        row = self.cur.fetchone()
+        return row["last_index"] if row else 0
+
+    def update_rotation_index(self, source, new_index):
+        """Upsert the rotation index for a source."""
+        try:
+            self.cur.execute("""
+                INSERT INTO discovery_rotation (source, last_index, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(source) DO UPDATE SET
+                    last_index = excluded.last_index,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (source, new_index))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB update rotation index error: {e}")
+
+    def has_listings_for_query(self, car_query):
+        """Check if any non-deleted listings exist for a car query."""
+        self.cur.execute(
+            "SELECT 1 FROM listings "
+            "WHERE car_query = ? AND deleted_at IS NULL LIMIT 1",
+            (car_query,))
+        return self.cur.fetchone() is not None

@@ -204,6 +204,67 @@
     </div>
 
     <div class="panel">
+        <div class="panel-title">Discovery</div>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+            Automatically scrape ~65 popular car models across categories. Deals appear on the <a href="/discover" style="color:var(--accent)">Discover</a> page.
+        </p>
+
+        <div class="source-row">
+            <span class="source-name">Enable Discovery</span>
+            <label class="toggle">
+                <input type="checkbox" id="discovery-enabled"
+                       {{ 'checked' if discovery_enabled else '' }}>
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <div id="discovery-categories" style="margin-top:12px">
+            {% for cat_id, cat_label in discovery_categories.items() %}
+            <div class="source-row">
+                <span style="font-size:14px;font-weight:500">
+                    {{ cat_label }}
+                    <span style="font-size:12px;color:var(--text-muted);font-weight:400">
+                        ({{ discovery_cat_counts.get(cat_id, 0) }} cars)
+                    </span>
+                </span>
+                <label class="toggle">
+                    <input type="checkbox" data-disc-cat="{{ cat_id }}"
+                           {{ '' if cat_id in discovery_disabled_cats else 'checked' }}>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div style="margin-top:16px">
+            <div class="panel-title" style="font-size:12px;margin-bottom:8px">Custom Discovery Cars</div>
+            <div id="disc-custom-list">
+                {% for cc in discovery_custom_cars %}
+                <div class="car-tag disc-custom-tag">
+                    <span class="disc-custom-name">{{ cc.name }}</span>
+                    <span class="disc-custom-cat" style="display:none">{{ cc.category }}</span>
+                    <span class="remove" onclick="this.parentElement.remove()">&times;</span>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="add-row" style="margin-top:8px">
+                <input type="text" class="input" id="disc-custom-name"
+                       placeholder="Car name (e.g. Lexus RX 350)"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();addDiscCustom()}">
+                <select class="input" id="disc-custom-cat" style="width:auto">
+                    {% for cat_id, cat_label in discovery_categories.items() %}
+                    <option value="{{ cat_id }}">{{ cat_label }}</option>
+                    {% endfor %}
+                </select>
+                <button class="btn btn-ghost" onclick="addDiscCustom()">Add</button>
+            </div>
+        </div>
+
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px"
+                onclick="resetDiscovery()">Reset to Defaults</button>
+    </div>
+
+    <div class="panel">
         <div class="panel-title">Sources</div>
         {% for name, src in config.Sources.items() %}
         <div class="source-row">
@@ -302,6 +363,42 @@
         return cars;
     }
 
+    function addDiscCustom() {
+        const nameEl = document.getElementById('disc-custom-name');
+        const catEl = document.getElementById('disc-custom-cat');
+        const name = nameEl.value.trim();
+        if (!name) return;
+        const tag = document.createElement('div');
+        tag.className = 'car-tag disc-custom-tag';
+        tag.innerHTML = `<span class="disc-custom-name">${name}</span>`
+            + `<span class="disc-custom-cat" style="display:none">${catEl.value}</span>`
+            + `<span class="remove" onclick="this.parentElement.remove()">&times;</span>`;
+        document.getElementById('disc-custom-list').appendChild(tag);
+        nameEl.value = '';
+        nameEl.focus();
+    }
+
+    function getDiscoverySettings() {
+        const enabled = document.getElementById('discovery-enabled').checked;
+        const disabledCats = [];
+        document.querySelectorAll('[data-disc-cat]').forEach(el => {
+            if (!el.checked) disabledCats.push(el.dataset.discCat);
+        });
+        const customCars = [];
+        document.querySelectorAll('.disc-custom-tag').forEach(el => {
+            const name = el.querySelector('.disc-custom-name').textContent.trim();
+            const cat = el.querySelector('.disc-custom-cat').textContent.trim();
+            if (name) customCars.push({name, category: cat || 'suv'});
+        });
+        return {enabled, disabled_categories: disabledCats, custom_cars: customCars};
+    }
+
+    function resetDiscovery() {
+        document.getElementById('discovery-enabled').checked = true;
+        document.querySelectorAll('[data-disc-cat]').forEach(el => el.checked = true);
+        document.getElementById('disc-custom-list').innerHTML = '';
+    }
+
     async function saveSettings() {
         const sources = {};
         document.querySelectorAll('[data-source]').forEach(el => {
@@ -317,6 +414,7 @@
             location_filter: document.getElementById('location-filter').value,
             sources: sources,
             sell_cars: getSellCars(),
+            discovery: getDiscoverySettings(),
         };
 
         await fetch('/api/settings', {

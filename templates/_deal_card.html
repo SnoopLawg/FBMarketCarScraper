@@ -240,6 +240,9 @@
 
         <div class="deal-actions">
             <a class="btn btn-primary" href="{{ deal.href }}" target="_blank">View Listing</a>
+            {% if deal.is_discovery %}
+            <button class="btn btn-ghost" onclick="trackCar('{{ deal.car_query }}', this)">Track</button>
+            {% endif %}
             {% if not show_save %}
             <button class="btn btn-danger"
                     onclick="removeFav('{{ deal.href }}', '{{ card_id }}')">

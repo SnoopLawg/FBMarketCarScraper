@@ -646,9 +646,10 @@ def _dedup_deals(deals):
 
 # ── Main entry point ─────────────────────────────────────────────
 
-def find_deals(db, desired_cars, config):
+def find_deals(db, desired_cars, config, is_discovery=False):
     """Score all candidates and return those above the minimum threshold."""
-    logging.info("Assessing deals...")
+    logging.info("Assessing deals..." if not is_discovery
+                 else "Assessing discovery deals...")
     deals = []
     mileage_threshold = config.get("MileageMax") or 150000
     location_filter = config.get("LocationFilter", "")
@@ -706,6 +707,12 @@ def find_deals(db, desired_cars, config):
         vin_data_cache = decode_vins_batch_cached(db, list(all_vins))
     else:
         vin_data_cache = {}
+
+    # Pre-compute category map for discovery deals
+    disc_cat_map = None
+    if is_discovery:
+        from config import get_discovery_category_map
+        disc_cat_map = get_discovery_category_map(config)
 
     for car_query in desired_cars:
         avg_table = db.get_averages(car_query)  # (year, title_grp) → (lo, hi)
@@ -851,7 +858,7 @@ def find_deals(db, desired_cars, config):
                     mpg_data["mpg_combined"])
 
             if score >= min_score:
-                deals.append({
+                deal = {
                     "href": href,
                     "price": price,
                     "mileage": mileage,
@@ -893,7 +900,12 @@ def find_deals(db, desired_cars, config):
                     "service_history": service_history,
                     "carfax_url": row["carfax_url"] or "",
                     "image_urls": json.loads(row["image_urls"]) if row["image_urls"] else [],
-                })
+                    "is_discovery": is_discovery,
+                }
+                if is_discovery and disc_cat_map:
+                    deal["category"] = disc_cat_map.get(
+                        car_query.lower().strip(), "")
+                deals.append(deal)
 
     # Deduplicate — same car posted under multiple URLs
     before = len(deals)

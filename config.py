@@ -57,3 +57,116 @@ def save_config(config, path=None):
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
     logging.info("Config saved.")
+
+
+# ── Discovery Cars ──────────────────────────────────────────────
+
+DISCOVERY_DEFAULTS_PATH = SCRIPT_DIR / "discovery_cars_default.json"
+
+DISCOVERY_CATEGORIES = {
+    "suv": "SUVs",
+    "truck": "Trucks",
+    "sedan": "Sedans",
+    "hatch_wagon": "Hatchbacks & Wagons",
+    "minivan": "Minivans",
+    "sports": "Sports Cars",
+}
+
+
+def load_discovery_cars(config):
+    """Return list of {name, category} dicts for discovery scraping.
+
+    Uses DiscoveryCars overrides from config if present, else loads
+    the built-in default list.  Filters out any car already in DesiredCar.
+    """
+    disc_config = config.get("DiscoveryCars", {})
+
+    # Disabled entirely
+    if disc_config is False or (isinstance(disc_config, dict)
+                                and not disc_config.get("enabled", True)):
+        return []
+
+    # Load base list
+    if isinstance(disc_config, dict) and "cars" in disc_config:
+        cars = list(disc_config["cars"])
+    else:
+        try:
+            with open(DISCOVERY_DEFAULTS_PATH, "r") as f:
+                cars = json.load(f)
+        except FileNotFoundError:
+            logging.warning("discovery_cars_default.json not found")
+            return []
+
+    # Apply disabled_categories filter
+    disabled_cats = set()
+    if isinstance(disc_config, dict):
+        disabled_cats = set(disc_config.get("disabled_categories", []))
+    if disabled_cats:
+        cars = [c for c in cars if c["category"] not in disabled_cats]
+
+    # Apply removed_cars filter
+    removed = set()
+    if isinstance(disc_config, dict):
+        removed = set(r.lower().strip()
+                      for r in disc_config.get("removed_cars", []))
+    if removed:
+        cars = [c for c in cars if c["name"].lower().strip() not in removed]
+
+    # Add custom_cars
+    if isinstance(disc_config, dict):
+        for custom in disc_config.get("custom_cars", []):
+            if custom.get("name"):
+                cars.append(custom)
+
+    # Filter out anything already in DesiredCar (tracked cars)
+    tracked = set(n.lower().strip() for n in config.get("DesiredCar", []))
+    # Also filter out sell cars
+    for sc in config.get("SellCars", []):
+        if sc.get("name"):
+            tracked.add(sc["name"].lower().strip())
+
+    cars = [c for c in cars if c["name"].lower().strip() not in tracked]
+
+    return cars
+
+
+def get_discovery_batch(config, source, db):
+    """Return car name strings for this discovery run.
+
+    Facebook gets a smaller batch (12) due to aggressive anti-bot.
+    Other sources get 30.  Wraps around when reaching end of list.
+    Rotation state is persisted in DB so it survives restarts.
+    """
+    cars = load_discovery_cars(config)
+    if not cars:
+        return []
+
+    disc_config = config.get("DiscoveryCars", {})
+    if isinstance(disc_config, dict):
+        fb_batch = disc_config.get("fb_batch_size", 12)
+        other_batch = disc_config.get("batch_size", 30)
+    else:
+        fb_batch = 12
+        other_batch = 30
+
+    batch_size = fb_batch if source == "facebook" else other_batch
+    total = len(cars)
+
+    idx = db.get_rotation_index(source)
+    # Build the batch, wrapping around
+    batch = []
+    for i in range(batch_size):
+        pos = (idx + i) % total
+        batch.append(cars[pos]["name"])
+
+    # Update rotation index for next run
+    new_idx = (idx + batch_size) % total
+    db.update_rotation_index(source, new_idx)
+
+    return batch
+
+
+def get_discovery_category_map(config):
+    """Return {car_name_lower: category_id} lookup dict."""
+    cars = load_discovery_cars(config)
+    return {c["name"].lower().strip(): c["category"] for c in cars}
