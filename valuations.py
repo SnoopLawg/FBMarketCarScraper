@@ -8,6 +8,7 @@ values. Results are cached in the database for 7 days.
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -365,10 +366,18 @@ def _fetch_edmunds(sell_car, zip_code):
         # Extract __PRELOADED_STATE__ from HTML source (JS access is unreliable
         # because the variable may be consumed and deleted by the app)
         page_source = driver.page_source
+        logging.info("Edmunds: page title = %s, url = %s", driver.title, driver.current_url)
         marker = "window.__PRELOADED_STATE__ = "
         idx = page_source.find(marker)
         if idx < 0:
             logging.warning("Edmunds: no __PRELOADED_STATE__ in page source")
+            # Save screenshot for debugging
+            try:
+                os.makedirs("screenshots", exist_ok=True)
+                driver.save_screenshot("screenshots/edmunds_debug.png")
+                logging.info("Edmunds: debug screenshot saved")
+            except Exception:
+                pass
             return None
 
         json_start = idx + len(marker)
@@ -628,6 +637,7 @@ def _fetch_cargurus(sell_car, zip_code):
 
         # Try entity ID from config first (most reliable)
         entity_id = sell_car.get("cargurus_entity_id")
+        logging.info("CarGurus: entity_id from config = %s, slug = %s", entity_id, slug)
         if entity_id:
             trends_url = (
                 f"https://www.cargurus.com/research/price-trends/"
@@ -635,8 +645,17 @@ def _fetch_cargurus(sell_car, zip_code):
             )
             driver.get(trends_url)
             time.sleep(4)
+            logging.info("CarGurus: page title = %s, url = %s", driver.title, driver.current_url)
             if "not found" not in driver.title.lower():
                 return _extract_cargurus_trends(driver, year, name, condition)
+            else:
+                # Save screenshot for debugging
+                try:
+                    os.makedirs("screenshots", exist_ok=True)
+                    driver.save_screenshot("screenshots/cargurus_debug.png")
+                    logging.info("CarGurus: debug screenshot saved")
+                except Exception:
+                    pass
 
         # Fallback: try slug-only URL (may redirect to correct page)
         trends_url = f"https://www.cargurus.com/research/price-trends/{slug}"
