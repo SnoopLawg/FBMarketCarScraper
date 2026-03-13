@@ -213,6 +213,15 @@ async function decodeVin(vin, btn) {
     }
 }
 
+function carouselImgError(img) {
+    const carousel = img.closest('.carousel');
+    const fallback = carousel && carousel.dataset.fallback;
+    if (fallback && img.src !== fallback) {
+        img.src = fallback;
+    } else {
+        img.style.display = 'none';
+    }
+}
 function carouselNav(btn, dir) {
     const carousel = btn.closest('.carousel');
     const slides = carousel.querySelectorAll('.carousel-slide');

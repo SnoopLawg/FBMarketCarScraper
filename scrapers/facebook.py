@@ -245,11 +245,15 @@ class FacebookScraper(BaseScraper):
         Filters for FB CDN images (scontent) and skips tiny icons/avatars.
         """
         try:
-            # Use regex to find scontent image URLs — faster than full parse
+            from html import unescape
+            # Match scontent URLs including &amp; sequences (HTML-encoded &)
+            # so we capture the full query string with auth tokens
             urls = re.findall(
-                r'https://scontent[^"\'&\s]+\.(?:jpg|jpeg|png|webp)[^"\'&\s]*',
+                r'https://scontent[^"\'\s]+\.(?:jpg|jpeg|png|webp)(?:[^"\'\s]*)',
                 page_source, re.I
             )
+            # Decode HTML entities (&amp; → &) in captured URLs
+            urls = [unescape(u) for u in urls]
             # Deduplicate while preserving order
             seen = set()
             unique = []

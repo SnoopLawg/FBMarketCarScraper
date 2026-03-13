@@ -488,6 +488,16 @@
     });
 
     /* ── Image Carousel ── */
+    function carouselImgError(img) {
+        // If carousel image fails, try fallback thumbnail from listing card
+        const carousel = img.closest('.carousel');
+        const fallback = carousel && carousel.dataset.fallback;
+        if (fallback && img.src !== fallback) {
+            img.src = fallback;
+        } else {
+            img.style.display = 'none';
+        }
+    }
     function carouselNav(btn, dir) {
         const carousel = btn.closest('.carousel');
         const slides = carousel.querySelectorAll('.carousel-slide');

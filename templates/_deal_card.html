@@ -28,13 +28,13 @@
         {# ── Image carousel ── #}
         {% set all_images = deal.image_urls if deal.image_urls else ([deal.image_url] if deal.image_url else []) %}
         {% if all_images %}
-        <div class="carousel" data-index="0">
+        <div class="carousel" data-index="0" {% if deal.image_url %}data-fallback="{{ deal.image_url }}"{% endif %}>
             {% for img_url in all_images %}
             <img class="carousel-slide{% if loop.first %} active{% endif %}"
                  src="{% if loop.first %}{{ img_url }}{% endif %}"
                  data-src="{{ img_url }}"
                  alt="{{ deal.car_name }}" loading="lazy"
-                 onerror="this.style.display='none'">
+                 onerror="carouselImgError(this)">
             {% endfor %}
             {% if all_images|length > 1 %}
             <button class="carousel-btn carousel-prev" onclick="carouselNav(this,-1)">
