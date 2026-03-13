@@ -131,6 +131,7 @@ def _run_enrich(on_complete, limit):
 
         # Backfill any remaining from car_name keywords, VINs, and listed dates
         db.backfill_title_types()
+        db.backfill_owner_counts()
         db.backfill_vins()
         db.backfill_listed_at()
 
@@ -326,6 +327,7 @@ def _run_scrape(on_complete):
             "message": "Backfilling title types & VINs...",
         })
         db.backfill_title_types()
+        db.backfill_owner_counts()
         db.backfill_vins()
         db.backfill_listed_at()
 

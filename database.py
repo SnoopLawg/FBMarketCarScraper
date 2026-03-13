@@ -747,6 +747,28 @@ class Database:
             logging.info(f"Backfilled title_type for {updated} listings from car_name text.")
         return updated
 
+    def backfill_owner_counts(self):
+        """Parse owner count from descriptions and persist to DB."""
+        from parsing import parse_owner_count
+        updated = 0
+        rows = self.cur.execute(
+            "SELECT id, car_name, description FROM listings "
+            "WHERE owner_count IS NULL AND description IS NOT NULL "
+            "AND deleted_at IS NULL"
+        ).fetchall()
+        for row in rows:
+            combined = f"{row['car_name'] or ''} {row['description'] or ''}"
+            count = parse_owner_count(combined)
+            if count is not None:
+                self.cur.execute(
+                    "UPDATE listings SET owner_count = ? WHERE id = ?",
+                    (count, row["id"]))
+                updated += 1
+        self.conn.commit()
+        if updated:
+            logging.info(f"Backfilled owner_count for {updated} listings from descriptions.")
+        return updated
+
     # ── VIN Cache ──────────────────────────────────────────────────
 
     def get_vin_data(self, vin):
