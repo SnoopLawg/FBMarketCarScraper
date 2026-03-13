@@ -191,23 +191,51 @@ class FacebookScraper(BaseScraper):
         from selenium.webdriver.common.by import By
 
         try:
-            # Facebook uses various elements for "See more" — try multiple selectors
+            # Facebook uses various elements for "See more" — try multiple
+            # selectors and JS click as fallback for non-interactable elements
             see_more_selectors = [
                 "//div[contains(text(), 'See more')]",
                 "//span[contains(text(), 'See more')]",
+                "//a[contains(text(), 'See more')]",
                 "//div[contains(text(), 'See More')]",
                 "//span[contains(text(), 'See More')]",
+                "//a[contains(text(), 'See More')]",
                 "//div[@role='button' and contains(text(), 'See')]",
             ]
+            clicked = 0
             for xpath in see_more_selectors:
                 try:
                     elements = self.driver.find_elements(By.XPATH, xpath)
-                    for el in elements[:3]:  # Click up to 3
+                    for el in elements[:3]:
                         try:
                             el.click()
+                            clicked += 1
                             time.sleep(0.3)
                         except Exception:
-                            pass
+                            # Fallback: JS click for elements hidden or
+                            # blocked by overlays
+                            try:
+                                self.driver.execute_script(
+                                    "arguments[0].click()", el
+                                )
+                                clicked += 1
+                                time.sleep(0.3)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            # Last resort: find via JS and click all matching elements
+            if clicked == 0:
+                try:
+                    self.driver.execute_script("""
+                        document.querySelectorAll('div, span, a').forEach(el => {
+                            if (el.textContent.trim() === 'See more' ||
+                                el.textContent.trim() === 'See More') {
+                                el.click();
+                            }
+                        });
+                    """)
                 except Exception:
                     pass
         except Exception:
@@ -304,6 +332,19 @@ class FacebookScraper(BaseScraper):
                 info["title_type"] = "rebuilt"
             elif "lemon" in text and ("title" in text or "law" in text):
                 info["title_type"] = "lemon"
+
+        # Override: if structured field says "clean" but description mentions
+        # rebuilt/salvage, trust the description — sellers sometimes
+        # misrepresent the structured title field
+        if info.get("title_type") == "clean":
+            # Look in seller description area (after the structured fields)
+            seller_idx = text.find("seller")
+            desc_text = text[seller_idx:] if seller_idx > 0 else ""
+            if desc_text:
+                if "rebuilt title" in desc_text or ("rebuilt" in desc_text and "title" in desc_text):
+                    info["title_type"] = "rebuilt"
+                elif "salvage title" in desc_text or ("salvage" in desc_text and "title" in desc_text):
+                    info["title_type"] = "salvage"
 
         # ── Accident history ─────────────────────────────────────
         if "no accident" in text or "no accidents" in text or "0 accidents" in text:
