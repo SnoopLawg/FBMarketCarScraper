@@ -82,11 +82,14 @@ def _create_headless_driver():
     options.set_preference("useAutomationExtension", False)
     options.set_preference(
         "general.useragent.override",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) "
-        "Gecko/20100101 Firefox/128.0",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) "
+        "Gecko/20100101 Firefox/133.0",
     )
     options.set_preference("privacy.resistFingerprinting", False)
     options.set_preference("toolkit.telemetry.enabled", False)
+
+    options.add_argument("--width=1920")
+    options.add_argument("--height=1080")
 
     service = Service(log_output="/dev/null")
     driver = webdriver.Firefox(options=options, service=service)
@@ -359,7 +362,12 @@ def _fetch_edmunds(sell_car, zip_code):
     try:
         driver = _create_headless_driver()
 
-        # Step 1: Load appraisal-value page to get style IDs + cookies
+        # Step 1: Visit homepage first to establish cookies/session
+        # (direct deep-link to appraisal page triggers WAF on some IPs)
+        driver.get("https://www.edmunds.com/")
+        time.sleep(3)
+
+        # Step 2: Load appraisal-value page to get style IDs
         driver.get(appraisal_url)
         time.sleep(5)
 
