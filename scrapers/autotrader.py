@@ -1,5 +1,6 @@
 """Autotrader scraper — per-car keyword search for targeted results."""
 
+import json
 import re
 import logging
 from selenium.webdriver.common.by import By
@@ -8,6 +9,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
+from parsing import classify_seller_type
 
 
 class AutotraderScraper(BaseScraper):
@@ -68,6 +70,10 @@ class AutotraderScraper(BaseScraper):
                 self.scroll_page(count=4)
 
                 soup = BeautifulSoup(self.driver.page_source, "html.parser")
+
+                # Extract VIN map from __NEXT_DATA__ JSON
+                vin_map = self._extract_vin_map(soup)
+
                 cards = soup.select("[data-cmp='inventoryListing']")
                 if not cards:
                     cards = soup.select(".inventory-listing")
@@ -76,14 +82,34 @@ class AutotraderScraper(BaseScraper):
 
                 total_found += len(cards)
                 for card in cards:
-                    if self._process_listing(card, car_query):
+                    if self._process_listing(card, car_query, vin_map):
                         total_matched += 1
 
                 self.log(f"  Page {page + 1}: {len(cards)} listings")
 
         self.log(f"Done: {total_found} total listings, {total_matched} inserted")
 
-    def _process_listing(self, card, car_query):
+    @staticmethod
+    def _extract_vin_map(soup):
+        """Build {listing_id: vin} from __NEXT_DATA__ JSON on the page."""
+        vin_map = {}
+        script = soup.select_one("script#__NEXT_DATA__")
+        if not script:
+            return vin_map
+        try:
+            data = json.loads(script.string or "")
+            inventory = (data.get("props", {})
+                             .get("pageProps", {})
+                             .get("__eggsState", {})
+                             .get("inventory", {}))
+            for lid, info in inventory.items():
+                if isinstance(info, dict) and info.get("vin"):
+                    vin_map[str(lid)] = info["vin"]
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+        return vin_map
+
+    def _process_listing(self, card, car_query, vin_map=None):
         """Parse and insert a listing. Returns True if inserted."""
         try:
             # Title
@@ -208,6 +234,17 @@ class AutotraderScraper(BaseScraper):
             if img_el:
                 image_url = img_el.get("src", "") or img_el.get("data-src", "")
 
+            # VIN — look up from __NEXT_DATA__ inventory map
+            vin = ""
+            if vin_map and href:
+                # Extract listing ID from href (e.g. /vehicle/769041357)
+                lid_match = re.search(r'/vehicle/(\d+)', href)
+                if lid_match:
+                    vin = vin_map.get(lid_match.group(1), "")
+
+            seller_type = classify_seller_type(
+                seller_name=seller, source="autotrader") or ""
+
             self.counted_insert(
                 car_query=car_query, href=href, image_url=image_url,
                 price=price_str, car_name=title, location=location,
@@ -215,7 +252,7 @@ class AutotraderScraper(BaseScraper):
                 seller=seller, distance=distance, trim=trim,
                 deal_rating=deal_rating, accident_history=accident_history,
                 title_type=title_type, owner_count=owner_count,
-                carfax_url=carfax_url,
+                carfax_url=carfax_url, seller_type=seller_type, vin=vin,
             )
             return True
         except Exception as e:

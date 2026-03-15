@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Car Deal Finder{% endblock %}</title>
+    <title>{% block title %}AutoAlert{% endblock %}</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -176,6 +177,8 @@
         .badge-trim-2 { background: rgba(91,141,238,0.12); color: var(--accent); }
         .badge-trim-3 { background: rgba(167,139,250,0.12); color: var(--purple); }
         .badge-trim-4 { background: rgba(251,191,36,0.15); color: var(--yellow); }
+        .badge-seller-dealer { background: rgba(234,179,8,0.12); color: var(--yellow); }
+        .badge-seller-private { background: rgba(52,211,153,0.12); color: var(--green); }
         .badge-score { font-weight: 700; font-size: 12px; padding: 4px 10px; border-radius: var(--radius-sm); letter-spacing: 0; }
         .badge-score-a { background: rgba(52,211,153,0.15); color: var(--green); }
         .badge-score-b { background: rgba(96,165,250,0.15); color: #60a5fa; }
@@ -340,7 +343,7 @@
 <body>
     <nav class="topnav">
         <div class="topnav-inner">
-            <a href="/" class="topnav-brand">CarFinder</a>
+            <a href="/" class="topnav-brand"><img src="/static/logo.png" alt="AutoAlert" style="height:28px;vertical-align:middle"></a>
             <div class="topnav-links">
                 <a href="/" class="topnav-link {% block nav_deals %}{% endblock %}">Deals</a>
                 <a href="/discover" class="topnav-link {% block nav_discover %}{% endblock %}">Discover</a>

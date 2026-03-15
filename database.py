@@ -19,7 +19,10 @@ class Database:
         self.cur = None
 
     def open(self):
-        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False,
+                                    timeout=30)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=30000")
         self.conn.row_factory = sqlite3.Row
         self.cur = self.conn.cursor()
         self._migrate()
@@ -61,7 +64,8 @@ class Database:
                 carfax_url TEXT,
                 listed_at TEXT,
                 image_urls TEXT,
-                is_discovery INTEGER DEFAULT 0
+                is_discovery INTEGER DEFAULT 0,
+                seller_type TEXT
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_href_source ON listings(href, source);
             CREATE INDEX IF NOT EXISTS idx_listings_car_query ON listings(car_query);
@@ -181,6 +185,19 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_valuation_cache_key
                 ON valuation_cache(car_key, source);
+
+            CREATE TABLE IF NOT EXISTS price_trend_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                car_query TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                title_group TEXT NOT NULL DEFAULT 'all',
+                avg_price REAL NOT NULL,
+                listing_count INTEGER DEFAULT 0,
+                snapshot_date TEXT NOT NULL DEFAULT (date('now')),
+                UNIQUE(car_query, year, title_group, snapshot_date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_price_trend_lookup
+                ON price_trend_snapshots(car_query, year, title_group);
 
             CREATE TABLE IF NOT EXISTS discovery_rotation (
                 source TEXT PRIMARY KEY,
@@ -308,6 +325,15 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        if "seller_type" not in columns:
+            logging.info("Migrating DB: adding seller_type column...")
+            try:
+                self.cur.execute("ALTER TABLE listings ADD COLUMN seller_type TEXT")
+                self.conn.commit()
+                logging.info("seller_type migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Migrate vehicle_ratings to include MPG columns
         self.cur.execute("PRAGMA table_info(vehicle_ratings)")
         vr_rows = self.cur.fetchall()
@@ -355,7 +381,8 @@ class Database:
                        location, mileage_raw, source, deleted_set=None,
                        trim="", seller="", condition="", deal_rating="",
                        accident_history="", distance="", title_type="",
-                       owner_count="", carfax_url="", is_discovery=False):
+                       owner_count="", carfax_url="", is_discovery=False,
+                       seller_type="", vin=""):
         """Insert or update a listing, parsing raw price/mileage/year."""
         href = self._normalize_href(href)
 
@@ -391,9 +418,9 @@ class Database:
                      mileage, year, source, updated_at,
                      trim, seller, condition, deal_rating, accident_history,
                      distance, title_type, owner_count, carfax_url,
-                     is_discovery)
+                     is_discovery, seller_type, vin)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(href, source) DO UPDATE SET
                     price = excluded.price,
                     image_url = COALESCE(excluded.image_url, image_url),
@@ -406,13 +433,15 @@ class Database:
                     title_type = COALESCE(excluded.title_type, title_type),
                     owner_count = COALESCE(excluded.owner_count, owner_count),
                     carfax_url = COALESCE(excluded.carfax_url, carfax_url),
-                    is_discovery = MIN(is_discovery, excluded.is_discovery)
+                    is_discovery = MIN(is_discovery, excluded.is_discovery),
+                    seller_type = COALESCE(excluded.seller_type, seller_type),
+                    vin = COALESCE(excluded.vin, vin)
             """, (href, image_url, price_val, car_name, car_query, location,
                   mileage_val, year_val, source,
                   trim or None, seller or None, condition or None,
                   deal_rating or None, accident_history or None, distance or None,
                   title_type or None, owner_count or None, carfax_url or None,
-                  1 if is_discovery else 0))
+                  1 if is_discovery else 0, seller_type or None, vin or None))
             self.conn.commit()
         except sqlite3.Error as e:
             logging.error(f"DB insert error: {e}")
@@ -440,7 +469,7 @@ class Database:
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
             "title_type, vin, description, owner_count, carfax_url, listed_at, "
-            "image_urls "
+            "image_urls, seller_type "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -617,6 +646,68 @@ class Database:
         """, (car_query, year, title_group, avg_lower, avg_higher))
         self.conn.commit()
 
+    # ── Price Trend Snapshots ───────────────────────────────────────
+
+    def record_price_snapshot(self, car_query, year, title_group,
+                              avg_price, listing_count):
+        """Record today's average price for trend tracking."""
+        try:
+            self.cur.execute("""
+                INSERT OR REPLACE INTO price_trend_snapshots
+                    (car_query, year, title_group, avg_price,
+                     listing_count, snapshot_date)
+                VALUES (?, ?, ?, ?, ?, date('now'))
+            """, (car_query, year, title_group, avg_price, listing_count))
+        except Exception:
+            pass  # Don't break averages if snapshot fails
+
+    def get_price_trend(self, car_query, year, title_group="clean",
+                        days=30):
+        """Get price trend for a car/year over the last N days.
+
+        Returns dict with trend direction and magnitude, or None.
+        """
+        self.cur.execute("""
+            SELECT avg_price, listing_count, snapshot_date
+            FROM price_trend_snapshots
+            WHERE car_query = ? AND year = ? AND title_group = ?
+            AND snapshot_date >= date('now', ?)
+            ORDER BY snapshot_date ASC
+        """, (car_query, year, title_group, f'-{days} days'))
+        rows = self.cur.fetchall()
+        if len(rows) < 2:
+            return None
+        first = rows[0]["avg_price"]
+        last = rows[-1]["avg_price"]
+        if first <= 0:
+            return None
+        change = last - first
+        pct = round(change / first * 100, 1)
+        if abs(pct) < 2:
+            direction = "stable"
+        elif pct > 0:
+            direction = "up"
+        else:
+            direction = "down"
+        return {
+            "direction": direction,
+            "change": round(change),
+            "pct": pct,
+            "days": (len(rows) - 1),
+            "first_price": round(first),
+            "last_price": round(last),
+        }
+
+    def get_price_trends_batch(self, car_year_groups, days=30):
+        """Get trends for multiple (car_query, year, title_group) combos."""
+        results = {}
+        for car_query, year, grp in car_year_groups:
+            key = (car_query, year, grp)
+            if key not in results:
+                results[key] = self.get_price_trend(
+                    car_query, year, grp, days)
+        return results
+
     # ── Vehicle Ratings (NHTSA cache) ─────────────────────────────
 
     def get_vehicle_rating(self, make, model, year):
@@ -703,7 +794,7 @@ class Database:
         """Update multiple detail fields for a listing."""
         allowed = {"title_type", "trim", "seller", "condition",
                    "deal_rating", "accident_history", "description", "vin",
-                   "image_urls"}
+                   "image_urls", "seller_type"}
         sets = []
         vals = []
         for k, v in kwargs.items():
@@ -793,6 +884,31 @@ class Database:
         self.conn.commit()
         if updated:
             logging.info(f"Backfilled owner_count for {updated} listings from descriptions.")
+        return updated
+
+    def backfill_seller_types(self):
+        """Classify seller_type from existing seller name, href, and source."""
+        from parsing import classify_seller_type
+        updated = 0
+        rows = self.cur.execute(
+            "SELECT id, seller, href, source, description FROM listings "
+            "WHERE seller_type IS NULL AND deleted_at IS NULL"
+        ).fetchall()
+        for row in rows:
+            st = classify_seller_type(
+                seller_name=row["seller"],
+                href=row["href"],
+                source=row["source"],
+                description=row["description"],
+            )
+            if st:
+                self.cur.execute(
+                    "UPDATE listings SET seller_type = ? WHERE id = ?",
+                    (st, row["id"]))
+                updated += 1
+        self.conn.commit()
+        if updated:
+            logging.info(f"Backfilled seller_type for {updated} listings.")
         return updated
 
     # ── VIN Cache ──────────────────────────────────────────────────

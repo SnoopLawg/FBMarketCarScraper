@@ -5,7 +5,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
-from nhtsa import parse_make_model, get_vehicle_rating, get_recalls_batch
+from nhtsa import parse_make_model, get_vehicle_rating, get_recalls_batch, get_ratings_batch
 from epa import get_mpg_batch, estimate_monthly_fuel_cost
 from trim_tiers import get_trim_tier, tier_name
 from drivetrain import detect_drivetrain, drivetrain_label, is_awd_or_4wd
@@ -74,6 +74,11 @@ def calculate_averages(db, desired_cars, mileage_threshold):
                 avg_higher = round(sum(higher) / len(higher)) if higher else 0
                 db.upsert_average(car_query, year, avg_lower, avg_higher,
                                   title_group=group)
+                # Record snapshot for trend tracking
+                all_prices = [p for p, _ in data]
+                overall_avg = round(sum(all_prices) / len(all_prices))
+                db.record_price_snapshot(
+                    car_query, year, group, overall_avg, len(data))
 
         # "all" averages (fallback when a title group is too small)
         for year, data in year_all_data.items():
@@ -83,6 +88,10 @@ def calculate_averages(db, desired_cars, mileage_threshold):
             avg_higher = round(sum(higher) / len(higher)) if higher else 0
             db.upsert_average(car_query, year, avg_lower, avg_higher,
                               title_group="all")
+            all_prices = [p for p, _ in data]
+            overall_avg = round(sum(all_prices) / len(all_prices))
+            db.record_price_snapshot(
+                car_query, year, "all", overall_avg, len(data))
 
 
 # ── Trim-Aware Averages ──────────────────────────────────────────
@@ -588,13 +597,19 @@ def compute_market_range(prices):
             return round(prices[-1])
         return round(prices[f] + (k - f) * (prices[c] - prices[f]))
 
+    fair = percentile(25)
+    avg = percentile(50)
+    # Suggested offer: 25th percentile, rounded to nearest $250
+    target = round(fair / 250) * 250
+
     return {
         "count": n,
         "low": percentile(10),
-        "fair": percentile(25),
-        "avg": percentile(50),
+        "fair": fair,
+        "avg": avg,
         "high": percentile(75),
         "premium": percentile(90),
+        "target_price": target,
     }
 
 
@@ -665,21 +680,15 @@ def find_deals(db, desired_cars, config, is_discovery=False):
             if row["year"]:
                 car_year_combos.add((car_query, row["year"]))
 
-    # Fetch NHTSA ratings (uses cache, only hits API for uncached)
+    # Fetch NHTSA ratings (batch, parallelized for uncached)
     nhtsa_cache = {}
-    for car_query, year in car_year_combos:
-        make, model = parse_make_model(car_query)
-        if make and model:
-            key = (car_query.lower(), year)
-            if key not in nhtsa_cache:
-                try:
-                    rating = get_vehicle_rating(db, make, model, year)
-                    if rating:
-                        nhtsa_cache[key] = rating
-                except Exception as e:
-                    logging.warning(f"[NHTSA] Failed for {car_query} {year}: {e}")
+    try:
+        nhtsa_cache = get_ratings_batch(db, car_year_combos)
+        logging.info(f"Loaded ratings for {len(nhtsa_cache)} car/year combos.")
+    except Exception as e:
+        logging.warning(f"[NHTSA] Ratings batch fetch failed: {e}")
 
-    # Fetch NHTSA recall details (batch, cached)
+    # Fetch NHTSA recall details (batch, parallelized for uncached)
     recalls_cache = {}
     try:
         recalls_cache = get_recalls_batch(db, car_year_combos)
@@ -687,7 +696,7 @@ def find_deals(db, desired_cars, config, is_discovery=False):
     except Exception as e:
         logging.warning(f"[NHTSA] Recalls batch fetch failed: {e}")
 
-    # Fetch EPA MPG data (batch, cached)
+    # Fetch EPA MPG data (batch, parallelized for uncached)
     mpg_cache = {}
     try:
         mpg_cache = get_mpg_batch(db, car_year_combos)
@@ -898,6 +907,7 @@ def find_deals(db, desired_cars, config, is_discovery=False):
                     "vin_mismatches": vin_mismatches,
                     "owner_count": owner_count,
                     "service_history": service_history,
+                    "seller_type": row.get("seller_type") or "",
                     "carfax_url": row["carfax_url"] or "",
                     "image_urls": json.loads(row["image_urls"]) if row["image_urls"] else [],
                     "is_discovery": is_discovery,

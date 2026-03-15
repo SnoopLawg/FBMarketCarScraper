@@ -119,7 +119,7 @@ Runs on a home server (Dell Optiplex 7080 Micro, Ubuntu 24.04, hostname `mothers
 - Volume: `./data:/data` (Config.json, marketplace_listings.db, fb_cookies.pkl, favorites/deleted files)
 
 **Server cron:**
-- `0 6,18 * * *` — Scrape twice daily via `curl -s -X POST http://localhost:5001/api/scrape`
+- `0 6,11,16,21 * * *` — Scrape 4x daily via `curl -s -X POST http://localhost:5001/api/scrape`
 - `0 3 * * *` — Nightly backup: `rsync` data dir to NAS (`/mnt/nas/backups/services/carscraper/`)
 
 **Access:** `https://cars.single10.app` — reverse-proxied through Caddy, protected by Authentik SSO (Google OAuth)

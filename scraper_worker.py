@@ -3,6 +3,7 @@
 import logging
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -133,6 +134,7 @@ def _run_enrich(on_complete, limit):
         # Backfill any remaining from car_name keywords, VINs, and listed dates
         db.backfill_title_types()
         db.backfill_owner_counts()
+        db.backfill_seller_types()
         db.backfill_vins()
         db.backfill_listed_at()
 
@@ -193,8 +195,127 @@ def _run_enrich(on_complete, limit):
             _lock.release()
 
 
+def _scrape_source_group(group_name, source_names, config, deleted_set,
+                         enrich_fb=False):
+    """Scrape a group of sources with its own driver and DB connection.
+
+    Runs in a thread — each thread gets an independent Firefox instance
+    and SQLite connection so they can work in parallel without conflicts.
+
+    Args:
+        group_name: Label for logging (e.g. "facebook", "other")
+        source_names: List of source keys to scrape
+        config: Loaded config dict (read-only, safe to share)
+        deleted_set: Set of deleted hrefs (read-only, safe to share)
+        enrich_fb: If True, run FB detail-page enrichment after scraping
+
+    Returns:
+        dict with per-source listing counts and any errors
+    """
+    result = {"listings": {}, "errors": []}
+    db = Database()
+    db.open()
+    driver = create_driver(proxy_config=config.get("Proxy"))
+
+    def insert_fn(**kwargs):
+        db.insert_listing(**kwargs, deleted_set=deleted_set)
+
+    try:
+        for i, name in enumerate(source_names):
+            scraper_cls = ALL_SCRAPERS.get(name)
+            if not scraper_cls:
+                continue
+
+            _status.update({
+                "source": name,
+                "message": f"Scraping {name}...",
+            })
+
+            run_start = datetime.now()
+            run_id = db.insert_scrape_run(name, run_start.isoformat())
+
+            try:
+                scraper = scraper_cls(driver, config, insert_fn)
+                scraper.scrape()
+
+                duration = (datetime.now() - run_start).total_seconds()
+                yield_count = scraper.listing_count
+                result["listings"][name] = yield_count
+                db.update_scrape_run(run_id,
+                    finished_at=datetime.now().isoformat(),
+                    status="completed",
+                    listings_found=yield_count,
+                    duration_seconds=round(duration, 1))
+
+                logging.info(
+                    f"[{name}] Scrape complete: {yield_count} listings "
+                    f"in {duration:.1f}s")
+
+                # Yield health check
+                health = db.get_scrape_health()
+                src_health = health.get(name)
+                if (src_health and src_health["runs_count"] >= 3
+                        and src_health["avg_yield"] > 0):
+                    ratio = yield_count / src_health["avg_yield"]
+                    if ratio < 0.2:
+                        logging.warning(
+                            f"[{name}] CRITICAL: Found only {yield_count} "
+                            f"listings vs {src_health['avg_yield']:.0f} avg "
+                            f"— scraper may be broken!")
+                    elif ratio < 0.5:
+                        logging.warning(
+                            f"[{name}] WARNING: Found {yield_count} listings "
+                            f"vs {src_health['avg_yield']:.0f} avg — "
+                            f"below expected yield")
+
+                # Enrich Facebook listings using the same driver
+                if enrich_fb and name == "facebook":
+                    _status.update({
+                        "message": "Enriching FB listings with detail data...",
+                    })
+                    try:
+                        scraper.enrich_listings(db, limit=100)
+                    except Exception as e:
+                        logging.error(f"Facebook enrichment failed: {e}")
+
+            except Exception as e:
+                logging.error(f"{name} scraper failed: {e}")
+                result["errors"].append(name)
+
+                screenshot_path = None
+                try:
+                    from scrapers.base import BaseScraper
+                    temp = type('_', (BaseScraper,), {
+                        'SOURCE_NAME': name, 'scrape': lambda s: None
+                    })(driver, config, insert_fn)
+                    screenshot_path = temp.capture_screenshot("crash")
+                except Exception:
+                    pass
+
+                duration = (datetime.now() - run_start).total_seconds()
+                db.update_scrape_run(run_id,
+                    finished_at=datetime.now().isoformat(),
+                    status="failed",
+                    errors=1,
+                    error_message=str(e)[:500],
+                    screenshot_path=screenshot_path,
+                    duration_seconds=round(duration, 1))
+    finally:
+        driver.quit()
+        db.close()
+
+    return result
+
+
 def _run_scrape(on_complete):
-    """The actual scrape pipeline, runs in a background thread."""
+    """The actual scrape pipeline, runs in a background thread.
+
+    Parallelizes scraping into two thread groups:
+      - Thread 1: Facebook scrape + enrichment (longest, ~15 min)
+      - Thread 2: Craigslist, Cars.com, Autotrader (shared driver, ~10 min)
+    Both run simultaneously, cutting total scrape time nearly in half.
+    After both complete, discovery + analysis run single-threaded.
+    """
     try:
         _status.update({
             "running": True,
@@ -208,25 +329,16 @@ def _run_scrape(on_complete):
         })
 
         config = load_config()
-        db = Database()
-        db.open()
-
         sources = config.get("Sources", {})
         enabled = {k: v for k, v in sources.items() if v.get("enabled", True)}
-        total_sources = len(enabled)
 
-        if total_sources == 0:
+        if not enabled:
             _status.update({
                 "phase": "error",
                 "error": "No sources enabled",
                 "running": False,
             })
-            db.close()
             return
-
-        # Phase 1: Scrape
-        _status.update({"phase": "scraping", "message": "Creating browser..."})
-        driver = create_driver(proxy_config=config.get("Proxy"))
 
         deleted_file = DATA_DIR / "deleted_listings.txt"
         deleted_set = set()
@@ -236,107 +348,63 @@ def _run_scrape(on_complete):
                 if l.strip()
             )
 
-        def insert_fn(**kwargs):
-            db.insert_listing(**kwargs, deleted_set=deleted_set)
+        # ── Phase 1: Parallel scraping ────────────────────────────────
+        _status.update({"phase": "scraping", "progress": 5,
+                        "message": "Launching scrapers..."})
 
-        fb_scraper = None
-        try:
-            for i, name in enumerate(enabled):
-                scraper_cls = ALL_SCRAPERS.get(name)
-                if not scraper_cls:
-                    continue
+        fb_sources = [k for k in enabled if k == "facebook"]
+        other_sources = [k for k in enabled if k != "facebook"]
 
-                pct = int((i / total_sources) * 70)
-                _status.update({
-                    "source": name,
-                    "progress": pct,
-                    "message": f"Scraping {name} ({i+1}/{total_sources})...",
-                })
+        all_listings = {}
+        all_errors = []
 
-                # Track this scrape run
-                run_start = datetime.now()
-                run_id = db.insert_scrape_run(name, run_start.isoformat())
+        # Use 2 threads if FB is enabled, otherwise just 1
+        num_workers = 2 if fb_sources and other_sources else 1
 
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {}
+            if fb_sources:
+                futures["facebook"] = executor.submit(
+                    _scrape_source_group, "facebook", fb_sources,
+                    config, deleted_set, enrich_fb=True)
+            if other_sources:
+                futures["other"] = executor.submit(
+                    _scrape_source_group, "other", other_sources,
+                    config, deleted_set, enrich_fb=False)
+
+            for future in as_completed(futures.values()):
+                # Find the label for this future
+                label = next(k for k, v in futures.items() if v is future)
                 try:
-                    scraper = scraper_cls(driver, config, insert_fn)
-                    scraper.scrape()
-
-                    # Record success metrics
-                    duration = (datetime.now() - run_start).total_seconds()
-                    yield_count = scraper.listing_count
-                    db.update_scrape_run(run_id,
-                        finished_at=datetime.now().isoformat(),
-                        status="completed",
-                        listings_found=yield_count,
-                        duration_seconds=round(duration, 1))
-
+                    result = future.result()
+                    all_listings.update(result["listings"])
+                    all_errors.extend(result["errors"])
+                    total = sum(result["listings"].values())
                     logging.info(
-                        f"[{name}] Scrape complete: {yield_count} listings "
-                        f"in {duration:.1f}s")
-
-                    # Yield health check — warn if dramatically low
-                    health = db.get_scrape_health()
-                    src_health = health.get(name)
-                    if (src_health and src_health["runs_count"] >= 3
-                            and src_health["avg_yield"] > 0):
-                        ratio = yield_count / src_health["avg_yield"]
-                        if ratio < 0.2:
-                            logging.warning(
-                                f"[{name}] CRITICAL: Found only {yield_count} "
-                                f"listings vs {src_health['avg_yield']:.0f} avg "
-                                f"— scraper may be broken!")
-                        elif ratio < 0.5:
-                            logging.warning(
-                                f"[{name}] WARNING: Found {yield_count} listings "
-                                f"vs {src_health['avg_yield']:.0f} avg — "
-                                f"below expected yield")
-
-                    # Keep reference to Facebook scraper for enrichment
-                    if name == "facebook":
-                        fb_scraper = scraper
-
+                        f"[{label}] group done: {total} listings from "
+                        f"{len(result['listings'])} sources")
                 except Exception as e:
-                    logging.error(f"{name} scraper failed: {e}")
-                    # Capture screenshot on failure
-                    screenshot_path = None
-                    try:
-                        from scrapers.base import BaseScraper
-                        temp = type('_', (BaseScraper,), {
-                            'SOURCE_NAME': name, 'scrape': lambda s: None
-                        })(driver, config, insert_fn)
-                        screenshot_path = temp.capture_screenshot("crash")
-                    except Exception:
-                        pass
+                    logging.error(f"[{label}] group failed: {e}")
+                    all_errors.append(label)
 
-                    duration = (datetime.now() - run_start).total_seconds()
-                    db.update_scrape_run(run_id,
-                        finished_at=datetime.now().isoformat(),
-                        status="failed",
-                        errors=1,
-                        error_message=str(e)[:500],
-                        screenshot_path=screenshot_path,
-                        duration_seconds=round(duration, 1))
+        total_found = sum(all_listings.values())
+        logging.info(
+            f"Parallel scrape complete: {total_found} total listings, "
+            f"{len(all_errors)} errors")
 
-            # Enrich Facebook listings with detail page data
-            if fb_scraper:
-                _status.update({
-                    "progress": 72,
-                    "message": "Enriching listings with detail page data...",
-                })
-                try:
-                    fb_scraper.enrich_listings(db, limit=100)
-                except Exception as e:
-                    logging.error(f"Facebook enrichment failed: {e}")
-        finally:
-            driver.quit()
+        _status.update({"progress": 70,
+                        "message": f"Scraping done ({total_found} listings)."})
 
-        # Mark stale
+        # ── Mark stale ────────────────────────────────────────────────
+        db = Database()
+        db.open()
+
         for source in enabled:
             stale = db.mark_stale(source, days_old=7)
             if stale:
                 logging.info(f"Marked {stale} stale {source} listings")
 
-        # Phase 1b: Discovery scrape
+        # ── Phase 1b: Discovery scrape (single driver) ────────────────
         discovery_cars = load_discovery_cars(config)
         if discovery_cars:
             _status.update({
@@ -345,7 +413,6 @@ def _run_scrape(on_complete):
                 "message": "Running discovery scrape...",
             })
 
-            # Create a new driver for discovery (primary one is quit above)
             disc_driver = create_driver(proxy_config=config.get("Proxy"))
             try:
                 def disc_insert_fn(**kwargs):
@@ -381,7 +448,7 @@ def _run_scrape(on_complete):
             finally:
                 disc_driver.quit()
 
-        # Phase 2: Analysis
+        # ── Phase 2: Analysis ─────────────────────────────────────────
         _status.update({
             "phase": "analyzing",
             "progress": 75,
@@ -389,6 +456,7 @@ def _run_scrape(on_complete):
         })
         db.backfill_title_types()
         db.backfill_owner_counts()
+        db.backfill_seller_types()
         db.backfill_vins()
         db.backfill_listed_at()
 
@@ -449,4 +517,5 @@ def _run_scrape(on_complete):
             "finished_at": datetime.now().isoformat(),
         })
     finally:
-        _lock.release()
+        if _lock.locked():
+            _lock.release()

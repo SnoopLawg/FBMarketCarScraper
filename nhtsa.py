@@ -262,11 +262,14 @@ def fetch_recalls(make, model, year):
     return recalls
 
 
-def get_vehicle_recalls_cached(db, make, model, year):
+def get_vehicle_recalls_cached(db, make, model, year, fetch=True):
     """Get recall details — from cache if fresh, else from API.
 
+    If fetch=False, only checks cache and returns None on miss (used by
+    batch functions that parallelize the API calls separately).
+
     Returns list of recall dicts (may be empty if vehicle has no recalls).
-    Returns None only on total failure.
+    Returns None only on cache miss (when fetch=False) or total failure.
     """
     make_l = make.strip().lower()
     model_l = model.strip().lower()
@@ -287,6 +290,9 @@ def get_vehicle_recalls_cached(db, make, model, year):
             except (ValueError, TypeError):
                 pass
 
+    if not fetch:
+        return None
+
     # Fetch from API
     logging.info(f"[NHTSA] Fetching recalls for {year} {make} {model}...")
     recalls = fetch_recalls(make, model, year)
@@ -298,45 +304,158 @@ def get_vehicle_recalls_cached(db, make, model, year):
     return recalls
 
 
+def _get_cached_rating(db, make, model, year):
+    """Check cache for a vehicle rating. Returns dict or None."""
+    make_l = make.strip().lower()
+    model_l = model.strip().lower()
+    cached = db.get_vehicle_rating(make_l, model_l, year)
+    if cached:
+        fetched_str = cached.get("fetched_at") or cached.get("created_at", "")
+        if fetched_str:
+            try:
+                fetched_dt = datetime.fromisoformat(
+                    fetched_str.replace("Z", "+00:00"))
+                if datetime.utcnow() - fetched_dt < timedelta(days=_CACHE_DAYS):
+                    return cached
+            except (ValueError, TypeError):
+                pass
+    return None
+
+
 def get_recalls_batch(db, car_queries_with_years):
     """Fetch recalls for multiple (make, model, year) combos, using cache.
 
+    Checks cache first (fast), then fetches all uncached items in parallel,
+    then writes results back to cache.
+
     Returns dict {(car_query_lower, year): [recall_dicts]}
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     results = {}
+    to_fetch = []  # [(key, make, model, year)]
+
+    # Phase 1: check cache (serial, fast)
     for car_query, year in car_queries_with_years:
         make, model = parse_make_model(car_query)
         if not make or not model or not year:
             continue
         key = (car_query.lower(), year)
-        if key not in results:
-            recalls = get_vehicle_recalls_cached(db, make, model, year)
-            if recalls is not None:
+        if key in results:
+            continue
+        cached = get_vehicle_recalls_cached(db, make, model, year,
+                                            fetch=False)
+        if cached is not None:
+            results[key] = cached
+        else:
+            to_fetch.append((key, make, model, year))
+
+    if not to_fetch:
+        return results
+
+    # Phase 2: fetch uncached in parallel
+    logging.info(f"[NHTSA] Fetching recalls for {len(to_fetch)} car/year "
+                 f"combos in parallel...")
+
+    def _fetch_one(item):
+        key, make, model, year = item
+        logging.info(f"[NHTSA] Fetching recalls for {year} {make} {model}...")
+        return key, make, model, year, fetch_recalls(make, model, year)
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(_fetch_one, item) for item in to_fetch]
+        for f in as_completed(futures):
+            try:
+                key, make, model, year, recalls = f.result()
                 results[key] = recalls
+                # Phase 3: write to cache (serial via main thread)
+                db.upsert_vehicle_recalls(
+                    make.strip().lower(), model.strip().lower(),
+                    year, recalls)
+            except Exception as e:
+                logging.warning(f"[NHTSA] Recall fetch failed: {e}")
+
     return results
 
 
 def get_ratings_batch(db, car_queries_with_years):
     """Fetch ratings for multiple (make, model, year) combos, using cache.
 
-    Parameters
-    ----------
-    db : Database
-        Open Database instance.
-    car_queries_with_years : set of (car_query, year) tuples
+    Checks cache first, then fetches uncached items in parallel.
 
-    Returns
-    -------
-    dict  {(car_query_lower, year): rating_dict}
+    Returns dict {(car_query_lower, year): rating_dict}
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     results = {}
+    to_fetch = []  # [(key, make, model, year)]
+
+    # Phase 1: check cache
     for car_query, year in car_queries_with_years:
         make, model = parse_make_model(car_query)
         if not make or not model or not year:
             continue
         key = (car_query.lower(), year)
-        if key not in results:
-            rating = get_vehicle_rating(db, make, model, year)
-            if rating:
+        if key in results:
+            continue
+        cached = _get_cached_rating(db, make, model, year)
+        if cached is not None:
+            results[key] = cached
+        else:
+            to_fetch.append((key, make, model, year))
+
+    if not to_fetch:
+        return results
+
+    # Phase 2: fetch uncached in parallel
+    logging.info(f"[NHTSA] Fetching ratings for {len(to_fetch)} car/year "
+                 f"combos in parallel...")
+
+    def _fetch_one(item):
+        key, make, model, year = item
+        logging.info(
+            f"[NHTSA] Fetching rating for {year} {make} {model}...")
+        rating = fetch_safety_rating(make, model, year)
+        if rating is None:
+            complaints = fetch_complaints_count(make, model, year)
+            if complaints > 0:
+                rating = {
+                    "overall_rating": None,
+                    "front_crash_rating": None,
+                    "side_crash_rating": None,
+                    "rollover_rating": None,
+                    "complaints_count": complaints,
+                    "recalls_count": 0,
+                }
+        if rating is None:
+            rating = {
+                "overall_rating": None,
+                "front_crash_rating": None,
+                "side_crash_rating": None,
+                "rollover_rating": None,
+                "complaints_count": 0,
+                "recalls_count": 0,
+            }
+        return key, make, model, year, rating
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(_fetch_one, item) for item in to_fetch]
+        for f in as_completed(futures):
+            try:
+                key, make, model, year, rating = f.result()
                 results[key] = rating
+                db.upsert_vehicle_rating(
+                    make=make.strip().lower(),
+                    model=model.strip().lower(),
+                    year=year,
+                    overall_rating=rating["overall_rating"],
+                    front_crash=rating.get("front_crash_rating"),
+                    side_crash=rating.get("side_crash_rating"),
+                    rollover=rating.get("rollover_rating"),
+                    complaints=rating["complaints_count"],
+                    recalls=rating["recalls_count"],
+                )
+            except Exception as e:
+                logging.warning(f"[NHTSA] Rating fetch failed: {e}")
+
     return results

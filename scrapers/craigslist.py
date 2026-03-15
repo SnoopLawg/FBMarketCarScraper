@@ -10,6 +10,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
+from parsing import classify_seller_type
 
 
 class CraigslistScraper(BaseScraper):
@@ -148,11 +149,13 @@ class CraigslistScraper(BaseScraper):
             elif "clean title" in item_text_lower:
                 title_type = "clean"
 
+            seller_type = classify_seller_type(href=href, source="craigslist")
+
             self.counted_insert(
                 car_query=car_query, href=href, image_url=image_url,
                 price=price_str, car_name=title, location=location,
                 mileage_raw=mileage_str, source=self.SOURCE_NAME,
-                title_type=title_type,
+                title_type=title_type, seller_type=seller_type or "",
             )
             return True
         except Exception as e:

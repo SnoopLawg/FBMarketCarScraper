@@ -85,6 +85,11 @@
             {% if deal.drivetrain %}
             <span class="badge badge-drivetrain{% if deal.drivetrain in ['AWD', '4WD'] %} badge-drivetrain-awd{% endif %}">{{ deal.drivetrain }}{% if deal.drivetrain_source == 'default' %}*{% endif %}</span>
             {% endif %}
+            {% if deal.seller_type == 'dealer' %}
+            <span class="badge badge-seller-dealer">Dealer</span>
+            {% elif deal.seller_type == 'private' %}
+            <span class="badge badge-seller-private">Private</span>
+            {% endif %}
             {% if deal.trim_tier_name and deal.trim_tier and deal.trim_tier > 1 %}
             <span class="badge badge-trim badge-trim-{{ deal.trim_tier }}">{{ deal.trim_tier_name }}{% if deal.trim_label %}: {{ deal.trim_label }}{% endif %}</span>
             {% endif %}
@@ -138,7 +143,9 @@
         {% if deal.market_range %}
         <div class="market-range">
             <div style="display:flex;justify-content:space-between;color:var(--text-muted);margin-bottom:4px">
-                <span>Market Range ({{ deal.market_range.count }} listings)</span>
+                <span>Market Range ({{ deal.market_range.count }} listings){% if deal.price_trend and deal.price_trend.direction != 'stable' %}
+                    <span style="color:{% if deal.price_trend.direction == 'down' %}var(--green){% else %}var(--red){% endif %};font-size:10px;margin-left:4px"
+                          title="Market {{ deal.price_trend.direction }} {{ deal.price_trend.pct }}% over {{ deal.price_trend.days }}d">{% if deal.price_trend.direction == 'down' %}&#x25BC;{% else %}&#x25B2;{% endif %} {{ deal.price_trend.pct }}%</span>{% endif %}</span>
                 {% if deal.price <= deal.market_range.low %}
                 <span style="color:var(--green);font-weight:600">Great Price</span>
                 {% elif deal.price <= deal.market_range.fair %}
@@ -167,6 +174,13 @@
                 <span>${{ '{:,.0f}'.format(deal.market_range.avg) }}</span>
                 <span>${{ '{:,.0f}'.format(deal.market_range.premium) }}</span>
             </div>
+            {% if deal.market_range.target_price and deal.price > deal.market_range.target_price %}
+            <div style="margin-top:6px;font-size:11px;display:flex;align-items:center;gap:4px">
+                <span style="color:var(--text-muted)">Offer:</span>
+                <span style="color:var(--accent);font-weight:600">${{ '{:,.0f}'.format(deal.market_range.target_price) }}</span>
+                <span style="color:var(--green);font-size:10px">(save ${{ '{:,.0f}'.format(deal.price - deal.market_range.target_price) }})</span>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
 

@@ -1,5 +1,6 @@
 """Cars.com scraper — per-car keyword search for targeted results."""
 
+import json
 import re
 import logging
 from urllib.parse import quote_plus
@@ -10,6 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
+from parsing import classify_seller_type
 
 
 class CarsComScraper(BaseScraper):
@@ -151,6 +153,25 @@ class CarsComScraper(BaseScraper):
             if img_el:
                 image_url = img_el.get("src", "") or img_el.get("data-src", "")
 
+            # VIN — Cars.com embeds vehicle details JSON in a data attribute
+            vin = ""
+            vehicle_details = card.get("data-vehicle-details", "")
+            if vehicle_details:
+                try:
+                    vd = json.loads(vehicle_details)
+                    vin = vd.get("vin", "")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            # Fallback: check parent element for the attribute
+            if not vin:
+                parent = card.find_parent(attrs={"data-vehicle-details": True})
+                if parent:
+                    try:
+                        vd = json.loads(parent["data-vehicle-details"])
+                        vin = vd.get("vin", "")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
             # Get full card text for pattern matching
             card_text = card.get_text(" ", strip=True)
             card_text_lower = card_text.lower()
@@ -202,6 +223,9 @@ class CarsComScraper(BaseScraper):
                         if carfax_url:
                             break
 
+            seller_type = classify_seller_type(
+                seller_name=seller, source="carscom") or ""
+
             self.counted_insert(
                 car_query=car_query, href=href, image_url=image_url,
                 price=price_str, car_name=title, location=location,
@@ -209,6 +233,7 @@ class CarsComScraper(BaseScraper):
                 seller=seller, distance=distance, title_type=title_type,
                 deal_rating=deal_rating, accident_history=accident_history,
                 owner_count=owner_count, carfax_url=carfax_url,
+                seller_type=seller_type, vin=vin,
             )
             return True
         except Exception as e:

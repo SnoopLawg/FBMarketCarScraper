@@ -4,6 +4,46 @@ import re
 from datetime import datetime, timedelta
 
 
+# ── Seller type classification ───────────────────────────────────
+
+_DEALER_KEYWORDS = re.compile(
+    r"\b(?:LLC|Inc|Motors|Dealership|Auto\s*Group|Automotive|Pre[- ]?Owned|"
+    r"Auto\s*Sales|Car\s*Sales|Used\s*Cars|BHPH|Buy\s*Here)\b",
+    re.I,
+)
+
+
+def classify_seller_type(seller_name=None, href=None, source=None,
+                         description=None):
+    """Classify a listing as 'dealer', 'private', or None (unknown).
+
+    Uses source-specific signals: Craigslist URL path, seller name keywords
+    for Cars.com/Autotrader, and description text for Facebook.
+    """
+    src = (source or "").lower()
+
+    # Craigslist: URL-based, 100% reliable
+    if src == "craigslist" and href:
+        if "/ctd/" in href:
+            return "dealer"
+        if "/cto/" in href:
+            return "private"
+
+    # Cars.com / Autotrader: seller name keyword heuristics
+    if src in ("carscom", "autotrader") and seller_name:
+        if _DEALER_KEYWORDS.search(seller_name):
+            return "dealer"
+        return "private"
+
+    # Facebook: description-based (low confidence, only positive signals)
+    if src == "facebook" and description:
+        desc_lower = description.lower()
+        if "professional seller" in desc_lower or "dealership" in desc_lower:
+            return "dealer"
+
+    return None
+
+
 def parse_price(price_str):
     """Parse a price string like '$3,500' into a float."""
     if not price_str or price_str == "Sold":

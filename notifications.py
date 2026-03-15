@@ -161,10 +161,24 @@ def send_deal_alerts(webhook_url, deals, app_url=""):
         logging.info(f"Discord: sent {len(newly_notified)} Grade A deal alerts")
 
 
+def _load_dismissed_hrefs():
+    """Load hrefs that the user has deleted or favorited (shouldn't be alerted)."""
+    import os
+    data_dir = Path(os.environ.get("DATA_DIR", Path(__file__).parent))
+    dismissed = set()
+    for filename in ("deleted_listings.txt", "favorite_listings.txt"):
+        path = data_dir / filename
+        if path.exists():
+            dismissed.update(
+                l.strip() for l in path.read_text().splitlines() if l.strip())
+    return dismissed
+
+
 def notify_scrape_complete(config, deals):
     """Main entry point — called after a scrape finishes.
 
     Sends scrape summary + individual Grade A alerts if Discord is configured.
+    Filters out deals the user has deleted or favorited.
     """
     notif_config = config.get("Notifications", {})
     webhook_url = notif_config.get("discord_webhook_url", "")
@@ -174,5 +188,9 @@ def notify_scrape_complete(config, deals):
 
     app_url = notif_config.get("app_url", "")
 
-    send_scrape_summary(webhook_url, deals)
-    send_deal_alerts(webhook_url, deals, app_url=app_url)
+    # Exclude deleted and favorited listings from notifications
+    dismissed = _load_dismissed_hrefs()
+    active_deals = [d for d in deals if d["href"] not in dismissed]
+
+    send_scrape_summary(webhook_url, active_deals)
+    send_deal_alerts(webhook_url, active_deals, app_url=app_url)

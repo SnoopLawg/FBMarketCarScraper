@@ -22,6 +22,7 @@ def main():
     try:
         db.backfill_title_types()
         db.backfill_owner_counts()
+        db.backfill_seller_types()
         db.backfill_vins()
         db.backfill_listed_at()
 

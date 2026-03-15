@@ -369,6 +369,10 @@ class FacebookScraper(BaseScraper):
         elif "fair deal" in text:
             info["deal_rating"] = "Fair Deal"
 
+        # ── Seller type ──────────────────────────────────────
+        if "professional seller" in text or ">dealership<" in text:
+            info["seller_type"] = "dealer"
+
         return info
 
     # ── Login / cookie management ─────────────────────────────────

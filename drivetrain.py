@@ -6,17 +6,18 @@ import re
 # These are the BASE drivetrain — many models offer AWD as an option.
 # If a listing explicitly says AWD/4WD, that overrides the default.
 _MODEL_DEFAULTS = {
-    # Trucks — 4WD is common but 2WD base models exist
-    "tacoma": "4wd",       # Most listed Tacomas are 4WD, especially TRD
-    "tundra": "4wd",
-    "f150": "4wd",
-    "f-150": "4wd",
-    "ranger": "4wd",
-    "colorado": "4wd",
-    "silverado": "4wd",
-    "sierra": "4wd",
-    "frontier": "4wd",
-    "gladiator": "4wd",
+    # Trucks — many base trims are RWD (SR, PreRunner, etc.)
+    # Only give 4WD credit when explicitly stated in listing text.
+    "tacoma": "unknown",
+    "tundra": "unknown",
+    "f150": "unknown",
+    "f-150": "unknown",
+    "ranger": "unknown",
+    "colorado": "unknown",
+    "silverado": "unknown",
+    "sierra": "unknown",
+    "frontier": "unknown",
+    "gladiator": "4wd",    # Gladiator is always 4WD
 
     # SUVs — varies widely
     "4runner": "4wd",
@@ -65,8 +66,10 @@ _DRIVETRAIN_PATTERNS = [
     (r'\bfwd\b', "fwd"),
     (r'\bfront[- ]?wheel[- ]?drive\b', "fwd"),
     (r'\b2wd\b', "2wd"),
+    (r'\b2wd\b', "2wd"),
     (r'\brwd\b', "rwd"),
     (r'\brear[- ]?wheel[- ]?drive\b', "rwd"),
+    (r'\bprerunner\b', "rwd"),     # Toyota PreRunner = always RWD
 ]
 
 

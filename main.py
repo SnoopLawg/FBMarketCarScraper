@@ -166,6 +166,9 @@ def main():
         # who put "salvage" / "clean title" etc. in the listing title)
         db.backfill_title_types()
 
+        # Backfill seller_type from seller name, href, and source
+        db.backfill_seller_types()
+
         # Backfill VINs from existing description text
         db.backfill_vins()
 

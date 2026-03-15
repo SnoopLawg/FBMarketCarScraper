@@ -292,18 +292,73 @@ def get_mpg_cached(db, make, model, year):
 def get_mpg_batch(db, car_queries_with_years):
     """Fetch MPG for multiple (car_query, year) combos, using cache.
 
+    Checks cache first (fast), then fetches uncached items in parallel.
+
     Returns dict {(car_query_lower, year): {mpg_city, mpg_highway, mpg_combined}}
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     results = {}
+    to_fetch = []  # [(key, make, model, year)]
+
+    # Phase 1: check cache (serial, fast)
     for car_query, year in car_queries_with_years:
         make, model = parse_make_model(car_query)
         if not make or not model or not year:
             continue
         key = (car_query.lower(), year)
-        if key not in results:
-            mpg = get_mpg_cached(db, make, model, year)
-            if mpg:
-                results[key] = mpg
+        if key in results:
+            continue
+        # Check cache inline
+        make_l = make.strip().lower()
+        model_l = model.strip().lower()
+        cached = db.get_vehicle_rating(make_l, model_l, year)
+        if cached:
+            mpg_val = cached.get("mpg_combined")
+            if mpg_val is not None:
+                if mpg_val == _MPG_NOT_FOUND:
+                    continue  # Previously checked — no data
+                if mpg_val > 0:
+                    results[key] = {
+                        "mpg_city": cached["mpg_city"],
+                        "mpg_highway": cached["mpg_highway"],
+                        "mpg_combined": cached["mpg_combined"],
+                    }
+                    continue
+        to_fetch.append((key, make, model, year))
+
+    if not to_fetch:
+        return results
+
+    # Phase 2: fetch uncached in parallel
+    logging.info(f"[EPA] Fetching MPG for {len(to_fetch)} car/year "
+                 f"combos in parallel...")
+
+    def _fetch_one(item):
+        key, make, model, year = item
+        logging.info(f"[EPA] Fetching MPG for {year} {make} {model}...")
+        return key, make, model, year, fetch_mpg(make, model, year)
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(_fetch_one, item) for item in to_fetch]
+        for f in as_completed(futures):
+            try:
+                key, make, model, year, mpg = f.result()
+                make_l = make.strip().lower()
+                model_l = model.strip().lower()
+                if mpg:
+                    results[key] = mpg
+                    db.update_vehicle_mpg(
+                        make_l, model_l, year,
+                        mpg["mpg_city"], mpg["mpg_highway"],
+                        mpg["mpg_combined"])
+                else:
+                    db.update_vehicle_mpg(
+                        make_l, model_l, year,
+                        _MPG_NOT_FOUND, _MPG_NOT_FOUND, _MPG_NOT_FOUND)
+            except Exception as e:
+                logging.warning(f"[EPA] MPG fetch failed: {e}")
+
     return results
 
 

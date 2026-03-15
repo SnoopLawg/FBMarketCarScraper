@@ -18,7 +18,8 @@ from database import Database
 
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
-app = Flask(__name__, template_folder=str(SCRIPT_DIR / "templates"))
+app = Flask(__name__, template_folder=str(SCRIPT_DIR / "templates"),
+            static_folder=str(SCRIPT_DIR / "static"))
 
 # Shared state
 _db = None
@@ -51,6 +52,7 @@ def index():
     source_filter = request.args.get("source", "")
     car_filter = request.args.get("car", "")
     title_filter = request.args.get("title", "")
+    seller_type_filter = request.args.get("seller_type", "")
     sort_by = request.args.get("sort", "score")
     search_query = request.args.get("q", "").strip().lower()
     year_min = request.args.get("year_min", "")
@@ -93,6 +95,12 @@ def index():
             elif title_filter == "lemon" and dt != "lemon":
                 continue
             elif title_filter == "unknown" and dt not in ("", "unknown"):
+                continue
+        if seller_type_filter:
+            st = (d.get("seller_type") or "").lower()
+            if seller_type_filter == "unknown" and st:
+                continue
+            elif seller_type_filter != "unknown" and st != seller_type_filter:
                 continue
         if search_query:
             searchable = " ".join([
@@ -140,6 +148,7 @@ def index():
 
     # Enrich with market value ranges (cached per car/year/title group)
     _market_cache = {}
+    trend_keys = set()
     for d in filtered:
         if not d.get("car_query") or not d.get("year"):
             d["market_range"] = None
@@ -150,6 +159,16 @@ def index():
             prices = _db.get_market_prices(d["car_query"], d["year"], grp) if _db else []
             _market_cache[cache_key] = compute_market_range(prices)
         d["market_range"] = _market_cache[cache_key]
+        trend_keys.add(cache_key)
+
+    # Enrich with price trends
+    _trend_cache = _db.get_price_trends_batch(trend_keys) if _db and trend_keys else {}
+    for d in filtered:
+        if d.get("car_query") and d.get("year"):
+            grp = title_group(d.get("title_type"))
+            d["price_trend"] = _trend_cache.get((d["car_query"], d["year"], grp))
+        else:
+            d["price_trend"] = None
 
     sources = sorted(set(d["source"] for d in _deals))
     cars = sorted(set(d["car_query"] for d in _deals))
@@ -163,6 +182,7 @@ def index():
         current_source=source_filter,
         current_car=car_filter,
         current_title=title_filter,
+        current_seller_type=seller_type_filter,
         current_sort=sort_by,
         total=len(filtered),
         current_search=search_query,
@@ -271,6 +291,7 @@ def export_csv():
     source_filter = request.args.get("source", "")
     car_filter = request.args.get("car", "")
     title_filter = request.args.get("title", "")
+    seller_type_filter = request.args.get("seller_type", "")
     search_query = request.args.get("q", "").strip().lower()
     sort_by = request.args.get("sort", "score")
 
@@ -300,6 +321,12 @@ def export_csv():
             if title_filter == "unknown" and dt not in ("", "unknown"):
                 continue
             elif title_filter != "unknown" and dt != title_filter:
+                continue
+        if seller_type_filter:
+            st = (d.get("seller_type") or "").lower()
+            if seller_type_filter == "unknown" and st:
+                continue
+            elif seller_type_filter != "unknown" and st != seller_type_filter:
                 continue
         if search_query:
             searchable = " ".join([
@@ -337,8 +364,8 @@ def export_csv():
     columns = [
         "car_name", "price", "avg_price", "deal_score", "deal_grade",
         "year", "mileage", "source", "location", "drivetrain",
-        "title_type", "trim", "seller", "owner_count", "accident_history",
-        "vin", "href",
+        "title_type", "seller_type", "trim", "seller", "owner_count",
+        "accident_history", "vin", "href",
     ]
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
@@ -446,6 +473,7 @@ def discover_page():
     category_filter = request.args.get("category", "")
     source_filter = request.args.get("source", "")
     title_filter = request.args.get("title", "")
+    seller_type_filter = request.args.get("seller_type", "")
     sort_by = request.args.get("sort", "score")
     search_query = request.args.get("q", "").strip().lower()
     year_min = request.args.get("year_min", "")
@@ -485,6 +513,12 @@ def discover_page():
             elif title_filter == "salvage" and dt != "salvage":
                 continue
             elif title_filter == "unknown" and dt not in ("", "unknown"):
+                continue
+        if seller_type_filter:
+            st = (d.get("seller_type") or "").lower()
+            if seller_type_filter == "unknown" and st:
+                continue
+            elif seller_type_filter != "unknown" and st != seller_type_filter:
                 continue
         if search_query:
             searchable = " ".join([
@@ -531,6 +565,7 @@ def discover_page():
 
     # Enrich with market value ranges
     _market_cache = {}
+    trend_keys = set()
     for d in filtered:
         if not d.get("car_query") or not d.get("year"):
             d["market_range"] = None
@@ -541,6 +576,16 @@ def discover_page():
             prices = _db.get_market_prices(d["car_query"], d["year"], grp) if _db else []
             _market_cache[cache_key] = compute_market_range(prices)
         d["market_range"] = _market_cache[cache_key]
+        trend_keys.add(cache_key)
+
+    # Enrich with price trends
+    _trend_cache = _db.get_price_trends_batch(trend_keys) if _db and trend_keys else {}
+    for d in filtered:
+        if d.get("car_query") and d.get("year"):
+            grp = title_group(d.get("title_type"))
+            d["price_trend"] = _trend_cache.get((d["car_query"], d["year"], grp))
+        else:
+            d["price_trend"] = None
 
     sources = sorted(set(d["source"] for d in _discovery_deals))
     cars = sorted(set(d["car_query"] for d in _discovery_deals))
@@ -563,6 +608,7 @@ def discover_page():
         current_category=category_filter,
         current_source=source_filter,
         current_title=title_filter,
+        current_seller_type=seller_type_filter,
         current_sort=sort_by,
         total=len(filtered),
         total_all=len(_discovery_deals),

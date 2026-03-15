@@ -249,6 +249,7 @@
 {% block body %}
 {% set filter_params = 'source=' ~ current_source ~ '&car=' ~ current_car
     ~ ('&title=' ~ current_title if current_title else '')
+    ~ ('&seller_type=' ~ current_seller_type if current_seller_type else '')
     ~ ('&q=' ~ current_search if current_search else '')
     ~ ('&year_min=' ~ current_year_min if current_year_min else '')
     ~ ('&year_max=' ~ current_year_max if current_year_max else '')
@@ -286,6 +287,13 @@
             <option value="salvage" {{ 'selected' if current_title == 'salvage' else '' }}>Salvage</option>
             <option value="lemon" {{ 'selected' if current_title == 'lemon' else '' }}>Lemon</option>
             <option value="unknown" {{ 'selected' if current_title == 'unknown' else '' }}>Unknown</option>
+        </select>
+
+        <select class="input" style="width:auto" onchange="applyFilter('seller_type', this.value)">
+            <option value="">All Sellers</option>
+            <option value="dealer" {{ 'selected' if current_seller_type == 'dealer' else '' }}>Dealer</option>
+            <option value="private" {{ 'selected' if current_seller_type == 'private' else '' }}>Private</option>
+            <option value="unknown" {{ 'selected' if current_seller_type == 'unknown' else '' }}>Unknown</option>
         </select>
 
         <div class="sort-group">
