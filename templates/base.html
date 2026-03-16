@@ -7,6 +7,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#111116">
     <title>{% block title %}AutoAlert{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +21,7 @@
 <body>
     <nav class="topnav">
         <div class="topnav-inner">
-            <a href="/" class="topnav-brand"><img src="/static/logo.png" alt="AutoAlert" style="height:32px;vertical-align:middle"></a>
+            <a href="/" class="topnav-brand"><img src="/static/logo.svg" alt="AutoAlert" style="height:48px;vertical-align:middle"></a>
             <div class="topnav-links">
                 <a href="/" class="topnav-link {% block nav_deals %}{% endblock %}">Deals</a>
                 <a href="/discover" class="topnav-link {% block nav_discover %}{% endblock %}">Discover</a>
