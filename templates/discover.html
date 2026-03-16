@@ -1,6 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Discover - Car Deal Finder{% endblock %}
+{% block title %}Discover - AutoAlert{% endblock %}
 {% block nav_discover %}active{% endblock %}
+{% block nav_m_discover %}active{% endblock %}
 
 {% block head %}
 <style>
@@ -261,19 +262,47 @@
     .empty-state p { margin-top: 8px; font-size: 13px; }
 
     @media (max-width: 640px) {
-        .deal-grid { grid-template-columns: 1fr; gap: 12px; }
-        .toolbar { top: 56px; padding: 8px 0; }
-        .toolbar-inner { padding: 0 12px; gap: 8px; }
-        .filter-row { display: none; padding: 8px 12px 0; }
+        .deal-grid { grid-template-columns: 1fr; gap: 10px; }
+        .deal-card { border-radius: var(--radius-md); }
+        .deal-card:hover { transform: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+
+        .toolbar { top: 48px; padding: 8px 0; }
+        .toolbar-inner {
+            padding: 0 10px; gap: 6px;
+            overflow-x: auto; flex-wrap: nowrap;
+            -webkit-overflow-scrolling: touch;
+        }
+        .toolbar-inner select.input { min-width: 0; flex-shrink: 0; font-size: 13px; min-height: 38px; padding: 6px 28px 6px 8px; }
+        .toolbar-count { font-size: 12px; white-space: nowrap; }
+
+        .filter-row { display: none; padding: 8px 10px 0; }
         .filter-row.open { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
         .filter-row.open .flex { width: 100%; }
         .filter-row.open .input { width: 100% !important; }
-        .filter-toggle-mobile { display: inline-flex; align-items: center; gap: 4px; }
-        .sort-group { overflow-x: auto; flex-wrap: nowrap; }
-        .page { padding: 12px; }
+        .filter-toggle-mobile { display: inline-flex; align-items: center; gap: 4px; min-height: 38px; }
+
+        .sort-group { overflow-x: auto; flex-wrap: nowrap; flex-shrink: 0; }
+        .sort-btn { white-space: nowrap; min-height: 36px; display: flex; align-items: center; }
+
         .deal-body { padding: 12px; }
+        .deal-title { font-size: 14px; }
+        .deal-price { font-size: 22px; }
+        .deal-detail { font-size: 12px; }
         .carousel-btn { opacity: 1; }
-        .category-tabs { padding: 8px 12px 0; overflow-x: auto; flex-wrap: nowrap; }
+        .deal-actions { flex-direction: column; }
+        .deal-actions .btn { min-height: 44px; }
+
+        .page { padding: 10px; padding-bottom: 80px; }
+        .empty-state { padding: 40px 16px; }
+
+        /* Category tabs: horizontal scroll */
+        .category-tabs {
+            padding: 8px 10px 0;
+            overflow-x: auto; flex-wrap: nowrap;
+            -webkit-overflow-scrolling: touch;
+            gap: 4px;
+        }
+        .category-tab { white-space: nowrap; font-size: 12px; padding: 6px 12px; }
     }
 </style>
 {% endblock %}

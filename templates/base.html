@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#111116">
     <title>{% block title %}AutoAlert{% endblock %}</title>
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -332,10 +335,66 @@
 
         /* ── Responsive ───────────────────────────────────── */
         @media (max-width: 640px) {
-            .topnav-inner { padding: 0 16px; }
-            .page, .page-narrow { padding: 16px; }
-            .topnav-brand { margin-right: 12px; font-size: 14px; }
-            .topnav-link { padding: 6px 10px; font-size: 12px; }
+            /* ── Top nav: minimal on mobile ── */
+            .topnav { height: 48px; }
+            .topnav-inner { padding: 0 12px; height: 48px; }
+            .topnav-brand { margin-right: auto; font-size: 14px; }
+            .topnav-brand img { height: 24px !important; }
+            .topnav-links { display: none; }
+            #scrape-btn, #enrich-btn { display: none !important; }
+            #mobile-scrape-btn { display: inline-flex !important; }
+
+            /* ── Page content: room for bottom nav ── */
+            .page, .page-narrow { padding: 10px; padding-bottom: 80px; }
+
+            /* ── Touch targets: minimum 48px ── */
+            .btn { min-height: 44px; padding: 10px 16px; font-size: 14px; }
+            .btn-sm { min-height: 36px; }
+            select.input { min-height: 44px; font-size: 16px; }
+            .input { min-height: 44px; font-size: 16px; }
+
+            /* ── Badges: slightly larger for touch ── */
+            .badge { padding: 4px 10px; font-size: 11px; }
+            .badge-score { padding: 5px 12px; font-size: 13px; }
+
+            /* ── Panels ── */
+            .panel { padding: 16px; margin-bottom: 12px; }
+
+            /* ── Score modal: full-width on mobile ── */
+            .score-modal { width: 100vw; max-width: 100vw; border-radius: 12px 12px 0 0; max-height: 80vh; }
+            .score-modal-overlay.open { align-items: flex-end; }
+
+            /* ── Scrape toast: full-width at bottom ── */
+            .scrape-toast { left: 10px; right: 10px; bottom: 70px; min-width: auto; }
+
+            /* ── Bottom tab bar ── */
+            .bottom-nav {
+                display: flex;
+                position: fixed; bottom: 0; left: 0; right: 0;
+                background: var(--bg-nav);
+                border-top: 1px solid var(--border);
+                z-index: 100;
+                padding: 4px 0;
+                padding-bottom: max(4px, env(safe-area-inset-bottom));
+            }
+            .bottom-nav a {
+                flex: 1;
+                display: flex; flex-direction: column;
+                align-items: center; gap: 1px;
+                text-decoration: none;
+                color: var(--text-muted);
+                font-size: 10px; font-weight: 500;
+                padding: 6px 0;
+                min-height: 48px;
+                justify-content: center;
+                transition: color 0.15s;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .bottom-nav a.active { color: var(--accent); }
+            .bottom-nav a .lucide { width: 22px; height: 22px; }
+        }
+        @media (min-width: 641px) {
+            .bottom-nav { display: none; }
         }
     </style>
     {% block head %}{% endblock %}
@@ -352,6 +411,10 @@
                 <a href="/analytics" class="topnav-link {% block nav_analytics %}{% endblock %}">Analytics</a>
                 <a href="/settings" class="topnav-link {% block nav_settings %}{% endblock %}">Settings</a>
             </div>
+            <button class="btn btn-sm mobile-scrape-btn" id="mobile-scrape-btn"
+                    onclick="startScrape()" style="display:none;margin-left:auto;background:var(--accent);color:#fff;border-color:var(--accent);min-height:36px;padding:0 12px;">
+                <i data-lucide="refresh-cw" style="width:16px;height:16px"></i>
+            </button>
             <button class="btn btn-sm" id="enrich-btn"
                     onclick="startEnrich()" style="margin-left:auto;background:var(--purple);color:#fff;border-color:var(--purple);">
                 Enrich Titles
@@ -742,6 +805,15 @@
         }
     }).catch(() => {});
     </script>
+
+    <!-- Bottom nav for mobile -->
+    <nav class="bottom-nav">
+        <a href="/" class="{% block nav_m_deals %}{% endblock %}"><i data-lucide="search"></i>Deals</a>
+        <a href="/discover" class="{% block nav_m_discover %}{% endblock %}"><i data-lucide="compass"></i>Discover</a>
+        <a href="/sell" class="{% block nav_m_sell %}{% endblock %}"><i data-lucide="tag"></i>Sell</a>
+        <a href="/favorites" class="{% block nav_m_favorites %}{% endblock %}"><i data-lucide="heart"></i>Saved</a>
+        <a href="/settings" class="{% block nav_m_settings %}{% endblock %}"><i data-lucide="settings"></i>More</a>
+    </nav>
 
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script>lucide.createIcons();</script>
