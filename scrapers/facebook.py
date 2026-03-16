@@ -262,6 +262,15 @@ class FacebookScraper(BaseScraper):
             if len(text) > 8000:
                 text = text[:8000]
 
+            # Detect login wall / non-listing pages
+            if any(marker in text for marker in [
+                "Explore the things\nyou love",
+                "Create new account",
+                "Log Into Facebook",
+                "This content isn't available",
+            ]):
+                return None
+
             return text if len(text) > 50 else None
         except Exception:
             return None
@@ -301,6 +310,12 @@ class FacebookScraper(BaseScraper):
         """Extract title type, condition, and other info from a FB listing detail page."""
         info = {}
         text = page_text.lower()
+
+        # Detect login wall / non-listing pages — return empty to avoid
+        # false keyword matches in FB boilerplate HTML
+        if ("create new account" in text and "log in" in text
+                and "marketplace" not in text[:500]):
+            return info
 
         # ── Title type detection ─────────────────────────────────
         # Facebook shows title status in vehicle details or description
