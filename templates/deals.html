@@ -126,55 +126,23 @@
 </div>
 {% endblock %}
 
+
 {% block scripts %}
+<script src="/static/js/carousel.js"></script>
+<script src="/static/js/deal-actions.js"></script>
+<script src="/static/js/filters.js"></script>
+<script src="/static/js/swipe.js"></script>
 <script>
-    /* ── Filters ── */
-    function applyFilter(key, value) {
-        const params = new URLSearchParams(window.location.search);
-        if (value) params.set(key, value);
-        else params.delete(key);
-        window.location.search = params.toString();
-    }
-
-    function applyAllFilters() {
-        const params = new URLSearchParams(window.location.search);
-        const fields = {
-            'q': 'search-input',
-            'year_min': 'year-min', 'year_max': 'year-max',
-            'mileage_min': 'mileage-min', 'mileage_max': 'mileage-max',
-            'price_min': 'price-min', 'price_max': 'price-max',
-        };
-        for (const [param, elId] of Object.entries(fields)) {
-            const val = document.getElementById(elId).value;
-            if (val) params.set(param, val); else params.delete(param);
-        }
-        window.location.search = params.toString();
-    }
-
-    function clearFilters() { window.location.href = '/'; }
-
-    function toggleMobileFilters() {
-        document.getElementById('filter-row').classList.toggle('open');
-    }
-
-    // Apply filters on change for numeric inputs
-    ['year-min','year-max','mileage-min','mileage-max','price-min','price-max'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('change', applyAllFilters);
-    });
-
-    /* ── CSV Export ── */
+    /* ── Deals-specific: CSV Export + Compare ── */
     function exportCSV() {
         const params = new URLSearchParams(window.location.search);
         window.location.href = '/api/export-csv?' + params.toString();
     }
 
-    /* ── Compare (overlay button version) ── */
     function toggleCompare(btn) {
         btn.classList.toggle('active');
         updateCompare();
     }
-
     function updateCompare() {
         const selected = document.querySelectorAll('.overlay-compare.active');
         const btn = document.getElementById('compare-btn');
@@ -182,7 +150,6 @@
         count.textContent = selected.length;
         btn.style.display = selected.length > 0 ? '' : 'none';
     }
-
     function openCompare() {
         const selected = document.querySelectorAll('.overlay-compare.active');
         if (selected.length < 2) { alert('Select at least 2 deals to compare.'); return; }
@@ -190,207 +157,5 @@
         selected.forEach(btn => params.append('href', btn.dataset.href));
         window.open('/compare?' + params.toString(), '_blank');
     }
-
-    /* ── Favorite ── */
-    async function toggleFav(btn, href) {
-        const res = await fetch('/api/favorite', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({href})
-        });
-        const data = await res.json();
-        if (data.saved) {
-            // Remove card from deals (it's now in favorites)
-            const card = btn.closest('.deal-card');
-            if (card) {
-                card.style.transition = 'opacity 0.3s, transform 0.3s';
-                card.style.opacity = '0';
-                card.style.transform = 'scale(0.95)';
-                setTimeout(() => card.remove(), 300);
-            }
-        } else {
-            btn.classList.remove('active');
-        }
-    }
-
-    /* ── Delete ── */
-    async function deleteDeal(href, cardId) {
-        await fetch('/api/delete', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({href})
-        });
-        const card = document.getElementById(cardId);
-        card.style.transition = 'opacity 0.3s, transform 0.3s';
-        card.style.opacity = '0';
-        card.style.transform = 'scale(0.95)';
-        setTimeout(() => card.remove(), 300);
-    }
-
-    /* ── VIN Decode ── */
-    async function decodeVin(vin, btn) {
-        btn.disabled = true;
-        btn.textContent = '...';
-        try {
-            const res = await fetch('/api/vin-decode/' + vin);
-            if (res.ok) {
-                const data = await res.json();
-                const parts = [data.year, data.make, data.model, data.trim].filter(Boolean);
-                const extra = [data.drive_type, data.fuel_type].filter(Boolean).join(' · ');
-                btn.outerHTML = '<span class="badge badge-info" style="margin-left:4px;font-size:10px">Verified</span>';
-                const vinLine = btn.closest ? btn.closest('.deal-detail') : btn.parentElement;
-                if (vinLine && parts.length) {
-                    const info = document.createElement('div');
-                    info.className = 'deal-detail deal-detail-muted';
-                    info.style.cssText = 'padding-left:22px;font-size:11px';
-                    info.textContent = parts.join(' ') + (extra ? ' · ' + extra : '');
-                    vinLine.insertAdjacentElement('afterend', info);
-                }
-            } else {
-                btn.textContent = 'N/A';
-                btn.style.color = 'var(--red)';
-            }
-        } catch (e) {
-            btn.textContent = 'Error';
-            btn.style.color = 'var(--red)';
-        }
-    }
-
-    /* ── Show more / Show less toggle ── */
-    document.addEventListener('click', function(e) {
-        const toggle = e.target.closest('.deal-details-toggle');
-        if (!toggle) return;
-        const card = toggle.closest('.deal-card');
-        const label = toggle.querySelector('span');
-        if (label) {
-            label.textContent = card.classList.contains('expanded') ? 'Show less' : 'Show more';
-        }
-        if (typeof lucide !== 'undefined') lucide.createIcons();
-    });
-
-    /* ── Image Carousel ── */
-    function carouselImgError(img) {
-        const carousel = img.closest('.carousel');
-        const fallback = carousel && carousel.dataset.fallback;
-        if (fallback && img.src !== fallback && !img.dataset.triedFallback) {
-            img.dataset.triedFallback = '1';
-            img.src = fallback;
-        } else {
-            img.style.display = 'none';
-            // If the active slide failed, show "No image" placeholder
-            if (img.classList.contains('active') && carousel) {
-                const wrapper = carousel.closest('.deal-img-wrapper');
-                if (wrapper && !wrapper.querySelector('.deal-img-empty')) {
-                    carousel.style.display = 'none';
-                    const ph = document.createElement('div');
-                    ph.className = 'deal-img-empty';
-                    ph.textContent = 'No image';
-                    wrapper.appendChild(ph);
-                }
-            }
-        }
-    }
-    function carouselNav(btn, dir) {
-        const carousel = btn.closest('.carousel');
-        const slides = carousel.querySelectorAll('.carousel-slide');
-        const dots = carousel.querySelectorAll('.carousel-dot');
-        let idx = parseInt(carousel.dataset.index || 0) + dir;
-        idx = (idx + slides.length) % slides.length;
-        carousel.dataset.index = idx;
-        slides.forEach((s, i) => {
-            s.classList.toggle('active', i === idx);
-            // Lazy-load: set src from data-src when becoming active
-            if (i === idx && !s.src && s.dataset.src) s.src = s.dataset.src;
-        });
-        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
-    }
-
-    /* ── Touch Swipe (mobile: left=delete, right=favorite) ── */
-    (function() {
-        if (!('ontouchstart' in window)) return;
-
-        let startX, startY, currentCard, swiping = false;
-        const THRESHOLD = 100;
-
-        document.addEventListener('touchstart', function(e) {
-            const card = e.target.closest('.deal-card');
-            if (!card) return;
-            // Don't swipe if touching inside a multi-image carousel
-            const carousel = e.target.closest('.carousel');
-            if (carousel && carousel.querySelectorAll('.carousel-slide').length > 1) return;
-
-            startX = e.touches[0].clientX;
-            startY = e.touches[0].clientY;
-            currentCard = card;
-            swiping = false;
-        }, {passive: true});
-
-        document.addEventListener('touchmove', function(e) {
-            if (!currentCard) return;
-            const dx = e.touches[0].clientX - startX;
-            const dy = e.touches[0].clientY - startY;
-
-            // Only swipe if horizontal movement dominates
-            if (!swiping && Math.abs(dx) > 15 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-                swiping = true;
-                currentCard.classList.add('swiping');
-            }
-            if (!swiping) return;
-
-            e.preventDefault();
-            const rotate = dx * 0.04;
-            currentCard.style.transform = `translateX(${dx}px) rotate(${rotate}deg)`;
-
-            // Show swipe indicators
-            const favInd = currentCard.querySelector('.swipe-fav');
-            const delInd = currentCard.querySelector('.swipe-delete');
-            if (favInd) favInd.style.opacity = dx > 30 ? Math.min(1, (dx - 30) / 80) : 0;
-            if (delInd) delInd.style.opacity = dx < -30 ? Math.min(1, (-dx - 30) / 80) : 0;
-        }, {passive: false});
-
-        document.addEventListener('touchend', function(e) {
-            if (!currentCard || !swiping) { currentCard = null; return; }
-            const dx = e.changedTouches[0].clientX - startX;
-            const card = currentCard;
-            currentCard = null;
-
-            // Reset indicators
-            const favInd = card.querySelector('.swipe-fav');
-            const delInd = card.querySelector('.swipe-delete');
-
-            if (dx > THRESHOLD) {
-                // Swipe right → favorite & remove from deals
-                const href = card.dataset.href;
-                fetch('/api/favorite', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({href})
-                });
-                card.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
-                card.style.transform = 'translateX(120%) rotate(8deg)';
-                card.style.opacity = '0';
-                setTimeout(() => card.remove(), 300);
-            } else if (dx < -THRESHOLD) {
-                // Swipe left → delete
-                const href = card.dataset.href;
-                fetch('/api/delete', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({href})
-                });
-                card.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
-                card.style.transform = 'translateX(-120%) rotate(-8deg)';
-                card.style.opacity = '0';
-                setTimeout(() => card.remove(), 300);
-            } else {
-                // Snap back
-                card.style.transition = 'transform 0.25s ease';
-                card.style.transform = 'translateX(0)';
-                if (favInd) favInd.style.opacity = 0;
-                if (delInd) delInd.style.opacity = 0;
-                setTimeout(() => { card.classList.remove('swiping'); card.style.transition = ''; }, 250);
-            }
-        }, {passive: true});
-    })();
 </script>
 {% endblock %}
