@@ -62,13 +62,33 @@ def sync_from_prod():
             print(f"  {name}: {size_kb:.0f} KB")
 
 
+def _ssh(cmd):
+    """Run a command on the production host via SSH."""
+    result = subprocess.run(
+        ["ssh", PROD_HOST, cmd],
+        capture_output=True, text=True, timeout=30,
+    )
+    return result.returncode == 0, result.stderr.strip()
+
+
 def sync_to_prod():
-    """Push the local DB and deleted_listings.txt back to production."""
+    """Push the local DB and deleted_listings.txt back to production.
+
+    Stops the container first to avoid corrupting the SQLite DB,
+    then restarts it after the files are copied.
+    """
     prod_data_dir = str(Path(PROD_DB_PATH).parent)
+
+    # Stop container so SQLite DB isn't open during copy
+    print("Stopping carscraper container...")
+    ok, err = _ssh("cd /home/snoop/docker/carscraper && docker compose stop")
+    if not ok:
+        print(f"WARNING: could not stop container: {err}")
+
+    # Copy files
     files = [
         (str(LOCAL_DB), f"{PROD_HOST}:{PROD_DB_PATH}"),
     ]
-    # Also sync deleted_listings.txt if it exists
     deleted_file = DATA_DIR / "deleted_listings.txt"
     if deleted_file.exists():
         files.append(
@@ -84,6 +104,14 @@ def sync_to_prod():
             print(f"ERROR: scp {name} failed: {result.stderr.strip()}")
         else:
             print(f"Pushed {name} to production.")
+
+    # Restart container
+    print("Starting carscraper container...")
+    ok, err = _ssh("cd /home/snoop/docker/carscraper && docker compose start")
+    if not ok:
+        print(f"ERROR: could not start container: {err}")
+    else:
+        print("Container restarted.")
 
 
 def pull_top_deals(count=20):
