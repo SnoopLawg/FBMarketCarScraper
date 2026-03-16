@@ -413,11 +413,11 @@ select.input {
     .toolbar { top: var(--nav-height-mobile); padding: 8px 0; }
     .toolbar-inner {
         padding: 0 10px; gap: 6px;
-        overflow-x: auto; flex-wrap: nowrap;
-        -webkit-overflow-scrolling: touch;
+        flex-wrap: nowrap;
     }
-    .toolbar-inner select.input { min-width: 0; flex-shrink: 0; font-size: 13px; min-height: 38px; padding: 6px 28px 6px 8px; }
     .toolbar-count { font-size: 12px; white-space: nowrap; }
+    /* Hide desktop dropdowns on mobile — they move into the filter row */
+    .toolbar-desktop-filter { display: none !important; }
     .sort-group { overflow-x: auto; flex-wrap: nowrap; flex-shrink: 0; }
     .sort-btn { white-space: nowrap; min-height: 36px; display: flex; align-items: center; }
     .filter-toggle-mobile { display: inline-flex; align-items: center; gap: 4px; min-height: 38px; }
@@ -460,4 +460,5 @@ select.input {
 }
 @media (min-width: 641px) {
     .bottom-nav { display: none; }
+    .filter-row-mobile-select { display: none !important; }
 }
