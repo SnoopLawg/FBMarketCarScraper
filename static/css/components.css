@@ -410,12 +410,16 @@ select.input {
     .carousel-btn { opacity: 1; }
 
     /* Toolbar */
-    .toolbar { top: var(--nav-height-mobile); padding: 8px 0; }
+    .toolbar { top: var(--nav-height-mobile); padding: 6px 0; }
     .toolbar-inner {
         padding: 0 10px; gap: 6px;
         flex-wrap: nowrap;
+        overflow: hidden;
     }
-    .toolbar-count { font-size: 12px; white-space: nowrap; }
+    .toolbar-count { font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+    .filter-toggle-mobile { flex-shrink: 0; }
+    .sort-group { flex-shrink: 1; min-width: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .sort-btn { padding: 5px 8px; font-size: 11px; }
     /* Hide desktop dropdowns on mobile — they move into the filter row */
     .toolbar-desktop-filter { display: none !important; }
     .sort-group { overflow-x: auto; flex-wrap: nowrap; flex-shrink: 0; }
