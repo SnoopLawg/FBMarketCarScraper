@@ -1,0 +1,78 @@
+/* ── Design Tokens ──────────────────────────────────────────
+   Single source of truth for all design values.
+   Import this FIRST in every page.
+   ───────────────────────────────────────────────────────── */
+
+:root {
+    /* ── Surface colors ── */
+    --bg-primary: #111116;
+    --bg-card: #1a1a24;
+    --bg-card-hover: #22222e;
+    --bg-input: #14141c;
+    --bg-nav: #151520;
+    --bg-elevated: #1e1e2a;
+
+    /* ── Borders ── */
+    --border: #1e1e2e;
+    --border-hover: #3b3b5c;
+
+    /* ── Text ── */
+    --text-primary: #f0f0f5;
+    --text-secondary: #9090a8;
+    --text-muted: #5c5c74;
+
+    /* ── Accent colors ── */
+    --accent: #5b8dee;
+    --accent-hover: #7aa4f7;
+    --green: #34d399;
+    --green-muted: #1a3d2e;
+    --red: #f87171;
+    --red-muted: #3d1a1a;
+    --yellow: #fbbf24;
+    --purple: #a78bfa;
+    --orange: #fb923c;
+
+    /* ── Brand ── */
+    --brand-orange: #e8621a;
+
+    /* ── Spacing ── */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+
+    /* ── Radius ── */
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    /* ── Typography ── */
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+
+    /* ── Transitions ── */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.2s ease;
+    --transition-slow: 0.3s ease;
+
+    /* ── Shadows ── */
+    --shadow-card: 0 2px 8px rgba(0,0,0,0.2);
+    --shadow-card-hover: 0 8px 24px rgba(0,0,0,0.35);
+    --shadow-modal: 0 16px 48px rgba(0,0,0,0.5);
+    --shadow-toast: 0 8px 24px rgba(0,0,0,0.4);
+
+    /* ── Z-index scale ── */
+    --z-toolbar: 90;
+    --z-nav: 100;
+    --z-toast: 200;
+    --z-modal: 300;
+
+    /* ── Layout ── */
+    --max-width: 1320px;
+    --max-width-narrow: 720px;
+    --nav-height: 56px;
+    --nav-height-mobile: 48px;
+}

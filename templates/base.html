@@ -11,8 +11,12 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/tokens.css">
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    {% block stylesheets %}{% endblock %}
     <style>
-        /* ── Reset & Tokens ──────────────────────────────── */
+        /* Page-specific overrides only — shared styles are in /static/css/ */
         :root {
             --bg-primary: #111116;
             --bg-card: #1a1a24;
