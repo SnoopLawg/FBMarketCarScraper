@@ -26,7 +26,10 @@
         <div class="swipe-indicator swipe-delete">PASS</div>
 
         {# ── Image carousel ── #}
-        {% set all_images = deal.image_urls if deal.image_urls else ([deal.image_url] if deal.image_url else []) %}
+        {# Original search card image first (most reliable), then enriched images #}
+        {% set _primary = [deal.image_url] if deal.image_url else [] %}
+        {% set _extra = deal.image_urls|default([])|reject('equalto', deal.image_url)|list if deal.image_urls else [] %}
+        {% set all_images = _primary + _extra %}
         {% if all_images %}
         <div class="carousel" data-index="0" {% if deal.image_url %}data-fallback="{{ deal.image_url }}"{% endif %}>
             {% for img_url in all_images %}
