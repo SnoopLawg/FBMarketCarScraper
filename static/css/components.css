@@ -375,7 +375,7 @@ select.input {
     .topnav { height: var(--nav-height-mobile); }
     .topnav-inner { padding: 0 12px; height: var(--nav-height-mobile); }
     .topnav-brand { margin-right: auto; font-size: 14px; }
-    .topnav-brand img { height: 24px !important; }
+    .topnav-brand img { height: 40px !important; }
     .topnav-links { display: none; }
     #scrape-btn, #enrich-btn { display: none !important; }
     #mobile-scrape-btn { display: inline-flex !important; }
