@@ -1,11 +1,13 @@
 """Always-on entrypoint for Docker: load existing deals from DB and serve the web UI."""
 
 import logging
+import signal
+import sys
 
 from config import load_config, get_all_search_queries, load_discovery_cars
 from database import Database
 from analysis import clean_listings, calculate_averages, find_deals, find_sell_data
-from web_ui import start_web_ui
+from web_ui import start_web_ui, shutdown_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +58,14 @@ def main():
         discovery_deals = []
     finally:
         db.close()
+
+    def _handle_sigterm(signum, frame):
+        logging.info("Received SIGTERM, shutting down gracefully...")
+        shutdown_db()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGINT, _handle_sigterm)
 
     start_web_ui(deals, sell_data=sell_data,
                  discovery_deals=discovery_deals)

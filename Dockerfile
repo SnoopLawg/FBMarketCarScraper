@@ -29,4 +29,6 @@ EXPOSE 5001
 
 VOLUME /data
 
+STOPSIGNAL SIGTERM
+
 CMD ["python", "server.py"]

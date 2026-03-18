@@ -928,6 +928,17 @@ def scraper_health():
     return jsonify({"health": health, "recent_runs": runs})
 
 
+# ── Shutdown ──────────────────────────────────────────────────────
+
+def shutdown_db():
+    """Close the global database connection (called on SIGTERM)."""
+    global _db
+    if _db:
+        logging.info("Closing database connection...")
+        _db.close()
+        _db = None
+
+
 # ── Startup ───────────────────────────────────────────────────────
 
 def start_web_ui(deals, port=5001, sell_data=None, discovery_deals=None):
