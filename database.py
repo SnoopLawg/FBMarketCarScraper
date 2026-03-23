@@ -548,12 +548,13 @@ class Database:
         return count
 
     def get_analytics_data(self):
-        """Return all active listings with key fields for analytics."""
+        """Return active listings from last 30 days for analytics."""
         self.cur.execute(
             "SELECT car_query, price, mileage, year, source, location, "
             "seller, deal_rating, distance, created_at, "
             "title_type, trim, accident_history, condition, vin "
-            "FROM listings WHERE deleted_at IS NULL AND price IS NOT NULL"
+            "FROM listings WHERE deleted_at IS NULL AND price IS NOT NULL "
+            "AND created_at >= datetime('now', '-30 days')"
         )
         return self.cur.fetchall()
 

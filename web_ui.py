@@ -796,18 +796,9 @@ def analytics_data():
             "car_query": r["car_query"],
             "price": r["price"],
             "mileage": r["mileage"],
-            "year": r["year"],
             "source": r["source"],
-            "location": r["location"],
-            "seller": r["seller"],
-            "deal_rating": r["deal_rating"],
-            "distance": r["distance"],
-            "created_at": r["created_at"],
             "title_type": r["title_type"] or "",
-            "trim": r["trim"] or "",
-            "accident_history": r["accident_history"] or "",
-            "condition": r["condition"] or "",
-            "vin": r["vin"] or "",
+            "vin": 1 if r["vin"] else 0,
         })
 
     avg_rows = _db.get_analytics_averages() if _db else []

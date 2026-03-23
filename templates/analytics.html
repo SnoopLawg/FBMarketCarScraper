@@ -262,7 +262,7 @@ function render(rawData) {
         ? Math.round(scoredDeals.reduce((a,d) => a + d.deal_score, 0) / scoredDeals.length) : 0;
     const gradeACount = deals.filter(d => d.deal_grade === 'A').length;
 
-    const withVin = listings.filter(l => l.vin).length;
+    const withVin = listings.filter(l => l.vin === 1 || l.vin === true).length;
     const vinPct = listings.length > 0 ? Math.round(withVin / listings.length * 100) : 0;
 
     const totalDropSaved = price_drops.reduce((a,d) => a + d.saved, 0);
