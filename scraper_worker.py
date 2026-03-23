@@ -215,7 +215,13 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
     result = {"listings": {}, "errors": []}
     db = Database()
     db.open()
-    driver = create_driver(proxy_config=config.get("Proxy"))
+
+    # Only create a browser if at least one source needs it
+    needs_driver = any(
+        getattr(ALL_SCRAPERS.get(n), "NEEDS_DRIVER", True)
+        for n in source_names if n in ALL_SCRAPERS
+    )
+    driver = create_driver(proxy_config=config.get("Proxy")) if needs_driver else None
 
     def insert_fn(**kwargs):
         db.insert_listing(**kwargs, deleted_set=deleted_set)
@@ -301,7 +307,8 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                     screenshot_path=screenshot_path,
                     duration_seconds=round(duration, 1))
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
         db.close()
 
     return result
@@ -353,13 +360,16 @@ def _run_scrape(on_complete):
                         "message": "Launching scrapers..."})
 
         fb_sources = [k for k in enabled if k == "facebook"]
-        other_sources = [k for k in enabled if k != "facebook"]
+        # Give each non-FB source its own driver to prevent session
+        # corruption (Autotrader was getting a dead marionette session
+        # after CL + Cars.com exhausted the shared browser).
+        other_groups = {k: [k] for k in enabled if k != "facebook"}
 
         all_listings = {}
         all_errors = []
 
-        # Use 2 threads if FB is enabled, otherwise just 1
-        num_workers = 2 if fb_sources and other_sources else 1
+        num_workers = 1 + len(other_groups) if fb_sources else len(other_groups)
+        num_workers = max(1, num_workers)
 
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             futures = {}
@@ -367,9 +377,9 @@ def _run_scrape(on_complete):
                 futures["facebook"] = executor.submit(
                     _scrape_source_group, "facebook", fb_sources,
                     config, deleted_set, enrich_fb=True)
-            if other_sources:
-                futures["other"] = executor.submit(
-                    _scrape_source_group, "other", other_sources,
+            for group_name, sources in other_groups.items():
+                futures[group_name] = executor.submit(
+                    _scrape_source_group, group_name, sources,
                     config, deleted_set, enrich_fb=False)
 
             for future in as_completed(futures.values()):

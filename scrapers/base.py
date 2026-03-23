@@ -17,6 +17,7 @@ SCREENSHOTS_DIR = Path(__file__).parent.parent / "screenshots"
 
 class BaseScraper(ABC):
     SOURCE_NAME = ""
+    NEEDS_DRIVER = True  # Override to False for HTTP-only scrapers
 
     def __init__(self, driver, config, insert_fn, car_list=None):
         self.driver = driver
