@@ -3,6 +3,7 @@
 import json
 import re
 import logging
+import time
 from urllib.parse import quote_plus
 
 from selenium.webdriver.common.by import By
@@ -12,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from parsing import classify_seller_type
+from vin import extract_vin
 
 
 class CarsComScraper(BaseScraper):
@@ -239,3 +241,93 @@ class CarsComScraper(BaseScraper):
         except Exception as e:
             logging.debug(f"[Cars.com] Parse error: {e}")
             return False
+
+    def enrich_listings(self, db, limit=60):
+        """Visit Cars.com detail pages to extract seller notes and title info."""
+        rows = db.get_listings_missing_title_type(source="carscom", limit=limit)
+        if not rows:
+            self.log("No Cars.com listings need enrichment.")
+            return 0
+
+        self.log(f"Enriching {len(rows)} Cars.com listings...")
+        enriched = 0
+
+        for row in rows:
+            href = row["href"]
+            try:
+                self.driver.get(href)
+                self.inject_stealth()
+                self.human_delay(3, 6)
+
+                body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                body_lower = body_text.lower()
+
+                details = {}
+
+                # Title type from seller notes or page text
+                if "salvage" in body_lower:
+                    details["title_type"] = "salvage"
+                elif "rebuilt title" in body_lower or "rebuilt/restored" in body_lower or "r/r title" in body_lower:
+                    details["title_type"] = "rebuilt"
+                elif "lemon" in body_lower:
+                    details["title_type"] = "lemon"
+                elif "clean title" in body_lower:
+                    details["title_type"] = "clean"
+
+                # Accident history
+                if "no accident" in body_lower:
+                    details["accident_history"] = "No Accidents"
+                elif "accident reported" in body_lower or "has been in" in body_lower:
+                    details["accident_history"] = "Accident Reported"
+
+                # Owner count
+                owner_match = re.search(r'(\d+)[- ]?owner', body_lower)
+                if owner_match:
+                    details["owner_count"] = owner_match.group(1)
+                elif "one-owner" in body_lower or "one owner" in body_lower:
+                    details["owner_count"] = "1"
+
+                # Seller notes / description — extract the block after "Seller's notes"
+                desc_match = re.search(
+                    r"(?:seller.s? notes?|description)(.*?)(?:features|specs|finance|contact|similar|$)",
+                    body_text, re.IGNORECASE | re.DOTALL
+                )
+                if desc_match:
+                    desc = desc_match.group(1).strip()[:2000]
+                    if len(desc) > 20:
+                        details["description"] = desc
+
+                        # Try to extract VIN from description
+                        vin = extract_vin(desc)
+                        if vin:
+                            details["vin"] = vin
+
+                        # Re-check title from description if not found above
+                        if "title_type" not in details:
+                            desc_lower = desc.lower()
+                            if "salvage" in desc_lower:
+                                details["title_type"] = "salvage"
+                            elif "rebuilt" in desc_lower:
+                                details["title_type"] = "rebuilt"
+                            elif "clean title" in desc_lower:
+                                details["title_type"] = "clean"
+
+                if details:
+                    db.update_listing_details(href, **details)
+                    enriched += 1
+                    tt = details.get("title_type", "—")
+                    self.log(f"  Enriched: {row['car_name'][:40]} → title={tt}")
+                else:
+                    db.mark_enriched(href)
+
+            except Exception as e:
+                logging.warning(f"[Cars.com] Enrich error for {href[:60]}: {e}")
+                try:
+                    db.mark_enriched(href)
+                except Exception:
+                    pass
+
+            self.human_delay(1, 3)
+
+        self.log(f"Enrichment complete: {enriched}/{len(rows)} listings updated.")
+        return enriched

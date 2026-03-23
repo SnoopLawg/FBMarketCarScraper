@@ -837,19 +837,19 @@ class Database:
         return self.cur.fetchall()
 
     def backfill_title_types(self):
-        """Scan car_name text for title keywords and backfill title_type."""
+        """Scan car_name + description for title keywords and backfill title_type."""
         updated = 0
         rows = self.cur.execute(
-            "SELECT id, car_name FROM listings "
+            "SELECT id, car_name, description FROM listings "
             "WHERE (title_type IS NULL OR title_type = '') "
             "AND deleted_at IS NULL"
         ).fetchall()
         for row in rows:
-            text = (row["car_name"] or "").lower()
+            text = f"{row['car_name'] or ''} {row['description'] or ''}".lower()
             title_type = None
             if "salvage" in text:
                 title_type = "salvage"
-            elif "rebuilt" in text:
+            elif "rebuilt" in text or "reconstructed" in text or "r/r title" in text:
                 title_type = "rebuilt"
             elif "lemon" in text:
                 title_type = "lemon"
@@ -862,7 +862,7 @@ class Database:
                 updated += 1
         self.conn.commit()
         if updated:
-            logging.info(f"Backfilled title_type for {updated} listings from car_name text.")
+            logging.info(f"Backfilled title_type for {updated} listings from car_name/description text.")
         return updated
 
     def backfill_owner_counts(self):

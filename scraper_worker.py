@@ -274,15 +274,17 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                             f"vs {src_health['avg_yield']:.0f} avg — "
                             f"below expected yield")
 
-                # Enrich Facebook listings using the same driver
-                if enrich_fb and name == "facebook":
+                # Enrich listings using the same driver (if scraper supports it)
+                if hasattr(scraper, 'enrich_listings') and (
+                        enrich_fb or name != "facebook"):
                     _status.update({
-                        "message": "Enriching FB listings with detail data...",
+                        "message": f"Enriching {name} listings with detail data...",
                     })
                     try:
-                        scraper.enrich_listings(db, limit=100)
+                        enrich_limit = 100 if name == "facebook" else 60
+                        scraper.enrich_listings(db, limit=enrich_limit)
                     except Exception as e:
-                        logging.error(f"Facebook enrichment failed: {e}")
+                        logging.error(f"{name} enrichment failed: {e}")
 
             except Exception as e:
                 logging.error(f"{name} scraper failed: {e}")
