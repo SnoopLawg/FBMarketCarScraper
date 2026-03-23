@@ -168,8 +168,7 @@ select.input {
 }
 .deal-card:hover {
     border-color: var(--border-hover);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-card-hover);
+    /* transform + box-shadow handled by Motion animations (spring physics) */
 }
 .deal-card.swiping { transition: none !important; }
 .deal-card.swiping:hover { transform: none; box-shadow: var(--shadow-card); }
