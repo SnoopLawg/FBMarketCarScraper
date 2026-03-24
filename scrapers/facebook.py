@@ -144,6 +144,15 @@ class FacebookScraper(BaseScraper):
 
                 page_source = self.driver.page_source
                 page_text = page_source.lower()
+
+                # Validate we actually landed on a listing page, not a
+                # login redirect or generic directory page
+                if ("marketplace/item" not in self.driver.current_url
+                        or "directory" in page_text[:500]
+                        or "forgot account" in page_text[:1000]):
+                    self.log(f"  Skipped (not a listing page): {href[:60]}")
+                    continue
+
                 details = self._extract_detail_info(page_text)
 
                 # Capture visible description text for future re-parsing
