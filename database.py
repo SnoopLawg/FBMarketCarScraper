@@ -619,18 +619,19 @@ class Database:
 
     # ── Listings by href (for favorites) ──────────────────────────
 
-    def get_listings_by_hrefs(self, hrefs):
+    def get_listings_by_hrefs(self, hrefs, include_deleted=False):
         """Fetch full listing data for a set of hrefs."""
         if not hrefs:
             return []
         placeholders = ",".join("?" * len(hrefs))
+        deleted_filter = "" if include_deleted else "AND deleted_at IS NULL"
         self.cur.execute(f"""
             SELECT href, image_url, price, car_name, car_query, location,
                    mileage, year, source, created_at, updated_at,
                    trim, seller, condition, deal_rating, accident_history,
                    distance, title_type, vin, image_urls
             FROM listings
-            WHERE href IN ({placeholders}) AND deleted_at IS NULL
+            WHERE href IN ({placeholders}) {deleted_filter}
             ORDER BY updated_at DESC
         """, list(hrefs))
         return self.cur.fetchall()

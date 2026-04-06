@@ -45,7 +45,7 @@ For the top 5-10 deals, use WebSearch to look up:
 
 ### 4. Apply corrections to the database
 
-When you find discrepancies, fix them immediately. For PASS verdicts, soft-delete the listing:
+When you find discrepancies, fix them immediately. For PASS verdicts, soft-delete the listing. For BUY verdicts, favorite the listing:
 ```bash
 # Fix data discrepancies (corrects listing, syncs to prod)
 source venv/bin/activate && python analyze_deals.py fix "<href>" --title_type rebuilt --notes "description says rebuilt title"
@@ -54,8 +54,11 @@ source venv/bin/activate && python analyze_deals.py fix "<href>" --year 2019 --n
 
 # Soft-delete bad deals (removes from UI + Discord alerts, syncs to prod)
 source venv/bin/activate && python analyze_deals.py pass "<href>" --notes "rebuilt title, overpriced for condition"
+
+# Favorite BUY-recommended deals (adds to favorites in UI, syncs to prod)
+source venv/bin/activate && python analyze_deals.py fav "<href>" --notes "best value, hail damage only, clean title"
 ```
-Each `fix` and `pass` command automatically pushes the updated DB and deleted_listings.txt back to production via scp.
+Each `fix`, `pass`, and `fav` command automatically pushes changes back to production via scp.
 
 ### 5. Produce a summary report
 

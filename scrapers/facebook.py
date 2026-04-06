@@ -2,6 +2,7 @@
 
 import json
 import os
+import random
 import re
 import time
 import pickle
@@ -116,19 +117,17 @@ class FacebookScraper(BaseScraper):
     def enrich_listings(self, db, limit=40):
         """Visit individual listing pages to extract title type and details.
 
-        Call this AFTER the main scrape.  Visits up to `limit` listings
-        that are missing title_type, with human-like delays between visits.
+        Works WITHOUT Facebook login.  FB shows structured vehicle data
+        (title type, condition, mileage) and the seller description (via
+        "See more" click) on logged-out pages.  This avoids all cookie,
+        captcha, and session issues.
         """
-        if not self._ensure_logged_in():
-            self.log("Cannot enrich — not logged in.")
-            return 0
-
         rows = db.get_listings_missing_title_type(source="facebook", limit=limit)
         if not rows:
             self.log("No listings need enrichment.")
             return 0
 
-        self.log(f"Enriching {len(rows)} listings with detail page data...")
+        self.log(f"Enriching {len(rows)} listings (no login required)...")
         enriched = 0
 
         for row in rows:
@@ -138,19 +137,21 @@ class FacebookScraper(BaseScraper):
                 self.inject_stealth()
                 self.human_delay(2, 5)
 
-                # Click all "See more" buttons to expand hidden description text
+                # Close login modal if it appears
+                self._dismiss_login_modal()
+
+                # Expand the seller description via "See more"
                 self._click_see_more()
                 self.human_delay(0.5, 1.5)
 
                 page_source = self.driver.page_source
                 page_text = page_source.lower()
 
-                # Validate we actually landed on a listing page, not a
-                # login redirect or generic directory page
-                if ("marketplace/item" not in self.driver.current_url
-                        or "directory" in page_text[:500]
-                        or "forgot account" in page_text[:1000]):
-                    self.log(f"  Skipped (not a listing page): {href[:60]}")
+                # Validate we landed on a listing page
+                cur_url = self.driver.current_url
+                if "marketplace/item" not in cur_url or "directory" in cur_url:
+                    self.log(f"  Skipped (not a listing page): {href[:60]}"
+                             f" [url={cur_url[:60]}]")
                     continue
 
                 details = self._extract_detail_info(page_text)
@@ -165,6 +166,22 @@ class FacebookScraper(BaseScraper):
                     if vin:
                         details["vin"] = vin
 
+                    # If no title_type from HTML patterns, check the
+                    # extracted description text (catches titles mentioned
+                    # in seller descriptions behind "See more")
+                    if "title_type" not in details:
+                        desc_lower = description.lower()
+                        if "salvage title" in desc_lower:
+                            details["title_type"] = "salvage"
+                        elif "rebuilt title" in desc_lower:
+                            details["title_type"] = "rebuilt"
+                        elif "branded title" in desc_lower:
+                            details["title_type"] = "rebuilt"
+                        elif "lemon" in desc_lower and "title" in desc_lower:
+                            details["title_type"] = "lemon"
+                        elif "clean title" in desc_lower:
+                            details["title_type"] = "clean"
+
                 # Extract all listing images from detail page
                 image_urls = self._extract_images(page_source)
                 if image_urls:
@@ -178,12 +195,11 @@ class FacebookScraper(BaseScraper):
                     self.log(f"  Enriched: {row['car_name'][:40]} → title={tt}"
                              f"{' VIN=' + vin_str if vin_str else ''}")
                 else:
-                    # Mark as 'unknown' so we don't re-visit
-                    db.update_title_type(href, "unknown")
+                    # Mark as attempted so we don't re-visit
+                    db.mark_enriched(href)
 
             except Exception as e:
                 logging.warning(f"[Facebook] Enrich error for {href[:60]}: {e}")
-                # Still mark as attempted so we don't retry the same listing forever
                 try:
                     db.mark_enriched(href)
                 except Exception:
@@ -195,60 +211,80 @@ class FacebookScraper(BaseScraper):
         self.log(f"Enrichment complete: {enriched}/{len(rows)} listings updated.")
         return enriched
 
-    def _click_see_more(self):
-        """Click all 'See more' / 'See More' links on the page to expand text."""
-        from selenium.webdriver.common.by import By
-
+    def _dismiss_login_modal(self):
+        """Close the Facebook login modal that appears on logged-out pages."""
         try:
-            # Facebook uses various elements for "See more" — try multiple
-            # selectors and JS click as fallback for non-interactable elements
-            see_more_selectors = [
-                "//div[contains(text(), 'See more')]",
-                "//span[contains(text(), 'See more')]",
-                "//a[contains(text(), 'See more')]",
-                "//div[contains(text(), 'See More')]",
-                "//span[contains(text(), 'See More')]",
-                "//a[contains(text(), 'See More')]",
-                "//div[@role='button' and contains(text(), 'See')]",
-            ]
-            clicked = 0
-            for xpath in see_more_selectors:
-                try:
-                    elements = self.driver.find_elements(By.XPATH, xpath)
-                    for el in elements[:3]:
-                        try:
-                            el.click()
-                            clicked += 1
-                            time.sleep(0.3)
-                        except Exception:
-                            # Fallback: JS click for elements hidden or
-                            # blocked by overlays
-                            try:
-                                self.driver.execute_script(
-                                    "arguments[0].click()", el
-                                )
-                                clicked += 1
-                                time.sleep(0.3)
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-
-            # Last resort: find via JS and click all matching elements
-            if clicked == 0:
-                try:
-                    self.driver.execute_script("""
-                        document.querySelectorAll('div, span, a').forEach(el => {
-                            if (el.textContent.trim() === 'See more' ||
-                                el.textContent.trim() === 'See More') {
-                                el.click();
-                            }
-                        });
-                    """)
-                except Exception:
-                    pass
+            self.driver.execute_script("""
+                // Try multiple approaches to close login modals
+                // 1. Dialog close button
+                const dialog = document.querySelector('[role="dialog"]');
+                if (dialog) {
+                    const close = dialog.querySelector(
+                        '[aria-label="Close"], [aria-label="close"]');
+                    if (close) { close.click(); return; }
+                    // Try any button in the dialog
+                    const btn = dialog.querySelector('button');
+                    if (btn) { btn.click(); return; }
+                }
+                // 2. Bottom banner close
+                const bannerClose = document.querySelector(
+                    'div[data-nosnippet] button[aria-label="Close"]');
+                if (bannerClose) bannerClose.click();
+            """)
+            time.sleep(0.5)
         except Exception:
-            pass  # Don't let this break enrichment
+            pass
+
+    def _click_see_more(self):
+        """Click the 'See more' link in the seller description to expand it.
+
+        On logged-out pages, 'See more' is a <span> with cursor:pointer,
+        not a <button>.  We click ALL visible "See more" elements in the
+        main content area to ensure the description expands.
+        """
+        try:
+            clicked = self.driver.execute_script("""
+                let clicked = 0;
+                const candidates = [];
+                document.querySelectorAll('div, span, a, button').forEach(el => {
+                    const text = el.textContent.trim();
+                    if (text === 'See more' || text === 'See More') {
+                        candidates.push(el);
+                    }
+                });
+
+                // Click ALL "See more" elements in the main content area.
+                // The sidebar nav ones are on the left (x < 350), the
+                // description one is on the right.
+                for (const el of candidates) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        try {
+                            el.click();
+                            clicked++;
+                        } catch(e) {}
+                    }
+                }
+                return clicked;
+            """)
+            if clicked:
+                time.sleep(1)
+
+            # Fallback: use Selenium to find and click span elements
+            if not clicked:
+                from selenium.webdriver.common.by import By
+                spans = self.driver.find_elements(
+                    By.XPATH, "//span[text()='See more'] | //span[text()='See More']")
+                for span in spans:
+                    try:
+                        if span.is_displayed():
+                            self.driver.execute_script(
+                                "arguments[0].click()", span)
+                            time.sleep(0.5)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     def _extract_description(self, page_source):
         """Extract the visible text from a FB listing detail page.
@@ -271,13 +307,18 @@ class FacebookScraper(BaseScraper):
             if len(text) > 8000:
                 text = text[:8000]
 
-            # Detect login wall / non-listing pages
-            if any(marker in text for marker in [
-                "Explore the things\nyou love",
-                "Create new account",
-                "Log Into Facebook",
-                "This content isn't available",
-            ]):
+            # Detect login wall / non-listing pages.
+            # Must check multiple markers together — "Create new account"
+            # appears in the footer of ALL FB pages, even when logged in.
+            is_login_wall = (
+                "Log Into Facebook" in text
+                or "Explore the things\nyou love" in text
+                or ("Create new account" in text
+                    and "About this vehicle" not in text
+                    and "Seller" not in text)
+                or "This content isn't available" in text
+            )
+            if is_login_wall:
                 return None
 
             return text if len(text) > 50 else None
@@ -416,23 +457,75 @@ class FacebookScraper(BaseScraper):
                 self._save_cookies()
                 return True
 
-            self.log("Please log in manually in the browser...")
-            print("\n" + "=" * 50)
-            print("  Please log into Facebook in the browser window.")
-            print("  Waiting for login (2 min timeout)...")
-            print("=" * 50 + "\n")
+            # Auto-login with credentials from environment
+            if self._auto_login():
+                self._save_cookies()
+                return True
 
-            start = time.time()
-            while not self._is_logged_in():
-                if time.time() - start > 120:
-                    self.log("Login timeout.")
-                    return False
-                time.sleep(3)
-
-            self._save_cookies()
-            return True
+            self.log("Auto-login failed or no credentials set.")
+            self.log("Set FB_EMAIL and FB_PASSWORD env vars for auto-login.")
+            return False
         except Exception as e:
             logging.error(f"[Facebook] Login error: {e}")
+            return False
+
+    def _auto_login(self):
+        """Attempt to log in using FB_EMAIL / FB_PASSWORD env vars."""
+        from selenium.webdriver.common.by import By
+
+        email = os.environ.get("FB_EMAIL", "")
+        password = os.environ.get("FB_PASSWORD", "")
+        if not email or not password:
+            return False
+
+        self.log("Attempting auto-login...")
+        try:
+            self.driver.get("https://www.facebook.com/login")
+            self.inject_stealth()
+            self.human_delay(2, 4)
+
+            email_field = self.driver.find_element(By.NAME, "email")
+            pass_field = self.driver.find_element(By.NAME, "pass")
+
+            # Type like a human — character by character with small delays
+            email_field.clear()
+            for char in email:
+                email_field.send_keys(char)
+                time.sleep(random.uniform(0.03, 0.12))
+
+            self.human_delay(0.3, 0.8)
+
+            pass_field.clear()
+            for char in password:
+                pass_field.send_keys(char)
+                time.sleep(random.uniform(0.03, 0.12))
+
+            self.human_delay(0.5, 1.5)
+
+            # Submit by pressing Enter on the password field (most reliable)
+            from selenium.webdriver.common.keys import Keys
+            pass_field.send_keys(Keys.RETURN)
+
+            # Wait for redirect after login
+            self.human_delay(5, 8)
+
+            if self._is_logged_in():
+                self.log("Auto-login successful.")
+                return True
+
+            # FB might show a checkpoint/2FA page — wait a bit longer
+            self.human_delay(3, 5)
+            if self._is_logged_in():
+                self.log("Auto-login successful (after checkpoint).")
+                return True
+
+            self.log("Auto-login failed — may need 2FA or account review.")
+            self.capture_screenshot("fb_login_failed")
+            return False
+
+        except Exception as e:
+            self.log(f"Auto-login error: {e}")
+            self.capture_screenshot("fb_login_error")
             return False
 
     def _is_logged_in(self):

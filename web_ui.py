@@ -209,11 +209,12 @@ def favorites_page():
             enriched.append(deals_by_href[href])
 
     # For favorites not in _deals (e.g. scored out or stale), fall back to DB
+    # include_deleted=True so stale-marked favorites still appear
     missing_hrefs = [h for h in _favorites if h not in deals_by_href]
     if missing_hrefs and _db:
         config = load_config()
         mileage_threshold = config.get("MileageMax") or 150000
-        fav_listings = _db.get_listings_by_hrefs(missing_hrefs)
+        fav_listings = _db.get_listings_by_hrefs(missing_hrefs, include_deleted=True)
         for row in fav_listings:
             d = dict(row)
             avg_price = 0
@@ -680,6 +681,9 @@ def delete():
         _deleted.add(href)
         _append_to_file(_deleted_file, href)
         _db.delete_listing(href)
+        if href in _favorites:
+            _favorites.discard(href)
+            _rewrite_favorites()
     return jsonify({"ok": True})
 
 
