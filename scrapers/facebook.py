@@ -129,6 +129,7 @@ class FacebookScraper(BaseScraper):
 
         self.log(f"Enriching {len(rows)} listings (no login required)...")
         enriched = 0
+        consecutive_blocked = 0
 
         for row in rows:
             href = row["href"]
@@ -150,9 +151,17 @@ class FacebookScraper(BaseScraper):
                 # Validate we landed on a listing page
                 cur_url = self.driver.current_url
                 if "marketplace/item" not in cur_url or "directory" in cur_url:
-                    self.log(f"  Skipped (not a listing page): {href[:60]}"
-                             f" [url={cur_url[:60]}]")
+                    consecutive_blocked += 1
+                    if consecutive_blocked >= 5:
+                        self.log(f"  Rate limited by Facebook ({consecutive_blocked} "
+                                 f"consecutive blocks). Stopping early.")
+                        break
+                    self.log(f"  Skipped (blocked): {href[:60]}")
+                    self.human_delay(3, 6)
                     continue
+
+                # Reset block counter on successful page load
+                consecutive_blocked = 0
 
                 details = self._extract_detail_info(page_text)
 
