@@ -117,17 +117,26 @@ class FacebookScraper(BaseScraper):
     def enrich_listings(self, db, limit=40):
         """Visit individual listing pages to extract title type and details.
 
-        Works WITHOUT Facebook login.  FB shows structured vehicle data
-        (title type, condition, mileage) and the seller description (via
-        "See more" click) on logged-out pages.  This avoids all cookie,
-        captcha, and session issues.
+        Works with OR without Facebook login.  If the driver already has
+        a logged-in session (e.g. from the main scrape), we use it for
+        higher rate limits.  If not, we try auto-login, then fall back
+        to logged-out enrichment which still works but gets rate-limited
+        faster.
         """
         rows = db.get_listings_missing_title_type(source="facebook", limit=limit)
         if not rows:
             self.log("No listings need enrichment.")
             return 0
 
-        self.log(f"Enriching {len(rows)} listings (no login required)...")
+        # Try to use existing login or auto-login for better rate limits.
+        # If login fails, enrichment still works logged-out.
+        logged_in = self._load_cookies()
+        if not logged_in:
+            logged_in = self._auto_login()
+            if logged_in:
+                self._save_cookies()
+        self.log(f"Enriching {len(rows)} listings "
+                 f"({'logged in' if logged_in else 'no login'})...")
         enriched = 0
         consecutive_blocked = 0
 
