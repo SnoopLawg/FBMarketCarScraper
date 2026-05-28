@@ -12,8 +12,25 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
-from parsing import classify_seller_type
+from parsing import classify_seller_type, parse_price
 from vin import extract_vin
+
+
+def _is_adjustment_amount(el):
+    """True if a price element shows a *price-drop* amount (or financing
+    estimate) rather than the sale price.
+
+    Cars.com renders a "price drop" badge (e.g. "$447 price drop") whose dollar
+    amount was being scraped as the sale price, producing phantom sub-$1k
+    listings. Match on the element's own text and class names (drops are tagged
+    with classes like `price-drop`). When the amount and its label render in
+    separate spans the amount reads as a clean "$447"; that case is caught by
+    preferring `.primary-price` and the min-price floor backstop.
+    """
+    txt = el.get_text(" ", strip=True).lower()
+    classes = " ".join(el.get("class") or []).lower()
+    markers = ("drop", "reduc", "/mo", "mo.", "month", "payment", "est.")
+    return any(m in txt or m in classes for m in markers)
 
 
 class CarsComScraper(BaseScraper):
@@ -112,15 +129,22 @@ class CarsComScraper(BaseScraper):
             if href and not href.startswith("http"):
                 href = f"https://www.cars.com{href}"
 
-            # Price
+            # Price — `.primary-price` holds the sale price. The broader
+            # selectors also match the "price drop" badge (and financing
+            # estimates), so try the specific class first and skip any element
+            # showing an adjustment amount rather than the price.
             price_str = ""
-            for sel in ["span.spark-body-larger", ".primary-price", "[class*='price']"]:
-                price_el = card.select_one(sel)
-                if price_el:
+            for sel in [".primary-price", "span.spark-body-larger", "[class*='price']"]:
+                for price_el in card.select(sel):
                     txt = price_el.get_text(strip=True)
-                    if "$" in txt and any(c.isdigit() for c in txt):
-                        price_str = txt
-                        break
+                    if "$" not in txt or not any(c.isdigit() for c in txt):
+                        continue
+                    if _is_adjustment_amount(price_el):
+                        continue
+                    price_str = txt
+                    break
+                if price_str:
+                    break
 
             # Mileage
             mileage_str = "N/A"
@@ -227,6 +251,16 @@ class CarsComScraper(BaseScraper):
 
             seller_type = classify_seller_type(
                 seller_name=seller, source="carscom") or ""
+
+            # Sanity backstop: results are queried with list_price_min, so a
+            # parsed price below the configured minimum is a mis-parse (almost
+            # always a price-drop amount that slipped past the filters above).
+            price_val = parse_price(price_str)
+            if price_val is not None and price_val < self.min_price:
+                logging.debug(
+                    f"[Cars.com] Rejecting implausible price '{price_str}' "
+                    f"(< min {self.min_price}) for {title}")
+                return False
 
             self.counted_insert(
                 car_query=car_query, href=href, image_url=image_url,
