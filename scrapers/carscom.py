@@ -17,20 +17,21 @@ from vin import extract_vin
 
 
 def _is_adjustment_amount(el):
-    """True if a price element shows a *price-drop* amount (or financing
-    estimate) rather than the sale price.
+    """True if a price element shows a price-drop amount or financing estimate
+    rather than the sale price.
 
-    Cars.com renders a "price drop" badge (e.g. "$447 price drop") whose dollar
-    amount was being scraped as the sale price, producing phantom sub-$1k
-    listings. Match on the element's own text and class names (drops are tagged
-    with classes like `price-drop`). When the amount and its label render in
-    separate spans the amount reads as a clean "$447"; that case is caught by
-    preferring `.primary-price` and the min-price floor backstop.
+    Cars.com (fuse design system) puts the sale price in `fuse-body-larger`, a
+    "price drop" badge in a `price-drop` wrapper (the dollar amount is a bare
+    inner <span> with no class), and a payment estimate ("Est. $531/mo") in a
+    <fuse-button>. Detect drops via the element's own class or any ancestor
+    whose class contains "drop"; detect payments via text markers.
     """
-    txt = el.get_text(" ", strip=True).lower()
     classes = " ".join(el.get("class") or []).lower()
-    markers = ("drop", "reduc", "/mo", "mo.", "month", "payment", "est.")
-    return any(m in txt or m in classes for m in markers)
+    if "drop" in classes or el.find_parent(class_=re.compile("drop", re.I)):
+        return True
+    txt = el.get_text(" ", strip=True).lower()
+    return any(m in txt for m in ("/mo", "mo.", "/month", "month", "payment",
+                                  "est.", "reduc"))
 
 
 class CarsComScraper(BaseScraper):
@@ -129,12 +130,14 @@ class CarsComScraper(BaseScraper):
             if href and not href.startswith("http"):
                 href = f"https://www.cars.com{href}"
 
-            # Price — `.primary-price` holds the sale price. The broader
-            # selectors also match the "price drop" badge (and financing
-            # estimates), so try the specific class first and skip any element
-            # showing an adjustment amount rather than the price.
+            # Price — cars.com's fuse design system holds the sale price in
+            # `span.fuse-body-larger` (`.primary-price`/`spark-body-larger` are
+            # legacy fallbacks). The broad `[class*='price']` selector only
+            # matches the "price drop" badge now, so it's last and adjustment
+            # amounts (drops, payment estimates) are skipped.
             price_str = ""
-            for sel in [".primary-price", "span.spark-body-larger", "[class*='price']"]:
+            for sel in ["span.fuse-body-larger", ".primary-price",
+                        "span.spark-body-larger", "[class*='price']"]:
                 for price_el in card.select(sel):
                     txt = price_el.get_text(strip=True)
                     if "$" not in txt or not any(c.isdigit() for c in txt):
