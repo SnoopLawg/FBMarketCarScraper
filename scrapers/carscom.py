@@ -4,6 +4,7 @@ import json
 import re
 import logging
 import time
+import random
 from urllib.parse import quote_plus
 
 from selenium.webdriver.common.by import By
@@ -46,7 +47,13 @@ class CarsComScraper(BaseScraper):
         total_found = 0
         total_matched = 0
 
-        for i, car_query in enumerate(self.desired_cars):
+        # Randomize query order each run. Cars.com throttles consecutive
+        # searches in a session (later queries return an empty page), so
+        # shuffling spreads which queries get fresh data across runs.
+        cars = list(self.desired_cars)
+        random.shuffle(cars)
+
+        for i, car_query in enumerate(cars):
             self.log(f"Scraping: {car_query}")
             if i > 0:
                 self.delay_between_searches()
@@ -62,41 +69,16 @@ class CarsComScraper(BaseScraper):
             for page in range(max_pages):
                 url = base_url if page == 0 else f"{base_url}&page={page + 1}"
                 self.log(f"  Page {page + 1}...")
-
                 if page > 0:
                     self.human_delay(8, 15)
 
-                try:
-                    self.driver.get(url)
-                except Exception as e:
-                    self.log(f"  Failed to load page {page + 1}: {e}")
-                    break
-
-                self.human_delay(4, 8)
-                self.scroll_page(count=4)
-
-                try:
-                    WebDriverWait(self.driver, 12).until(
-                        EC.presence_of_element_located(
-                            (By.CSS_SELECTOR,
-                             "spark-card[data-listing-id], "
-                             "[data-listing-id], "
-                             ".vehicle-card")
-                        )
-                    )
-                except Exception:
-                    self.log(f"  No results on page {page + 1}")
-                    break
-
-                soup = BeautifulSoup(self.driver.page_source, "html.parser")
-
-                cards = soup.select("spark-card[data-listing-id]")
+                # Retry the first page on an empty result — that's the signature
+                # of throttling, and a longer backoff usually recovers it.
+                cards = self._fetch_cards(url, retries=2 if page == 0 else 0)
                 if not cards:
-                    cards = [el for el in soup.select("[data-listing-id]")
-                             if el.select_one("a[href*='/vehicledetail']")]
-                if not cards:
-                    cards = soup.select(".vehicle-card")
-                if not cards:
+                    if page == 0:
+                        self.log(f"  No results for '{car_query}' after retries "
+                                 f"(likely throttled)")
                     break
 
                 total_found += len(cards)
@@ -107,6 +89,44 @@ class CarsComScraper(BaseScraper):
                 self.log(f"  Page {page + 1}: {len(cards)} listings")
 
         self.log(f"Done: {total_found} total listings, {total_matched} inserted")
+
+    def _fetch_cards(self, url, retries=0):
+        """Load a results URL and return its listing-card elements.
+
+        Cars.com throttles consecutive searches in a session — a throttled
+        request returns a page with no cards. Retry with a longer backoff to
+        recover before giving up on the query.
+        """
+        for attempt in range(retries + 1):
+            try:
+                self.driver.get(url)
+            except Exception as e:
+                self.log(f"  Failed to load: {e}")
+                return []
+            self.human_delay(4, 8)
+            self.scroll_page(count=4)
+            try:
+                WebDriverWait(self.driver, 12).until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR,
+                         "spark-card[data-listing-id], "
+                         "[data-listing-id], .vehicle-card")))
+            except Exception:
+                pass
+            soup = BeautifulSoup(self.driver.page_source, "html.parser")
+            cards = soup.select("spark-card[data-listing-id]")
+            if not cards:
+                cards = [el for el in soup.select("[data-listing-id]")
+                         if el.select_one("a[href*='/vehicledetail']")]
+            if not cards:
+                cards = soup.select(".vehicle-card")
+            if cards:
+                return cards
+            if attempt < retries:
+                self.log(f"  Empty page, retry {attempt + 1}/{retries} "
+                         f"after backoff...")
+                self.human_delay(12, 25)
+        return []
 
     def _process_listing(self, card, car_query):
         """Parse and insert a listing. Returns True if inserted."""
