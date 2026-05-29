@@ -48,6 +48,46 @@ def _send_webhook(webhook_url, payload):
         return False
 
 
+def _per_source_coverage(sources):
+    """% of active listings per source with key fields populated.
+
+    Reads a fresh Database connection (the scrape worker has already closed
+    its own by the time notifications run). Returns
+    {source: {"price": pct, "mileage": pct, "vin": pct}}, empty on error.
+    """
+    try:
+        from database import Database
+    except Exception:
+        return {}
+    db = Database()
+    try:
+        db.open()
+        out = {}
+        for src in sources:
+            tot = db.cur.execute(
+                "SELECT COUNT(*) FROM listings WHERE deleted_at IS NULL "
+                "AND source = ?", (src,)).fetchone()[0]
+            if not tot:
+                continue
+            cov = {}
+            for f in ("price", "mileage", "vin"):
+                n = db.cur.execute(
+                    f"SELECT COUNT(*) FROM listings WHERE deleted_at IS NULL "
+                    f"AND source = ? AND {f} IS NOT NULL AND {f} != ''",
+                    (src,)).fetchone()[0]
+                cov[f] = 100 * n // tot
+            out[src] = cov
+        return out
+    except Exception as e:
+        logging.warning(f"coverage summary skipped: {e}")
+        return {}
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 def send_scrape_summary(webhook_url, deals, scrape_stats=None):
     """Send a scrape completion summary to Discord.
 
@@ -72,6 +112,17 @@ def send_scrape_summary(webhook_url, deals, scrape_stats=None):
         description += f" — **{grade_a}** Grade A, **{grade_b}** Grade B"
     if source_lines:
         description += f"\n{source_lines}"
+
+    # Per-source field coverage — surface extraction breakage early
+    # (e.g. autotrader mileage 0% would jump out instead of going silent).
+    srcs = sorted(s for s in by_source if s and s != "unknown")
+    cov = _per_source_coverage(srcs)
+    if cov:
+        lines = [
+            f"  `{s}` price {cov[s]['price']}% · mileage {cov[s]['mileage']}% · vin {cov[s]['vin']}%"
+            for s in srcs if s in cov
+        ]
+        description += "\n**Coverage (active):**\n" + "\n".join(lines)
 
     payload = {
         "embeds": [{
