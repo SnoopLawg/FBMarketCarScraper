@@ -55,9 +55,18 @@ def calculate_averages(db, desired_cars, mileage_threshold):
         year_title_data = {}  # (year, title_group) → [(price, mileage)]
         year_all_data = {}    # year → [(price, mileage)]
 
+        seen_vins = set()
         for row in rows:
             price, mileage, year = row[0], row[1], row[2]
             tt = row[3] if len(row) > 3 else None
+            vin = row[4] if len(row) > 4 else None
+            # Skip duplicate listings of the same physical car (same VIN posted
+            # to multiple sources) so one car isn't counted several times in the
+            # market average that deal scoring compares against.
+            if vin:
+                if vin in seen_vins:
+                    continue
+                seen_vins.add(vin)
             group = title_group(tt)
 
             year_title_data.setdefault((year, group), []).append(
@@ -635,11 +644,16 @@ def _dedup_deals(deals):
     """
     groups = defaultdict(list)
     for d in deals:
-        key = (
-            (d.get("car_name") or "").lower().strip(),
-            d.get("year"),
-            d.get("price"),
-        )
+        vin = (d.get("vin") or "").strip().upper()
+        if vin:
+            # Same VIN = same physical car (e.g. cross-posted to cars.com + KSL)
+            key = ("vin", vin)
+        else:
+            key = (
+                (d.get("car_name") or "").lower().strip(),
+                d.get("year"),
+                d.get("price"),
+            )
         groups[key].append(d)
 
     deduped = []

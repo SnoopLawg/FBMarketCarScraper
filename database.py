@@ -456,7 +456,7 @@ class Database:
 
     def get_priced_listings(self, car_query):
         self.cur.execute(
-            "SELECT price, mileage, year, title_type FROM listings "
+            "SELECT price, mileage, year, title_type, vin FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND year IS NOT NULL "
             "AND deleted_at IS NULL",
             (car_query,)
