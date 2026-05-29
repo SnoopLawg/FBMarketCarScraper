@@ -1,11 +1,23 @@
-marketplace_listings.db
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Local databases & cookies / session state
+*.db
+*.pkl
 deleted_listings.txt
 favorite_listings.txt
 notified_deals.txt
 viewed_listings.txt
-fb_cookies.pkl
-__pycache__/
-scrapers/__pycache__/
-*.pyc
-venv/
+
+# Scraper debug artifacts (root-level screenshots & snapshots;
+# static/ assets stay tracked thanks to the leading slash)
 screenshots/
+/*.jpeg
+/*.png
+/*_snapshot.md
+
+# Local tooling / MCP
+.mcp.json
+.playwright-mcp/
