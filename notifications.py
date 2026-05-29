@@ -225,11 +225,70 @@ def _load_dismissed_hrefs():
     return dismissed
 
 
-def notify_scrape_complete(config, deals):
+def _load_favorites():
+    """Load href set from favorite_listings.txt."""
+    import os
+    data_dir = Path(os.environ.get("DATA_DIR", Path(__file__).parent))
+    path = data_dir / "favorite_listings.txt"
+    if not path.exists():
+        return set()
+    return {l.strip() for l in path.read_text().splitlines() if l.strip()}
+
+
+def send_favorite_price_drop_alerts(webhook_url, since_iso, min_drop=100):
+    """Discord-alert when a favorited listing's price dropped since `since_iso`.
+
+    Uses price_history (logged by insert_listing on every observed change).
+    """
+    favs = _load_favorites()
+    if not favs:
+        return
+    try:
+        from database import Database
+    except Exception:
+        return
+    db = Database()
+    try:
+        db.open()
+        placeholders = ",".join("?" * len(favs))
+        rows = db.cur.execute(
+            f"SELECT listing_href, source, old_price, new_price, changed_at "
+            f"FROM price_history "
+            f"WHERE changed_at >= ? "
+            f"AND old_price - new_price >= ? "
+            f"AND listing_href IN ({placeholders})",
+            [since_iso, min_drop, *favs]
+        ).fetchall()
+    except Exception as e:
+        logging.warning(f"price-drop alert query failed: {e}")
+        return
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    for r in rows:
+        old = r["old_price"]; new = r["new_price"]
+        embed = {
+            "title": "💸 Price drop on a favorite",
+            "description": (f"**${old:,.0f} → ${new:,.0f}**  "
+                            f"(−${old - new:,.0f}, −{100*(old-new)/old:.1f}%)\n"
+                            f"_source: {r['source']}_"),
+            "url": r["listing_href"],
+            "color": 0xFF9500,
+        }
+        _send_webhook(webhook_url, {"embeds": [embed]})
+    if rows:
+        logging.info(f"Discord: sent {len(rows)} favorite-price-drop alerts")
+
+
+def notify_scrape_complete(config, deals, scrape_started_at=None):
     """Main entry point — called after a scrape finishes.
 
-    Sends scrape summary + individual Grade A alerts if Discord is configured.
-    Filters out deals the user has deleted or favorited.
+    Sends scrape summary, Grade A deal alerts, and price-drop alerts for any
+    favorited listing whose price fell during this scrape (when a start time
+    is provided).
     """
     notif_config = config.get("Notifications", {})
     webhook_url = notif_config.get("discord_webhook_url", "")
@@ -239,9 +298,11 @@ def notify_scrape_complete(config, deals):
 
     app_url = notif_config.get("app_url", "")
 
-    # Exclude deleted and favorited listings from notifications
+    # Exclude deleted and favorited listings from deal-alert notifications
     dismissed = _load_dismissed_hrefs()
     active_deals = [d for d in deals if d["href"] not in dismissed]
 
     send_scrape_summary(webhook_url, active_deals)
     send_deal_alerts(webhook_url, active_deals, app_url=app_url)
+    if scrape_started_at:
+        send_favorite_price_drop_alerts(webhook_url, scrape_started_at)

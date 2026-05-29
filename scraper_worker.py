@@ -512,7 +512,9 @@ def _run_scrape(on_complete):
 
         # Send Discord notifications (if configured)
         try:
-            notify_scrape_complete(config, deals)
+            notify_scrape_complete(
+                config, deals,
+                scrape_started_at=_status.get("started_at"))
         except Exception as e:
             logging.error(f"Discord notification failed: {e}")
 
