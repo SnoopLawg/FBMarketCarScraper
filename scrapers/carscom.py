@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 from scrapers.base import BaseScraper
 from parsing import classify_seller_type, parse_price
 from vin import extract_vin
+from driver import create_driver
 
 
 def _is_adjustment_amount(el):
@@ -47,11 +48,11 @@ class CarsComScraper(BaseScraper):
         total_found = 0
         total_matched = 0
 
-        # Randomize query order each run. Cars.com throttles consecutive
-        # searches in a session (later queries return an empty page), so
-        # shuffling spreads which queries get fresh data across runs.
+        # Randomize query order each run (defensive — spreads any per-run
+        # failures across queries rather than always starving the same ones).
         cars = list(self.desired_cars)
         random.shuffle(cars)
+        original_driver = self.driver
 
         for i, car_query in enumerate(cars):
             self.log(f"Scraping: {car_query}")
@@ -66,27 +67,37 @@ class CarsComScraper(BaseScraper):
                 f"&sort=best_match_desc"
             )
 
-            for page in range(max_pages):
-                url = base_url if page == 0 else f"{base_url}&page={page + 1}"
-                self.log(f"  Page {page + 1}...")
-                if page > 0:
-                    self.human_delay(8, 15)
+            # Fresh driver per query. Cars.com's TLS handshake degrades after a
+            # handful of navigations in one Firefox session, so every query
+            # after the first would fail (nssFailure2) and return no cards —
+            # which held price coverage at ~44%. A new session per query keeps
+            # coverage complete; pagination within a query stays in one session.
+            self.driver = create_driver(proxy_config=self.config.get("Proxy"))
+            try:
+                for page in range(max_pages):
+                    url = base_url if page == 0 else f"{base_url}&page={page + 1}"
+                    self.log(f"  Page {page + 1}...")
+                    if page > 0:
+                        self.human_delay(8, 15)
 
-                # Retry the first page on an empty result — that's the signature
-                # of throttling, and a longer backoff usually recovers it.
-                cards = self._fetch_cards(url, retries=2 if page == 0 else 0)
-                if not cards:
-                    if page == 0:
-                        self.log(f"  No results for '{car_query}' after retries "
-                                 f"(likely throttled)")
-                    break
+                    cards = self._fetch_cards(url, retries=1 if page == 0 else 0)
+                    if not cards:
+                        if page == 0:
+                            self.log(f"  No results for '{car_query}'")
+                        break
 
-                total_found += len(cards)
-                for card in cards:
-                    if self._process_listing(card, car_query):
-                        total_matched += 1
+                    total_found += len(cards)
+                    for card in cards:
+                        if self._process_listing(card, car_query):
+                            total_matched += 1
 
-                self.log(f"  Page {page + 1}: {len(cards)} listings")
+                    self.log(f"  Page {page + 1}: {len(cards)} listings")
+            finally:
+                try:
+                    self.driver.quit()
+                except Exception:
+                    pass
+                self.driver = original_driver
 
         self.log(f"Done: {total_found} total listings, {total_matched} inserted")
 
