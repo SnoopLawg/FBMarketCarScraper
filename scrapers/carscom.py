@@ -130,30 +130,48 @@ class CarsComScraper(BaseScraper):
             if href and not href.startswith("http"):
                 href = f"https://www.cars.com{href}"
 
-            # Price — cars.com's fuse design system holds the sale price in
-            # `span.fuse-body-larger` (`.primary-price`/`spark-body-larger` are
-            # legacy fallbacks). The broad `[class*='price']` selector only
-            # matches the "price drop" badge now, so it's last and adjustment
-            # amounts (drops, payment estimates) are skipped.
-            price_str = ""
-            for sel in ["span.fuse-body-larger", ".primary-price",
-                        "span.spark-body-larger", "[class*='price']"]:
-                for price_el in card.select(sel):
-                    txt = price_el.get_text(strip=True)
-                    if "$" not in txt or not any(c.isdigit() for c in txt):
-                        continue
-                    if _is_adjustment_amount(price_el):
-                        continue
-                    price_str = txt
-                    break
-                if price_str:
-                    break
+            # Structured data — cars.com embeds a per-listing JSON blob in the
+            # `data-vehicle-details` attribute (price, trim, drivetrain, mileage,
+            # vin, ...). It survives design-system changes, so it's the primary
+            # source; the CSS selectors below are fallbacks for when it's absent.
+            vd = {}
+            raw_vd = card.get("data-vehicle-details", "")
+            if not raw_vd:
+                parent = card.find_parent(attrs={"data-vehicle-details": True})
+                raw_vd = parent.get("data-vehicle-details", "") if parent else ""
+            if raw_vd:
+                try:
+                    vd = json.loads(raw_vd)
+                except (json.JSONDecodeError, TypeError):
+                    vd = {}
 
-            # Mileage
+            # Price — prefer the JSON price; else the fuse sale-price span
+            # (`.primary-price`/`spark-body-larger` are legacy). The broad
+            # `[class*='price']` selector only matches the "price drop" badge
+            # now, so it's last and adjustment amounts are skipped.
+            price_str = str(vd["price"]) if vd.get("price") else ""
+            if not price_str:
+                for sel in ["span.fuse-body-larger", ".primary-price",
+                            "span.spark-body-larger", "[class*='price']"]:
+                    for price_el in card.select(sel):
+                        txt = price_el.get_text(strip=True)
+                        if "$" not in txt or not any(c.isdigit() for c in txt):
+                            continue
+                        if _is_adjustment_amount(price_el):
+                            continue
+                        price_str = txt
+                        break
+                    if price_str:
+                        break
+
+            # Mileage — prefer the JSON value (an int), else the visible text.
             mileage_str = "N/A"
-            mileage_node = card.find(string=lambda t: t and "mi." in t.lower())
-            if mileage_node:
-                mileage_str = mileage_node.strip()
+            if vd.get("mileage"):
+                mileage_str = str(vd["mileage"])
+            else:
+                mileage_node = card.find(string=lambda t: t and "mi." in t.lower())
+                if mileage_node:
+                    mileage_str = mileage_node.strip()
 
             # Seller
             seller = ""
@@ -182,24 +200,9 @@ class CarsComScraper(BaseScraper):
             if img_el:
                 image_url = img_el.get("src", "") or img_el.get("data-src", "")
 
-            # VIN — Cars.com embeds vehicle details JSON in a data attribute
-            vin = ""
-            vehicle_details = card.get("data-vehicle-details", "")
-            if vehicle_details:
-                try:
-                    vd = json.loads(vehicle_details)
-                    vin = vd.get("vin", "")
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            # Fallback: check parent element for the attribute
-            if not vin:
-                parent = card.find_parent(attrs={"data-vehicle-details": True})
-                if parent:
-                    try:
-                        vd = json.loads(parent["data-vehicle-details"])
-                        vin = vd.get("vin", "")
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+            # VIN & trim come straight from the structured JSON parsed above.
+            vin = (vd.get("vin") or "").strip()
+            trim = (vd.get("trim") or "").strip()
 
             # Get full card text for pattern matching
             card_text = card.get_text(" ", strip=True)
@@ -216,11 +219,13 @@ class CarsComScraper(BaseScraper):
             elif "clean title" in card_text_lower:
                 title_type = "clean"
 
-            # Deal rating — Cars.com shows "Great Deal", "Good Deal", etc.
+            # Deal rating — fuse renders it in a <fuse-badge> ("Great Deal",
+            # "Good Deal", "Fair Price", ...); keep class fallbacks for legacy.
             deal_rating = ""
-            for el in card.select("[class*='deal'], [class*='badge'], [class*='price-badge']"):
+            for el in card.select("fuse-badge, [class*='deal'], [class*='badge']"):
                 txt = el.get_text(strip=True)
-                if txt and any(w in txt.lower() for w in ["deal", "price"]):
+                if txt and any(w in txt.lower() for w in
+                               ["deal", "fair price", "high price", "overpriced"]):
                     deal_rating = txt
                     break
 
@@ -270,7 +275,8 @@ class CarsComScraper(BaseScraper):
                 price=price_str, car_name=title, location=location,
                 mileage_raw=mileage_str, source=self.SOURCE_NAME,
                 seller=seller, distance=distance, title_type=title_type,
-                deal_rating=deal_rating, accident_history=accident_history,
+                trim=trim, deal_rating=deal_rating,
+                accident_history=accident_history,
                 owner_count=owner_count, carfax_url=carfax_url,
                 seller_type=seller_type, vin=vin,
             )
