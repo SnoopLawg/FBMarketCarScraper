@@ -256,5 +256,6 @@ class AutotraderScraper(BaseScraper):
             )
             return True
         except Exception as e:
-            logging.debug(f"[Autotrader] Parse error: {e}")
+            self.count_parse_error()
+            logging.warning(f"[Autotrader] Parse error: {e}")
             return False

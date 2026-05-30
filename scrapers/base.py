@@ -28,6 +28,7 @@ class BaseScraper(ABC):
         self.max_price = config["MaxPrice"]
         self.scroll_count = config.get("ScrollCount", 10)
         self._listing_count = 0
+        self._error_count = 0
 
     @abstractmethod
     def scrape(self):
@@ -39,10 +40,19 @@ class BaseScraper(ABC):
         """Number of listings found during this scrape session."""
         return self._listing_count
 
+    @property
+    def error_count(self):
+        """Number of card-level parse errors during this scrape session."""
+        return self._error_count
+
     def counted_insert(self, **kwargs):
         """Wrapper around insert that counts successful calls."""
         self.insert(**kwargs)
         self._listing_count += 1
+
+    def count_parse_error(self):
+        """Record a per-card parse failure for yield-health visibility."""
+        self._error_count += 1
 
     # ── Shared helpers ─────────────────────────────────────────────
 

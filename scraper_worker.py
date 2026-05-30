@@ -246,12 +246,18 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
 
                 duration = (datetime.now() - run_start).total_seconds()
                 yield_count = scraper.listing_count
+                error_count = scraper.error_count
                 result["listings"][name] = yield_count
                 db.update_scrape_run(run_id,
                     finished_at=datetime.now().isoformat(),
                     status="completed",
                     listings_found=yield_count,
+                    errors=error_count,
                     duration_seconds=round(duration, 1))
+                if error_count:
+                    logging.warning(
+                        f"[{name}] {error_count} card-level parse errors "
+                        f"this run (of {yield_count} listings)")
 
                 logging.info(
                     f"[{name}] Scrape complete: {yield_count} listings "

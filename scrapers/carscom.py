@@ -313,7 +313,8 @@ class CarsComScraper(BaseScraper):
             )
             return True
         except Exception as e:
-            logging.debug(f"[Cars.com] Parse error: {e}")
+            self.count_parse_error()
+            logging.warning(f"[Cars.com] Parse error: {e}")
             return False
 
     def enrich_listings(self, db, limit=60):

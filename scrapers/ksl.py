@@ -216,7 +216,8 @@ class KSLScraper(BaseScraper):
             )
             return True
         except Exception as e:
-            logging.debug(f"[KSL] Parse error: {e}")
+            self.count_parse_error()
+            logging.warning(f"[KSL] Parse error: {e}")
             return False
 
     def log(self, msg):

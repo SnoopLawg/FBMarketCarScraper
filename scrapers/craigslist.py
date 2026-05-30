@@ -159,5 +159,6 @@ class CraigslistScraper(BaseScraper):
             )
             return True
         except Exception as e:
-            logging.debug(f"[Craigslist] Parse error: {e}")
+            self.count_parse_error()
+            logging.warning(f"[Craigslist] Parse error: {e}")
             return False
