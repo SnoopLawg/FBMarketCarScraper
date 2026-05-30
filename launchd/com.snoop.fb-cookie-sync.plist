@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.snoop.fb-cookie-sync</string>
+
+  <!-- Run sync_fb_cookies.py with the project's venv Python -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/logansingleton/Code/Personal/FBMarketCarScraper/venv/bin/python</string>
+    <string>/Users/logansingleton/Code/Personal/FBMarketCarScraper/sync_fb_cookies.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/logansingleton/Code/Personal/FBMarketCarScraper</string>
+
+  <!-- Every 12 hours -->
+  <key>StartInterval</key>
+  <integer>43200</integer>
+
+  <!-- Run once when first loaded so you can verify it works immediately -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Logs go next to the script for easy tailing -->
+  <key>StandardOutPath</key>
+  <string>/Users/logansingleton/Code/Personal/FBMarketCarScraper/sync_fb_cookies.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/logansingleton/Code/Personal/FBMarketCarScraper/sync_fb_cookies.log</string>
+</dict>
+</plist>
