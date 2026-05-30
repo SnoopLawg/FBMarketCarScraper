@@ -24,9 +24,11 @@ _ADAPTER = HTTPAdapter(max_retries=_RETRY)
 session = requests.Session()
 session.mount("http://", _ADAPTER)
 session.mount("https://", _ADAPTER)
-session.headers.setdefault(
-    "User-Agent",
-    "CarScraper/1.0 (+https://github.com/SnoopLawg/FBMarketCarScraper)",
+# Override the default `python-requests/...` UA — some public APIs treat that
+# as a low-priority bot signal. setdefault wouldn't replace it (Session sets
+# its own default), so assign directly.
+session.headers["User-Agent"] = (
+    "CarScraper/1.0 (+https://github.com/SnoopLawg/FBMarketCarScraper)"
 )
 
 
