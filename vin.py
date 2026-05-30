@@ -11,7 +11,9 @@ import logging
 import re
 import time
 
-import requests
+import requests  # kept for exception types
+
+from http_client import session
 
 # ── VIN regex ────────────────────────────────────────────────────
 # A valid VIN is exactly 17 characters, alphanumeric, excluding I, O, Q.
@@ -71,7 +73,7 @@ def decode_vin(vin):
     url = _DECODE_URL.format(vin=vin)
 
     try:
-        resp = requests.get(url, timeout=_TIMEOUT)
+        resp = session.get(url, timeout=_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -231,7 +233,7 @@ def decode_vins_batch(vins):
         vin_str = ";".join(chunk)
 
         try:
-            resp = requests.post(
+            resp = session.post(
                 _BATCH_DECODE_URL,
                 data={"format": "json", "data": vin_str},
                 timeout=_BATCH_TIMEOUT,

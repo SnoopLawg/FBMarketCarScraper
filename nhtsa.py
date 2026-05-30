@@ -11,7 +11,9 @@ import time
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
-import requests
+import requests  # kept for exception types in callers
+
+from http_client import session
 
 # Common model-name fixups:  car_query token  ->  NHTSA model string
 _MODEL_ALIASES = {
@@ -65,7 +67,7 @@ def parse_make_model(car_query):
 def _get_json(url):
     """Fetch JSON from NHTSA. Returns parsed dict or None on failure."""
     try:
-        resp = requests.get(url, timeout=_TIMEOUT)
+        resp = session.get(url, timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:

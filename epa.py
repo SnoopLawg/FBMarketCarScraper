@@ -14,8 +14,9 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
-import requests
+import requests  # kept for exception types
 
+from http_client import session
 from nhtsa import parse_make_model, _MODEL_ALIASES
 
 _BASE = "https://www.fueleconomy.gov/ws/rest"
@@ -63,7 +64,7 @@ _EPA_MODEL_MAP = {
 def _get_xml(url):
     """Fetch XML from fueleconomy.gov and parse it. Returns ElementTree root or None."""
     try:
-        resp = requests.get(url, timeout=_TIMEOUT)
+        resp = session.get(url, timeout=_TIMEOUT)
         resp.raise_for_status()
         return ET.fromstring(resp.content)
     except Exception as e:
