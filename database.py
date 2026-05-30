@@ -13,6 +13,12 @@ DB_PATH = DATA_DIR / "marketplace_listings.db"
 
 
 class Database:
+    # Per-process: paths whose schema has already been migrated this run.
+    # Skips the per-open _migrate / _create_tables work after the first
+    # connection — they're idempotent but expensive (multi-statement
+    # executescript on every new Database() instance).
+    _migrated_paths = set()
+
     def __init__(self, db_path=None):
         self.db_path = db_path or DB_PATH
         self.conn = None
@@ -25,8 +31,11 @@ class Database:
         self.conn.execute("PRAGMA busy_timeout=30000")
         self.conn.row_factory = sqlite3.Row
         self.cur = self.conn.cursor()
-        self._migrate()
-        self._create_tables()
+        path_key = str(self.db_path)
+        if path_key not in Database._migrated_paths:
+            self._migrate()
+            self._create_tables()
+            Database._migrated_paths.add(path_key)
 
     def close(self):
         if self.conn:
