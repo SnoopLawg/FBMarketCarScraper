@@ -131,3 +131,56 @@ def test_title_type_clean_picked_up():
 def test_title_type_blank_when_no_keywords():
     row = _scrape_one(_make_card())
     assert row["title_type"] == ""
+
+
+# ── Login-state detector (added after the logged-out-anon-view bug) ──
+
+
+def _fake_driver(html, url="https://facebook.com/marketplace"):
+    """Minimal stand-in for a Selenium driver: just exposes page_source +
+    current_url, which is all _is_logged_in() reads."""
+    class _D:
+        page_source = html
+        current_url = url
+    return _D()
+
+
+def _new_scraper(driver):
+    return FacebookScraper(driver, MIN_CONFIG, lambda **k: None,
+                           car_list=["Honda CR-V"])
+
+
+def test_is_logged_in_false_on_anon_marketplace_with_login_link():
+    """The exact failure pattern from prod: marketplace renders without a
+    `loginbutton` ID but has an `href="/login"` CTA — must be detected."""
+    html = ('<html><body>Marketplace results '
+            '<a href="/login/">Log In</a></body></html>')
+    s = _new_scraper(_fake_driver(html))
+    assert s._is_logged_in() is False
+
+
+def test_is_logged_in_false_on_create_new_account_cta():
+    html = ('<html><body>Marketplace results '
+            '<span>Create New Account</span></body></html>')
+    s = _new_scraper(_fake_driver(html))
+    assert s._is_logged_in() is False
+
+
+def test_is_logged_in_false_on_login_button():
+    html = '<html><body><button id="loginbutton">Log In</button></body></html>'
+    s = _new_scraper(_fake_driver(html))
+    assert s._is_logged_in() is False
+
+
+def test_is_logged_in_false_on_login_url():
+    s = _new_scraper(_fake_driver("<html></html>",
+                                  url="https://facebook.com/login/"))
+    assert s._is_logged_in() is False
+
+
+def test_is_logged_in_true_on_authenticated_marketplace():
+    """Real logged-in page has no /login link and no signup CTA."""
+    html = ('<html><body>Marketplace '
+            '<a href="/messages">Messages</a></body></html>')
+    s = _new_scraper(_fake_driver(html))
+    assert s._is_logged_in() is True

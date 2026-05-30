@@ -461,27 +461,33 @@ class FacebookScraper(BaseScraper):
     # ── Login / cookie management ─────────────────────────────────
 
     def _ensure_logged_in(self):
+        """Load cookies, then *navigate and validate* — stale cookies load
+        fine but FB silently serves the anon-view marketplace which has
+        ~1/3 the listings (most cards stripped of price/title). We must
+        validate after navigating, not trust the pickle.
+        """
         self.log("Checking login status...")
         try:
-            if self._load_cookies():
-                self.log("Logged in via cookies.")
-                return True
-
+            self._load_cookies()  # don't short-circuit — always validate
             self.driver.get("https://www.facebook.com/")
             self.inject_stealth()
             time.sleep(2)
 
             if self._is_logged_in():
-                self._save_cookies()
+                self.log("Logged in (validated).")
+                self._save_cookies()  # refresh expiry on disk
                 return True
 
-            # Auto-login with credentials from environment
+            # Cookies missing or stale — try credential auto-login
             if self._auto_login():
                 self._save_cookies()
                 return True
 
-            self.log("Auto-login failed or no credentials set.")
-            self.log("Set FB_EMAIL and FB_PASSWORD env vars for auto-login.")
+            logging.warning(
+                "[Facebook] SESSION EXPIRED — fb_cookies.pkl is stale and "
+                "no FB_EMAIL/FB_PASSWORD auto-login. Skipping FB scrape "
+                "(anon-view yields ~1/3 of real listings). Refresh "
+                "fb_cookies.pkl from a logged-in browser to restore.")
             return False
         except Exception as e:
             logging.error(f"[Facebook] Login error: {e}")
@@ -547,11 +553,20 @@ class FacebookScraper(BaseScraper):
             return False
 
     def _is_logged_in(self):
+        """True only if FB is serving the *authenticated* view. Validated
+        empirically against the anon marketplace, which lacks /messages
+        links and shows `<a href="/login">` + "create new account" CTAs
+        even though no `loginbutton` ID or `email` input is present.
+        """
         try:
             page = self.driver.page_source.lower()
+            # Hard negatives — actual login UI is on screen
             if 'id="loginbutton"' in page or 'name="email"' in page:
                 return False
             if "/login" in self.driver.current_url:
+                return False
+            # Anon-marketplace negatives — page renders fine but pushes signup
+            if 'href="/login' in page or "create new account" in page:
                 return False
             return True
         except Exception:
