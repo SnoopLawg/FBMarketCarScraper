@@ -478,6 +478,14 @@ class FacebookScraper(BaseScraper):
                 self._save_cookies()  # refresh expiry on disk
                 return True
 
+            # Stale c_user pushes FB into an account-picker / recovery flow
+            # (no email field), so auto_login can't find its inputs. Clear
+            # cookies first so FB serves the canonical email+password form.
+            try:
+                self.driver.delete_all_cookies()
+            except Exception:
+                pass
+
             # Cookies missing or stale — try credential auto-login
             if self._auto_login():
                 self._save_cookies()
