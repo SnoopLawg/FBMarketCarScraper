@@ -184,3 +184,76 @@ def test_is_logged_in_true_on_authenticated_marketplace():
             '<a href="/messages">Messages</a></body></html>')
     s = _new_scraper(_fake_driver(html))
     assert s._is_logged_in() is True
+
+
+# ── 2FA TOTP handling ─────────────────────────────────────────────
+
+
+class _FakeField:
+    def __init__(self):
+        self.typed = ""
+        self.sent_keys = []
+    def clear(self):
+        self.typed = ""
+    def send_keys(self, val):
+        self.typed += str(val)
+        self.sent_keys.append(val)
+
+
+class _FakeDriver2FA:
+    """Stand-in driver: exposes the page state the helper inspects + lets
+    tests observe what was typed into the (mocked) code field."""
+    def __init__(self, on_2fa_page=True):
+        self.current_url = (
+            "https://www.facebook.com/two_step_verification/authentication/"
+            if on_2fa_page else "https://www.facebook.com/"
+        )
+        self.page_source = ""
+        self.code_field = _FakeField()
+    def find_element(self, by, sel):
+        # Pretend the input is always findable on the 2FA page
+        return self.code_field
+    def execute_script(self, *_a, **_kw): pass
+
+
+def _scraper_with(driver):
+    s = FacebookScraper(driver, MIN_CONFIG, lambda **k: None, car_list=["_"])
+    # Suppress sleeps in the helper for fast tests
+    s.human_delay = lambda *a, **k: None
+    return s
+
+
+def test_2fa_helper_returns_true_when_not_on_2fa_page():
+    s = _scraper_with(_FakeDriver2FA(on_2fa_page=False))
+    assert s._handle_2fa_if_present() is True
+
+
+def test_2fa_helper_returns_false_when_secret_missing(monkeypatch):
+    monkeypatch.delenv("FB_TOTP_SECRET", raising=False)
+    s = _scraper_with(_FakeDriver2FA(on_2fa_page=True))
+    assert s._handle_2fa_if_present() is False
+
+
+def test_2fa_helper_submits_6digit_code_when_secret_set(monkeypatch):
+    # Use a known base32 secret; the code is whatever pyotp computes now.
+    monkeypatch.setenv("FB_TOTP_SECRET", "JBSWY3DPEHPK3PXP")
+    drv = _FakeDriver2FA(on_2fa_page=True)
+    s = _scraper_with(drv)
+    # Sleep + delay inside the typing loop — neutralize them
+    import scrapers.facebook as fb
+    monkeypatch.setattr(fb.time, "sleep", lambda *_: None)
+    assert s._handle_2fa_if_present() is True
+    typed = drv.code_field.typed.rstrip("")  # strip RETURN keysym
+    assert len(typed) == 6 and typed.isdigit(), (
+        f"expected a 6-digit code typed, got {typed!r}")
+
+
+def test_2fa_helper_strips_spaces_from_secret(monkeypatch):
+    """Auth-app secrets are often shown with spaces (e.g. 'CMKQ GRNR …'); the
+    helper must accept that copy-paste form."""
+    monkeypatch.setenv("FB_TOTP_SECRET", "JBSW Y3DP EHPK 3PXP")
+    drv = _FakeDriver2FA(on_2fa_page=True)
+    s = _scraper_with(drv)
+    import scrapers.facebook as fb
+    monkeypatch.setattr(fb.time, "sleep", lambda *_: None)
+    assert s._handle_2fa_if_present() is True

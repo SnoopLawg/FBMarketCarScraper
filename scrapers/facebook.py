@@ -541,17 +541,24 @@ class FacebookScraper(BaseScraper):
             # Wait for redirect after login
             self.human_delay(5, 8)
 
+            # FB often lands on /two_step_verification/authentication/ before
+            # the home page. Handle the TOTP code automatically if a secret
+            # is configured.
+            if not self._handle_2fa_if_present():
+                self.capture_screenshot("fb_2fa_failed")
+                return False
+
             if self._is_logged_in():
                 self.log("Auto-login successful.")
                 return True
 
-            # FB might show a checkpoint/2FA page — wait a bit longer
+            # FB might still be on a checkpoint page — wait a bit longer
             self.human_delay(3, 5)
             if self._is_logged_in():
                 self.log("Auto-login successful (after checkpoint).")
                 return True
 
-            self.log("Auto-login failed — may need 2FA or account review.")
+            self.log("Auto-login failed — landed on an unrecognised page.")
             self.capture_screenshot("fb_login_failed")
             return False
 
@@ -559,6 +566,68 @@ class FacebookScraper(BaseScraper):
             self.log(f"Auto-login error: {e}")
             self.capture_screenshot("fb_login_error")
             return False
+
+    def _handle_2fa_if_present(self):
+        """If FB is on the TOTP page, compute the code from FB_TOTP_SECRET
+        and submit it. Returns True if we either weren't on a 2FA page or
+        successfully submitted the code; False if 2FA was required but we
+        couldn't complete it (missing secret, missing input, etc.).
+        """
+        url = self.driver.current_url
+        if "two_step_verification" not in url and "checkpoint" not in url:
+            return True   # no 2FA prompt — nothing to do
+
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.common.keys import Keys
+
+        secret_raw = os.environ.get("FB_TOTP_SECRET", "")
+        # Authenticator-style secrets are often shown with spaces — strip them.
+        secret = secret_raw.replace(" ", "").strip()
+        if not secret:
+            self.log("2FA prompt detected but FB_TOTP_SECRET is not set.")
+            return False
+
+        try:
+            import pyotp
+        except ImportError:
+            self.log("2FA prompt detected but pyotp is not installed.")
+            return False
+
+        code = pyotp.TOTP(secret).now()
+        self.log(f"2FA prompt detected — submitting TOTP code "
+                 f"(len={len(code)}, never logged in plain).")
+
+        # FB's 2FA code input has been named `approvals_code` for years.
+        # Fall back to any text/number input if that selector ever changes.
+        code_field = None
+        for finder in (
+            lambda: self.driver.find_element(By.NAME, "approvals_code"),
+            lambda: self.driver.find_element(
+                By.CSS_SELECTOR, "input[type='text'], input[type='number']"),
+        ):
+            try:
+                code_field = finder()
+                break
+            except Exception:
+                continue
+        if code_field is None:
+            self.log("Couldn't locate the 2FA code input field.")
+            return False
+
+        try:
+            code_field.clear()
+        except Exception:
+            pass
+        for ch in code:
+            code_field.send_keys(ch)
+            time.sleep(random.uniform(0.05, 0.15))
+        self.human_delay(0.4, 1.0)
+        code_field.send_keys(Keys.RETURN)
+
+        # FB may show a "Trust this browser?" interstitial after the code.
+        # Wait, then it usually lands on the home feed (or another checkpoint).
+        self.human_delay(6, 10)
+        return True
 
     def _is_logged_in(self):
         """True only if FB is serving the *authenticated* view. Validated
