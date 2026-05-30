@@ -34,6 +34,17 @@ class Database:
             self.conn = None
             self.cur = None
 
+    # Context-manager support so callers can `with Database() as db:` and the
+    # connection is guaranteed to close even on an exception (preventing the
+    # `db = Database(); db.open(); ... db.close()` leak pattern).
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False  # don't swallow
+
     def _create_tables(self):
         self.cur.executescript("""
             CREATE TABLE IF NOT EXISTS listings (
