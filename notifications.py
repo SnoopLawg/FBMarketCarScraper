@@ -59,33 +59,27 @@ def _per_source_coverage(sources):
         from database import Database
     except Exception:
         return {}
-    db = Database()
     try:
-        db.open()
-        out = {}
-        for src in sources:
-            tot = db.cur.execute(
-                "SELECT COUNT(*) FROM listings WHERE deleted_at IS NULL "
-                "AND source = ?", (src,)).fetchone()[0]
-            if not tot:
-                continue
-            cov = {}
-            for f in ("price", "mileage", "vin"):
-                n = db.cur.execute(
-                    f"SELECT COUNT(*) FROM listings WHERE deleted_at IS NULL "
-                    f"AND source = ? AND {f} IS NOT NULL AND {f} != ''",
-                    (src,)).fetchone()[0]
-                cov[f] = 100 * n // tot
-            out[src] = cov
-        return out
+        with Database() as db:
+            out = {}
+            for src in sources:
+                tot = db.cur.execute(
+                    "SELECT COUNT(*) FROM listings WHERE deleted_at IS NULL "
+                    "AND source = ?", (src,)).fetchone()[0]
+                if not tot:
+                    continue
+                cov = {}
+                for f in ("price", "mileage", "vin"):
+                    n = db.cur.execute(
+                        f"SELECT COUNT(*) FROM listings WHERE deleted_at IS NULL "
+                        f"AND source = ? AND {f} IS NOT NULL AND {f} != ''",
+                        (src,)).fetchone()[0]
+                    cov[f] = 100 * n // tot
+                out[src] = cov
+            return out
     except Exception as e:
         logging.warning(f"coverage summary skipped: {e}")
         return {}
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
 
 
 def send_scrape_summary(webhook_url, deals, scrape_stats=None):
@@ -247,26 +241,20 @@ def send_favorite_price_drop_alerts(webhook_url, since_iso, min_drop=100):
         from database import Database
     except Exception:
         return
-    db = Database()
     try:
-        db.open()
-        placeholders = ",".join("?" * len(favs))
-        rows = db.cur.execute(
-            f"SELECT listing_href, source, old_price, new_price, changed_at "
-            f"FROM price_history "
-            f"WHERE changed_at >= ? "
-            f"AND old_price - new_price >= ? "
-            f"AND listing_href IN ({placeholders})",
-            [since_iso, min_drop, *favs]
-        ).fetchall()
+        with Database() as db:
+            placeholders = ",".join("?" * len(favs))
+            rows = db.cur.execute(
+                f"SELECT listing_href, source, old_price, new_price, changed_at "
+                f"FROM price_history "
+                f"WHERE changed_at >= ? "
+                f"AND old_price - new_price >= ? "
+                f"AND listing_href IN ({placeholders})",
+                [since_iso, min_drop, *favs]
+            ).fetchall()
     except Exception as e:
         logging.warning(f"price-drop alert query failed: {e}")
         return
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
 
     for r in rows:
         old = r["old_price"]; new = r["new_price"]
