@@ -1,11 +1,14 @@
 """Flask web UI for browsing car deals."""
 
 import csv
+import hmac
 import io
 import json
 import logging
 import os
+import sqlite3
 import webbrowser
+from functools import wraps
 from pathlib import Path
 from threading import Timer
 
@@ -14,7 +17,7 @@ from flask import Flask, render_template, request, jsonify, Response
 from analysis import title_group, compute_market_range, find_sell_data
 from config import (load_config, save_config, load_discovery_cars,
                     get_discovery_category_map, DISCOVERY_CATEGORIES)
-from database import Database
+from database import Database, DB_PATH
 
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
@@ -921,6 +924,106 @@ def scraper_health():
     health = _db.get_scrape_health()
     runs = _db.get_recent_scrape_runs(limit=30)
     return jsonify({"health": health, "recent_runs": runs})
+
+
+# ── Agent API (token-authenticated, for remote runners) ──────────
+# These routes bypass Authentik SSO at the reverse proxy (path-based
+# Caddy rule) and authenticate with a bearer token instead, so headless
+# agents (e.g. a scheduled Claude runner) can pull production data.
+# All three are strictly read-only.
+
+def _agent_token_ok():
+    """Check Authorization: Bearer <token> against AGENT_API_TOKEN env.
+
+    Fails closed: if the env var is unset, every agent request is rejected.
+    """
+    expected = os.environ.get("AGENT_API_TOKEN", "")
+    auth = request.headers.get("Authorization", "")
+    provided = auth[7:].strip() if auth.startswith("Bearer ") else ""
+    return bool(expected) and hmac.compare_digest(provided, expected)
+
+
+def require_agent_token(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not _agent_token_ok():
+            return jsonify({"error": "unauthorized"}), 401
+        return f(*args, **kwargs)
+    return wrapper
+
+
+@app.route("/api/agent/stats")
+@require_agent_token
+def agent_stats():
+    """Scrape health + data quality, everything a daily check-in needs."""
+    if not _db:
+        return jsonify({"error": "Database not available"}), 500
+    return jsonify({
+        "health": _db.get_scrape_health(),
+        "recent_runs": _db.get_recent_scrape_runs(limit=30),
+        "daily_yield": _db.get_daily_yield(days=7),
+        "data_quality": _db.get_data_quality(),
+        "new_listings": _db.get_new_listing_counts(),
+        "totals": _db.get_listing_totals(),
+    })
+
+
+@app.route("/api/agent/deals")
+@require_agent_token
+def agent_deals():
+    """Current scored deals as JSON, best first."""
+    try:
+        limit = int(request.args.get("limit", 50))
+    except ValueError:
+        limit = 50
+    deals = sorted(_deals, key=lambda d: d.get("deal_score") or 0,
+                   reverse=True)
+    return jsonify({
+        "deal_count": len(_deals),
+        "deals": deals[:limit],
+        "discovery_deals": _discovery_deals[:limit],
+    })
+
+
+AGENT_QUERY_MAX_ROWS = 500
+
+
+@app.route("/api/agent/query", methods=["POST"])
+@require_agent_token
+def agent_query():
+    """Run a single read-only SQL statement against the listings DB.
+
+    The connection is opened with SQLite's mode=ro flag, so writes fail
+    at the engine level regardless of statement text; the SELECT/WITH
+    check just gives a friendlier error.
+    """
+    body = request.get_json(silent=True) or {}
+    sql = (body.get("sql") or "").strip().rstrip(";")
+    if not sql or ";" in sql:
+        return jsonify(
+            {"error": "Provide exactly one SQL statement in 'sql'"}), 400
+    if sql.split(None, 1)[0].upper() not in ("SELECT", "WITH"):
+        return jsonify({"error": "Only SELECT/WITH queries are allowed"}), 400
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(sql)
+            rows = cur.fetchmany(AGENT_QUERY_MAX_ROWS)
+            columns = ([c[0] for c in cur.description]
+                       if cur.description else [])
+            truncated = (len(rows) == AGENT_QUERY_MAX_ROWS
+                         and cur.fetchone() is not None)
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({
+        "columns": columns,
+        "rows": [list(r) for r in rows],
+        "row_count": len(rows),
+        "truncated": truncated,
+    })
 
 
 # ── Shutdown ──────────────────────────────────────────────────────

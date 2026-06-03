@@ -1367,6 +1367,62 @@ class Database:
 
         return result
 
+    def get_daily_yield(self, days=7):
+        """Per-source, per-day scrape yield for the last N days."""
+        self.cur.execute("""
+            SELECT source,
+                   date(started_at) AS day,
+                   COUNT(*) AS runs,
+                   SUM(listings_found) AS listings_found,
+                   SUM(errors) AS errors
+            FROM scrape_runs
+            WHERE started_at >= date('now', ?)
+            GROUP BY source, day
+            ORDER BY source, day
+        """, (f"-{int(days)} day",))
+        return [dict(row) for row in self.cur.fetchall()]
+
+    def get_data_quality(self):
+        """Per-source data-quality stats over active (non-deleted) listings."""
+        self.cur.execute("""
+            SELECT source,
+                   COUNT(*) AS active,
+                   SUM(price IS NULL OR price = 0) AS missing_price,
+                   SUM(mileage IS NULL) AS missing_mileage,
+                   SUM(year IS NULL) AS missing_year,
+                   SUM(price IS NOT NULL AND price > 0 AND price < 500)
+                       AS price_under_500,
+                   SUM(price > 100000) AS price_over_100k
+            FROM listings
+            WHERE deleted_at IS NULL
+            GROUP BY source
+        """)
+        return [dict(row) for row in self.cur.fetchall()]
+
+    def get_new_listing_counts(self):
+        """New listings per source: last 24h vs the 24h before that."""
+        self.cur.execute("""
+            SELECT source,
+                   SUM(created_at >= datetime('now', '-1 day')) AS last_24h,
+                   SUM(created_at >= datetime('now', '-2 day')
+                       AND created_at < datetime('now', '-1 day')) AS prev_24h
+            FROM listings
+            WHERE created_at >= datetime('now', '-2 day')
+            GROUP BY source
+        """)
+        return [dict(row) for row in self.cur.fetchall()]
+
+    def get_listing_totals(self):
+        """Overall listing totals and data date range."""
+        self.cur.execute("""
+            SELECT COUNT(*) AS total,
+                   SUM(deleted_at IS NULL) AS active,
+                   MIN(created_at) AS first_created,
+                   MAX(updated_at) AS last_updated
+            FROM listings
+        """)
+        return dict(self.cur.fetchone())
+
     # ── Discovery Rotation ────────────────────────────────────────
 
     def get_rotation_index(self, source):
