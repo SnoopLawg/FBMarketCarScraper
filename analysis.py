@@ -12,6 +12,11 @@ from drivetrain import detect_drivetrain, drivetrain_label, is_awd_or_4wd
 from vin_validate import validate_vin_against_listing, compute_vin_penalty
 from parsing import parse_owner_count, parse_service_history, parse_listed_date
 
+# How many asking-price samples one sold (market-clearing) comp is worth in
+# the average. Sold prices are what cars actually went for, so they should
+# dominate over aspirational list prices.
+SOLD_WEIGHT = 8
+
 
 def title_group(title_type):
     """Map title_type to an averaging group.
@@ -51,15 +56,18 @@ def calculate_averages(db, desired_cars, mileage_threshold):
     for car_query in desired_cars:
         rows = db.get_priced_listings(car_query)
 
-        # Group by (year, title_group)
-        year_title_data = {}  # (year, title_group) → [(price, mileage)]
-        year_all_data = {}    # year → [(price, mileage)]
+        # Group by (year, title_group). Each entry is (price, mileage, weight)
+        # — weight lets sold (market-clearing) comps dominate the mean without
+        # inflating the reported listing COUNT.
+        year_title_data = {}  # (year, title_group) → [(price, mileage, weight)]
+        year_all_data = {}    # year → [(price, mileage, weight)]
 
         seen_vins = set()
         for row in rows:
             price, mileage, year = row[0], row[1], row[2]
             tt = row[3] if len(row) > 3 else None
             vin = row[4] if len(row) > 4 else None
+            sold = row[5] if len(row) > 5 else 0
             # Skip duplicate listings of the same physical car (same VIN posted
             # to multiple sources) so one car isn't counted several times in the
             # market average that deal scoring compares against.
@@ -69,38 +77,37 @@ def calculate_averages(db, desired_cars, mileage_threshold):
                 seen_vins.add(vin)
             group = title_group(tt)
 
-            year_title_data.setdefault((year, group), []).append(
-                (price, mileage or 0))
-            year_all_data.setdefault(year, []).append(
-                (price, mileage or 0))
+            # Sold listings are actual market-clearing prices, not asking
+            # prices — weight them heavily so the average reflects what cars
+            # really go for.
+            weight = SOLD_WEIGHT if sold else 1
+            entry = (price, mileage or 0, weight)
+            year_title_data.setdefault((year, group), []).append(entry)
+            year_all_data.setdefault(year, []).append(entry)
+
+        def _wavg(entries):
+            """Weighted mean of prices."""
+            num = sum(p * w for p, _, w in entries)
+            den = sum(w for _, _, w in entries)
+            return round(num / den) if den else 0
+
+        def _emit(car_query, year, group, data):
+            lower = [(p, m, w) for p, m, w in data if m <= mileage_threshold]
+            higher = [(p, m, w) for p, m, w in data if m > mileage_threshold]
+            db.upsert_average(car_query, year, _wavg(lower), _wavg(higher),
+                              title_group=group)
+            # Snapshot uses the TRUE listing count (not weighted) for trends
+            db.record_price_snapshot(
+                car_query, year, group, _wavg(data), len(data))
 
         # Per-group averages (only when enough data for a meaningful avg)
         for (year, group), data in year_title_data.items():
             if len(data) >= 3:
-                lower = [p for p, m in data if m <= mileage_threshold]
-                higher = [p for p, m in data if m > mileage_threshold]
-                avg_lower = round(sum(lower) / len(lower)) if lower else 0
-                avg_higher = round(sum(higher) / len(higher)) if higher else 0
-                db.upsert_average(car_query, year, avg_lower, avg_higher,
-                                  title_group=group)
-                # Record snapshot for trend tracking
-                all_prices = [p for p, _ in data]
-                overall_avg = round(sum(all_prices) / len(all_prices))
-                db.record_price_snapshot(
-                    car_query, year, group, overall_avg, len(data))
+                _emit(car_query, year, group, data)
 
         # "all" averages (fallback when a title group is too small)
         for year, data in year_all_data.items():
-            lower = [p for p, m in data if m <= mileage_threshold]
-            higher = [p for p, m in data if m > mileage_threshold]
-            avg_lower = round(sum(lower) / len(lower)) if lower else 0
-            avg_higher = round(sum(higher) / len(higher)) if higher else 0
-            db.upsert_average(car_query, year, avg_lower, avg_higher,
-                              title_group="all")
-            all_prices = [p for p, _ in data]
-            overall_avg = round(sum(all_prices) / len(all_prices))
-            db.record_price_snapshot(
-                car_query, year, "all", overall_avg, len(data))
+            _emit(car_query, year, "all", data)
 
 
 # ── Trim-Aware Averages ──────────────────────────────────────────
@@ -925,6 +932,8 @@ def find_deals(db, desired_cars, config, is_discovery=False):
                     "carfax_url": row["carfax_url"] or "",
                     "image_urls": json.loads(row["image_urls"]) if row["image_urls"] else [],
                     "is_discovery": is_discovery,
+                    "sold": bool(row.get("sold")),
+                    "sold_at": row.get("sold_at"),
                 }
                 if is_discovery and disc_cat_map:
                     deal["category"] = disc_cat_map.get(

@@ -48,6 +48,46 @@ def _append_to_file(filepath, value):
         f.write(value + "\n")
 
 
+def _enrich_deals_for_render(deals):
+    """Attach price history, VIN decode, market range, and price trend to a
+    list of deal dicts so the deal-card partial can render fully. Shared by
+    the deals/discover/sold views."""
+    if not deals:
+        return deals
+    hrefs = [d["href"] for d in deals]
+    price_histories = _db.get_price_history_batch(hrefs) if _db else {}
+    for d in deals:
+        d["price_history"] = price_histories.get(d["href"])
+
+    vins = [d["vin"] for d in deals if d.get("vin")]
+    vin_data = _db.get_vin_data_batch(vins) if _db and vins else {}
+    for d in deals:
+        d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
+
+    market_cache = {}
+    trend_keys = set()
+    for d in deals:
+        if not d.get("car_query") or not d.get("year"):
+            d["market_range"] = None
+            continue
+        grp = title_group(d.get("title_type"))
+        key = (d["car_query"], d["year"], grp)
+        if key not in market_cache:
+            prices = _db.get_market_prices(*key) if _db else []
+            market_cache[key] = compute_market_range(prices)
+        d["market_range"] = market_cache[key]
+        trend_keys.add(key)
+
+    trend_cache = _db.get_price_trends_batch(trend_keys) if _db and trend_keys else {}
+    for d in deals:
+        if d.get("car_query") and d.get("year"):
+            grp = title_group(d.get("title_type"))
+            d["price_trend"] = trend_cache.get((d["car_query"], d["year"], grp))
+        else:
+            d["price_trend"] = None
+    return deals
+
+
 # ── Deals page ────────────────────────────────────────────────────
 
 @app.route("/")
@@ -81,6 +121,8 @@ def index():
 
     filtered = []
     for d in _deals:
+        if d.get("sold"):
+            continue   # sold cars live on the /sold tab, not buyable deals
         if d["href"] in _deleted or d["href"] in _favorites:
             continue
         if source_filter and d["source"] != source_filter:
@@ -314,6 +356,8 @@ def export_csv():
 
     filtered = []
     for d in _deals:
+        if d.get("sold"):
+            continue   # sold cars live on the /sold tab, not buyable deals
         if d["href"] in _deleted or d["href"] in _favorites:
             continue
         if source_filter and d["source"] != source_filter:
@@ -414,6 +458,42 @@ def compare_page():
     return render_template("compare.html", deals=deals, favorites=_favorites)
 
 
+# ── Sold (market-clearing comps) ─────────────────────────────────
+
+@app.route("/sold")
+def sold_page():
+    """Listings detected as sold on Facebook. Their price is the actual
+    market-clearing price (weighted heavily in averages), so they're shown
+    separately as comps rather than mixed into buyable deals."""
+    source_filter = request.args.get("source", "")
+    car_filter = request.args.get("car", "")
+    sort_by = request.args.get("sort", "recent")
+
+    sold = [d for d in _deals
+            if d.get("sold") and d["href"] not in _deleted]
+    if source_filter:
+        sold = [d for d in sold if d["source"] == source_filter]
+    if car_filter:
+        sold = [d for d in sold if d["car_query"] == car_filter]
+
+    if sort_by == "price":
+        sold.sort(key=lambda d: d.get("price") or 0)
+    elif sort_by == "score":
+        sold.sort(key=lambda d: d.get("deal_score", 0), reverse=True)
+    else:  # recent — most recently detected sale first
+        sold.sort(key=lambda d: d.get("sold_at") or "", reverse=True)
+
+    _enrich_deals_for_render(sold)
+
+    all_sold = [d for d in _deals if d.get("sold")]
+    sources = sorted(set(d["source"] for d in all_sold))
+    cars = sorted(set(d["car_query"] for d in all_sold))
+    return render_template(
+        "sold.html", deals=sold, favorites=_favorites,
+        sources=sources, cars=cars, current_source=source_filter,
+        current_car=car_filter, current_sort=sort_by, sold_count=len(all_sold))
+
+
 # ── Sell My Car ──────────────────────────────────────────────────
 
 @app.route("/sell")
@@ -502,6 +582,8 @@ def discover_page():
 
     filtered = []
     for d in _discovery_deals:
+        if d.get("sold"):
+            continue
         if d["href"] in _deleted or d["href"] in _favorites:
             continue
         if category_filter and d.get("category") != category_filter:

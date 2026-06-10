@@ -101,3 +101,54 @@ def test_vin_takes_priority_over_name_match():
 
 def test_empty_input_returns_empty():
     assert _dedup_deals([]) == []
+
+
+# ── Sold-price weighting in averages ─────────────────────────────
+
+from analysis import calculate_averages, SOLD_WEIGHT
+
+
+class _FakeDB:
+    """Captures upsert_average calls so we can assert on the computed mean."""
+    def __init__(self, rows):
+        self._rows = rows           # list of (price, mileage, year, tt, vin, sold)
+        self.averages = {}          # (year, group) -> (avg_lower, avg_higher)
+
+    def get_priced_listings(self, car_query):
+        return self._rows
+
+    def upsert_average(self, car_query, year, avg_lower, avg_higher, title_group):
+        self.averages[(year, title_group)] = (avg_lower, avg_higher)
+
+    def record_price_snapshot(self, *a, **k):
+        pass
+
+
+def test_sold_listing_dominates_the_average():
+    """One sold comp at 10k plus three asking listings at 20k must pull the
+    average far below the unweighted mean (~17.5k) — toward the sold price."""
+    rows = [
+        (20000, 30000, 2020, "clean", None, 0),
+        (20000, 30000, 2020, "clean", None, 0),
+        (20000, 30000, 2020, "clean", None, 0),
+        (10000, 30000, 2020, "clean", None, 1),   # sold — weighted SOLD_WEIGHT
+    ]
+    db = _FakeDB(rows)
+    calculate_averages(db, ["Toyota RAV4"], mileage_threshold=100000)
+    avg_lower, _ = db.averages[(2020, "clean")]
+    # Weighted: (3*20000 + SOLD_WEIGHT*10000) / (3 + SOLD_WEIGHT)
+    expected = round((3 * 20000 + SOLD_WEIGHT * 10000) / (3 + SOLD_WEIGHT))
+    assert avg_lower == expected
+    assert avg_lower < 17500, "sold comp must pull the mean well below asking"
+
+
+def test_all_asking_listings_is_plain_mean():
+    rows = [
+        (20000, 30000, 2021, "clean", None, 0),
+        (22000, 30000, 2021, "clean", None, 0),
+        (24000, 30000, 2021, "clean", None, 0),
+    ]
+    db = _FakeDB(rows)
+    calculate_averages(db, ["Honda CR-V"], mileage_threshold=100000)
+    avg_lower, _ = db.averages[(2021, "clean")]
+    assert avg_lower == 22000

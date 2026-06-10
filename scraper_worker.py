@@ -331,6 +331,17 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                     except Exception as e:
                         logging.error(f"{name} enrichment failed: {e}")
 
+                # Re-visit active FB listings to catch ones that have sold —
+                # sold prices are the market-clearing data we weight heavily.
+                if name == "facebook" and hasattr(scraper, 'check_sold_listings'):
+                    _status.update({
+                        "message": "Checking Facebook listings for sold status...",
+                    })
+                    try:
+                        scraper.check_sold_listings(db, limit=80)
+                    except Exception as e:
+                        logging.error(f"facebook sold-check failed: {e}")
+
             except Exception as e:
                 logging.error(f"{name} scraper failed: {e}")
                 result["errors"].append(name)

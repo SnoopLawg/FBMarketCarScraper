@@ -85,7 +85,10 @@ class Database:
                 listed_at TEXT,
                 image_urls TEXT,
                 is_discovery INTEGER DEFAULT 0,
-                seller_type TEXT
+                seller_type TEXT,
+                sold INTEGER DEFAULT 0,
+                sold_at TEXT,
+                sold_checked_at TEXT
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_href_source ON listings(href, source);
             CREATE INDEX IF NOT EXISTS idx_listings_car_query ON listings(car_query);
@@ -354,6 +357,23 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        # Sold tracking: a listing detected as "Sold" on its FB detail page.
+        # Its price is the actual market-clearing price — weighted heavily in
+        # averages — so sold listings are kept (never stale-deleted).
+        if "sold" not in columns:
+            logging.info("Migrating DB: adding sold + sold_at columns...")
+            try:
+                self.cur.execute(
+                    "ALTER TABLE listings ADD COLUMN sold INTEGER DEFAULT 0")
+                self.cur.execute(
+                    "ALTER TABLE listings ADD COLUMN sold_at TEXT")
+                self.cur.execute(
+                    "ALTER TABLE listings ADD COLUMN sold_checked_at TEXT")
+                self.conn.commit()
+                logging.info("sold migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Migrate vehicle_ratings to include MPG columns
         self.cur.execute("PRAGMA table_info(vehicle_ratings)")
         vr_rows = self.cur.fetchall()
@@ -476,7 +496,7 @@ class Database:
 
     def get_priced_listings(self, car_query):
         self.cur.execute(
-            "SELECT price, mileage, year, title_type, vin FROM listings "
+            "SELECT price, mileage, year, title_type, vin, sold FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND year IS NOT NULL "
             "AND deleted_at IS NULL",
             (car_query,)
@@ -489,7 +509,7 @@ class Database:
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
             "title_type, vin, description, owner_count, carfax_url, listed_at, "
-            "image_urls, seller_type "
+            "image_urls, seller_type, sold, sold_at "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -557,10 +577,14 @@ class Database:
         self.conn.commit()
 
     def mark_stale(self, source, days_old=30):
-        """Soft-delete listings from a source that haven't been updated recently."""
+        """Soft-delete listings from a source that haven't been updated recently.
+
+        Sold listings are exempt: they're our highest-value comparables
+        (actual sale prices) and intentionally kept as permanent data points.
+        """
         self.cur.execute(
             "UPDATE listings SET deleted_at = CURRENT_TIMESTAMP "
-            "WHERE source = ? AND deleted_at IS NULL "
+            "WHERE source = ? AND deleted_at IS NULL AND sold = 0 "
             "AND updated_at < datetime('now', ?)",
             (source, f'-{days_old} days'))
         count = self.cur.rowcount
@@ -791,6 +815,46 @@ class Database:
         except sqlite3.Error as e:
             logging.error(f"DB vehicle rating upsert error: {e}")
 
+    def mark_sold(self, href):
+        """Flag a listing as sold (idempotent — keeps the first sold_at).
+
+        The current price is the sale price, so we leave it untouched; the
+        analysis layer treats sold listings as high-confidence comparables.
+        """
+        try:
+            self.cur.execute(
+                "UPDATE listings SET sold = 1, "
+                "sold_at = COALESCE(sold_at, CURRENT_TIMESTAMP), "
+                "sold_checked_at = CURRENT_TIMESTAMP "
+                "WHERE href = ?", (href,))
+            self.conn.commit()
+            return self.cur.rowcount
+        except sqlite3.Error as e:
+            logging.error(f"DB mark_sold error: {e}")
+            return 0
+
+    def mark_sold_checked(self, href):
+        """Record that we checked a listing's sold status (no change)."""
+        try:
+            self.cur.execute(
+                "UPDATE listings SET sold_checked_at = CURRENT_TIMESTAMP "
+                "WHERE href = ?", (href,))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB mark_sold_checked error: {e}")
+
+    def get_active_listings_for_sold_check(self, source, limit=60):
+        """Active listings to re-visit for a sold check, least-recently
+        checked first. Sold listings drop out of FB search, so the only way
+        to catch a sale is to re-visit known-active detail pages."""
+        self.cur.execute(
+            "SELECT id, href, car_name FROM listings "
+            "WHERE source = ? AND deleted_at IS NULL AND sold = 0 "
+            "ORDER BY sold_checked_at IS NOT NULL, sold_checked_at ASC, "
+            "updated_at DESC LIMIT ?",
+            (source, limit))
+        return self.cur.fetchall()
+
     def mark_enriched(self, href):
         """Mark a listing as enriched (attempted) without changing any data."""
         try:
@@ -816,7 +880,7 @@ class Database:
         """Update multiple detail fields for a listing."""
         allowed = {"title_type", "trim", "seller", "condition",
                    "deal_rating", "accident_history", "description", "vin",
-                   "image_urls", "seller_type"}
+                   "image_urls", "seller_type", "sold"}
         sets = []
         vals = []
         for k, v in kwargs.items():

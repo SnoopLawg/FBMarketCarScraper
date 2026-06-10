@@ -217,6 +217,10 @@ class FacebookScraper(BaseScraper):
 
                 details = self._extract_detail_info(page_text)
 
+                # A listing can sell between scrapes — catch it on this visit
+                if self._is_sold(page_source):
+                    details["sold"] = 1
+
                 # Capture visible description text for future re-parsing
                 description = self._extract_description(page_source)
                 if description:
@@ -416,6 +420,67 @@ class FacebookScraper(BaseScraper):
             return unique[:10]
         except Exception:
             return []
+
+    def _is_sold(self, page_source):
+        """Detect FB's "Sold" marker on a listing detail page.
+
+        Sold listings render a standalone `<span>Sold</span>` badge before
+        the title (and drop out of search results entirely). Verified
+        against real sold vs active listings: the active page has zero such
+        spans, the sold page exactly one. Using the exact-text span avoids
+        false positives from "sold as-is" phrases in seller descriptions.
+        """
+        try:
+            soup = BeautifulSoup(page_source, "html.parser")
+            return any(sp.get_text(strip=True) == "Sold"
+                       for sp in soup.find_all("span"))
+        except Exception:
+            return False
+
+    def check_sold_listings(self, db, limit=60):
+        """Re-visit active FB listings to catch ones that have sold.
+
+        Sold listings vanish from search, so the main scrape never sees the
+        sale — we re-visit known-active detail pages, least-recently-checked
+        first, and flag any now marked "Sold". Their last price is the
+        market-clearing price, weighted heavily in averages.
+        """
+        rows = db.get_active_listings_for_sold_check(
+            source="facebook", limit=limit)
+        if not rows:
+            return 0
+        self.log(f"Checking {len(rows)} listings for sold status...")
+        sold_count = 0
+        consecutive_blocked = 0
+        for row in rows:
+            href = row["href"]
+            try:
+                self.driver.get(href)
+                self.inject_stealth()
+                self.human_delay(2, 4)
+                self._dismiss_login_modal()
+
+                cur_url = self.driver.current_url
+                if "marketplace/item" not in cur_url or "directory" in cur_url:
+                    consecutive_blocked += 1
+                    if consecutive_blocked >= 5:
+                        self.log("  Rate limited — stopping sold check early.")
+                        break
+                    continue
+                consecutive_blocked = 0
+
+                if self._is_sold(self.driver.page_source):
+                    db.mark_sold(href)
+                    sold_count += 1
+                    self.log(f"  SOLD: {row['car_name'][:45]}")
+                else:
+                    db.mark_sold_checked(href)
+            except Exception as e:
+                logging.warning(f"[Facebook] Sold-check error {href[:60]}: {e}")
+            self.human_delay(1, 3)
+        self.log(f"Sold check complete: {sold_count} newly sold "
+                 f"of {len(rows)} checked.")
+        return sold_count
 
     def _extract_detail_info(self, page_text):
         """Extract title type, condition, and other info from a FB listing detail page."""

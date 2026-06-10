@@ -98,8 +98,13 @@ Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_e
 - `/api/sell/valuations` endpoint triggers on-demand external valuation refresh
 - Settings page includes "Cars to Sell" panel with multi-field form
 
+### Sold listings (market-clearing comps)
+- FB marks sold items with a standalone `<span>Sold</span>` on the detail page and removes them from search. `FacebookScraper._is_sold()` detects this; `check_sold_listings()` (run after the FB scrape in `scraper_worker`) re-visits active FB listings least-recently-checked-first and flags any now sold via `db.mark_sold()`. Enrichment also detects sold inline.
+- Sold listings are kept permanently (`mark_stale` skips `sold=1`) because their price is the actual sale price. `calculate_averages` weights each sold comp as `SOLD_WEIGHT` (8) asking-price samples — a weighted mean that keeps true listing counts — so averages reflect what cars really sold for, not aspirational asks.
+- Sold cars are excluded from the buyable Deals/Discover lists and CSV export; they get their own `/sold` tab (`sold.html`) as comps. New Grade-A *sold* listings don't trigger Discord alerts.
+
 ### Web UI
-- `web_ui.py` — Flask app with routes for deals list, sell pricing, favorites, analytics, settings, and scraper health
+- `web_ui.py` — Flask app with routes for deals list, sold comps, sell pricing, favorites, analytics, settings, and scraper health
 - `templates/` — Jinja2 templates (`base.html`, `deals.html`, `sell.html`, `favorites.html`, `analytics.html`, `settings.html`, `_deal_card.html` partial)
 - State files: `favorite_listings.txt`, `deleted_listings.txt` (line-delimited href sets)
 

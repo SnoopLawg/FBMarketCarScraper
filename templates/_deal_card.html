@@ -63,6 +63,11 @@
         {% set _sb = deal.score_breakdown or {} %}
         {% set _reasons = _sb.get('reasons', {}) if _sb else {} %}
         <div class="deal-badges-primary">
+            {% if deal.sold %}
+            <span class="badge badge-sold"
+                  style="background:var(--red);color:#fff;font-weight:700"
+                  title="Sold{% if deal.sold_at %} (detected {{ deal.sold_at[:10] }}){% endif %} — this price is a confirmed market-clearing comp">SOLD</span>
+            {% endif %}
             <span class="badge badge-{{ deal.source }}">{{ deal.source }}</span>
             {% if deal.deal_score is not none %}
             <span class="badge badge-score badge-score-{{ deal.deal_grade|lower }}"

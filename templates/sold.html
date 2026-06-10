@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Sold - AutoAlert{% endblock %}
+{% block nav_sold %}active{% endblock %}
+
+
+{% block head %}
+<style>/* Sold — shared styles in /static/css/components.css */</style>
+{% endblock %}
+
+
+{% block body %}
+<div class="page">
+    <div style="margin-bottom:8px;">
+        <h1 style="margin:0;font-size:22px;">Sold listings</h1>
+        <p class="text-secondary text-sm" style="margin:4px 0 0;">
+            Confirmed sale prices — what cars actually went for. These are
+            weighted heavily in the market averages used to score deals, and
+            are kept as permanent comps (not stale-deleted).
+        </p>
+    </div>
+
+    {% if deals or sources %}
+    <form method="get" class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;">
+        <select name="source" onchange="this.form.submit()" class="filter-select">
+            <option value="">All sources ({{ sold_count }})</option>
+            {% for s in sources %}
+            <option value="{{ s }}" {{ 'selected' if current_source == s }}>{{ s }}</option>
+            {% endfor %}
+        </select>
+        <select name="car" onchange="this.form.submit()" class="filter-select">
+            <option value="">All models</option>
+            {% for c in cars %}
+            <option value="{{ c }}" {{ 'selected' if current_car == c }}>{{ c }}</option>
+            {% endfor %}
+        </select>
+        <select name="sort" onchange="this.form.submit()" class="filter-select">
+            <option value="recent" {{ 'selected' if current_sort == 'recent' }}>Recently sold</option>
+            <option value="price" {{ 'selected' if current_sort == 'price' }}>Price</option>
+            <option value="score" {{ 'selected' if current_sort == 'score' }}>Deal score</option>
+        </select>
+    </form>
+    {% endif %}
+
+    {% if deals %}
+    <div class="deal-grid">
+        {% for deal in deals %}
+        {% set card_id = "sold-" ~ loop.index %}
+        {% set show_save = false %}
+        {% include '_deal_card.html' %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div style="font-size:40px; margin-bottom:12px;">No sold listings yet</div>
+        <p>When a tracked Facebook listing is detected as sold on re-scrape,
+           it shows up here as a market comp.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/carousel.js"></script>
+<script src="/static/js/deal-actions.js"></script>
+{% endblock %}

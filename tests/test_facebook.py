@@ -139,6 +139,33 @@ def test_title_containing_miles_not_mistaken_for_mileage():
     assert row["mileage_raw"] == "60K miles"
 
 
+# ── Sold detection (standalone <span>Sold</span> on the detail page) ──
+
+
+def _sold_scraper():
+    return FacebookScraper(None, MIN_CONFIG, lambda **k: None, car_list=["_"])
+
+
+def test_is_sold_true_on_standalone_sold_span():
+    # Mirrors the real sold-listing DOM: a lone "Sold" badge span.
+    html = ('<div><span class="x1a1m0xk">Sold</span>'
+            '<span>2017 Ford Escape Titanium</span><span>$5,500</span></div>')
+    assert _sold_scraper()._is_sold(html) is True
+
+
+def test_is_sold_false_on_active_listing():
+    html = ('<div><span>2022 Honda Pilot TrailSport</span>'
+            '<span>$38,000</span></div>')
+    assert _sold_scraper()._is_sold(html) is False
+
+
+def test_is_sold_false_on_sold_as_is_in_description():
+    # "sold as-is" in a description must NOT trip the exact-span detector.
+    html = ('<div><span>2015 Toyota Camry</span>'
+            '<span>Clean title, being sold as-is, no warranty</span></div>')
+    assert _sold_scraper()._is_sold(html) is False
+
+
 # ── Title-type detection from listing text ────────────────────────
 
 

@@ -143,7 +143,8 @@ def send_deal_alerts(webhook_url, deals, app_url=""):
     grade_a = [d for d in deals
                if d.get("deal_grade") == "A"
                and d["href"] not in notified
-               and not d.get("is_discovery")]
+               and not d.get("is_discovery")
+               and not d.get("sold")]   # don't alert on cars already sold
 
     if not grade_a:
         return
