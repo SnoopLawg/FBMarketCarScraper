@@ -15,6 +15,33 @@ from parsing import classify_seller_type
 class AutotraderScraper(BaseScraper):
     SOURCE_NAME = "autotrader"
 
+    def _is_bot_blocked(self):
+        """Detect Autotrader's Akamai Bot Manager block page.
+
+        The block page is ~4 KB with assets under /akamai-block/ and the
+        title "Autotrader - page unavailable" — confirmed by capturing it
+        live (June 2026). It was previously read as "no results" and the
+        run completed silently with 0 listings.
+        """
+        try:
+            if "akamai-block" in self.driver.page_source:
+                return True
+            return "page unavailable" in (self.driver.title or "").lower()
+        except Exception:
+            return False
+
+    def _warm_up(self):
+        """Visit the homepage first so Akamai's JS sensor sets its cookies
+        (_abck / bm_sz) before we hit the protected search routes."""
+        try:
+            self.log("Warming up session on homepage...")
+            self.driver.get("https://www.autotrader.com/")
+            self.inject_stealth()
+            self.human_delay(4, 8)
+            self.scroll_page(count=2)
+        except Exception as e:
+            self.log(f"Warm-up failed (continuing): {e}")
+
     def scrape(self):
         at_config = self.config["Sources"].get("autotrader", {})
         zip_code = at_config.get("zip", "84101")
@@ -23,6 +50,10 @@ class AutotraderScraper(BaseScraper):
 
         total_found = 0
         total_matched = 0
+        blocked_pages = 0
+        block_screenshot_taken = False
+
+        self._warm_up()
 
         for i, car_query in enumerate(self.desired_cars):
             self.log(f"Scraping: {car_query}")
@@ -56,6 +87,23 @@ class AutotraderScraper(BaseScraper):
 
                 self.human_delay(5, 10)
 
+                # Akamai block page? Back off once and retry before giving up.
+                if self._is_bot_blocked():
+                    self.log("  Akamai bot block detected — backing off to retry...")
+                    self.human_delay(20, 40)
+                    self.driver.get(url)
+                    self.human_delay(5, 10)
+                if self._is_bot_blocked():
+                    blocked_pages += 1
+                    self.count_parse_error()
+                    if not block_screenshot_taken:
+                        self.capture_screenshot("akamai_block")
+                        block_screenshot_taken = True
+                    logging.warning(
+                        f"[autotrader] BLOCKED by Akamai on {car_query} "
+                        f"page {page + 1} — skipping query")
+                    break
+
                 try:
                     WebDriverWait(self.driver, 15).until(
                         EC.presence_of_element_located(
@@ -87,6 +135,10 @@ class AutotraderScraper(BaseScraper):
 
                 self.log(f"  Page {page + 1}: {len(cards)} listings")
 
+        if blocked_pages:
+            logging.warning(
+                f"[autotrader] {blocked_pages} queries hit the Akamai bot "
+                f"wall this run — yield will be low or zero")
         self.log(f"Done: {total_found} total listings, {total_matched} inserted")
 
     @staticmethod

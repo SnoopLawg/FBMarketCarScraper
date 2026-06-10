@@ -18,6 +18,19 @@ SCRIPT_DIR = Path(__file__).parent.parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
 COOKIE_FILE = DATA_DIR / "fb_cookies.pkl"
 
+# Structural patterns for parsing listing cards. FB's generated CSS classes
+# (x3ct3a4, x1gslohp, …) rotate between builds and differ between the
+# logged-in and anon views — they broke silently in prod. The /marketplace/
+# item/<id>/ href format and the span-text shape (price, title, "City, ST",
+# "149K miles") have been stable for years, so parse those instead.
+ITEM_ID_RE = re.compile(r"/marketplace/item/(\d+)")
+# "$14,000" or "MX$10,200" — a span holding exactly one price
+PRICE_RE = re.compile(r"^[A-Z]{0,3}\$[\d,.]+$")
+# "Salt Lake City, UT"
+LOCATION_RE = re.compile(r"^[^$]+,\s*[A-Z]{2}$")
+# "149K miles", "12K miles · Dealership", "1,490 km"
+MILEAGE_RE = re.compile(r"^[\d,.]+\s*K?\s*(?:miles|mi|km)\b", re.I)
+
 
 class FacebookScraper(BaseScraper):
     SOURCE_NAME = "facebook"
@@ -42,10 +55,14 @@ class FacebookScraper(BaseScraper):
             self.scroll_page()
 
             soup = BeautifulSoup(self.driver.page_source, "html.parser")
-            listings = soup.find_all(class_="x3ct3a4")
+            listings = soup.select("a[href*='/marketplace/item/']")
 
+            found_before = self._listing_count
+            seen_ids = set()
             for item in listings:
-                self._process_listing(item, car_query)
+                self._process_listing(item, car_query, seen_ids)
+            self.log(f"  {car_query}: {len(listings)} cards → "
+                     f"{self._listing_count - found_before} inserted")
 
     def _build_url(self, city_id, car_query):
         passive = self.config.get("Passive")
@@ -63,37 +80,57 @@ class FacebookScraper(BaseScraper):
                 f"&maxMileage={max_mileage}&topLevelVehicleType=car_truck&exact=false"
             )
 
-    def _process_listing(self, item, car_query):
-        price_divs = item.find_all("div", class_="x1gslohp xkh6y0r")
+    def _process_listing(self, item, car_query, seen_ids=None):
+        """Parse one search-result card from its /marketplace/item/ anchor.
 
-        if len(price_divs) == 3:
-            price_str, title, city, miles = (
-                price_divs[0].text.strip(), price_divs[1].text.strip(),
-                price_divs[2].text.strip(), "N/A"
-            )
-        elif len(price_divs) == 4:
-            price_str, title, city, miles = (
-                price_divs[0].text.strip(), price_divs[1].text.strip(),
-                price_divs[2].text.strip(), price_divs[3].text.strip()
-            )
-        else:
+        Each card anchor contains the listing fields as span text (each
+        rendered several times in nested visual/accessibility copies):
+        price, title, "City, ST", "NNNK miles".  Discounted listings
+        prepend a combined "$new$old" span; dealer listings append
+        " · Dealership" to the mileage span.
+        """
+        href = item.get("href") or ""
+        id_match = ITEM_ID_RE.search(href)
+        if not id_match:
             return
+        item_id = id_match.group(1)
+        if seen_ids is not None:
+            if item_id in seen_ids:
+                return
+            seen_ids.add(item_id)
+        # Canonical URL — strips ?ref=search&… tracking params so the
+        # (href, source) upsert key stays stable across scrapes
+        full_href = f"https://www.facebook.com/marketplace/item/{item_id}/"
+
+        # Dedup span texts preserving order
+        texts = []
+        for span in item.find_all("span"):
+            t = span.get_text(strip=True)
+            if t and t not in texts:
+                texts.append(t)
+
+        price_str, city, miles = "", "", "N/A"
+        rest = []
+        for t in texts:
+            if not price_str and PRICE_RE.match(t):
+                price_str = t   # first single-price span = current price
+            elif miles == "N/A" and MILEAGE_RE.match(t):
+                miles = t
+            elif not city and LOCATION_RE.match(t):
+                city = t
+            elif "$" not in t:
+                rest.append(t)
+        if not price_str or not rest:
+            return
+        title = max(rest, key=len)
 
         price_parts = price_str.split("$")[1:]
         if not price_parts:
             return
         price = price_parts[0]
 
-        link_tag = item.find("a")
         img_tag = item.find("img", {"src": True})
-        if not link_tag or not img_tag:
-            return
-
-        href = link_tag.get("href")
-        if not href:
-            return
-
-        full_href = f"https://www.facebook.com{href}" if not href.startswith("http") else href
+        image_url = img_tag["src"] if img_tag else ""
 
         # Title type — Facebook occasionally includes it in listing text
         title_type = ""
@@ -105,11 +142,17 @@ class FacebookScraper(BaseScraper):
         elif "clean title" in full_text:
             title_type = "clean"
 
+        # Dealer listings tag the mileage span: "145K miles · Dealership"
+        seller_type = ""
+        if "dealership" in miles.lower():
+            seller_type = "dealer"
+            miles = miles.split("·")[0].strip()
+
         self.counted_insert(
-            car_query=car_query, href=full_href, image_url=img_tag["src"],
+            car_query=car_query, href=full_href, image_url=image_url,
             price=price, car_name=title, location=city,
             mileage_raw=miles, source=self.SOURCE_NAME,
-            title_type=title_type,
+            title_type=title_type, seller_type=seller_type,
         )
 
     # ── Detail page enrichment ──────────────────────────────────────

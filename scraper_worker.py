@@ -248,6 +248,38 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                 yield_count = scraper.listing_count
                 error_count = scraper.error_count
                 result["listings"][name] = yield_count
+
+                # Zero yield from a source that historically produces is a
+                # broken scraper or bot wall, NOT a clean run. Record it as
+                # failed — with a screenshot of whatever the browser was
+                # showing — instead of letting it read "completed" (which
+                # hid the FB selector rot for over a week).
+                health = db.get_scrape_health()
+                src_health = health.get(name)
+                zero_yield_failure = (
+                    yield_count == 0 and src_health
+                    and src_health["runs_count"] >= 3
+                    and src_health["avg_yield"] >= 1)
+
+                if zero_yield_failure:
+                    screenshot_path = scraper.capture_screenshot("zero_yield")
+                    db.update_scrape_run(run_id,
+                        finished_at=datetime.now().isoformat(),
+                        status="failed",
+                        listings_found=0,
+                        errors=max(error_count, 1),
+                        error_message=(
+                            f"0 listings found (historical avg "
+                            f"{src_health['avg_yield']:.0f}) — selector rot, "
+                            f"login failure, or bot wall"),
+                        screenshot_path=screenshot_path,
+                        duration_seconds=round(duration, 1))
+                    logging.warning(
+                        f"[{name}] ZERO-YIELD FAILURE: 0 listings vs "
+                        f"{src_health['avg_yield']:.0f} avg — marked run "
+                        f"failed (screenshot: {screenshot_path})")
+                    continue
+
                 db.update_scrape_run(run_id,
                     finished_at=datetime.now().isoformat(),
                     status="completed",
@@ -264,8 +296,6 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                     f"in {duration:.1f}s")
 
                 # Yield health check
-                health = db.get_scrape_health()
-                src_health = health.get(name)
                 if (src_health and src_health["runs_count"] >= 3
                         and src_health["avg_yield"] > 0):
                     ratio = yield_count / src_health["avg_yield"]

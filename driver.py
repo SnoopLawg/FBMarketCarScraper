@@ -92,11 +92,13 @@ def create_driver(proxy_config=None):
     options.set_preference("marionette.enabled", True)
 
     # ── Make the browser look normal ──
-    if os.environ.get("DOCKER_MODE"):
-        ua = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
-    else:
-        ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
-    options.set_preference("general.useragent.override", ua)
+    # Do NOT override the user agent. Firefox's default UA is already
+    # consistent with its real TLS/JS fingerprint; a hardcoded version
+    # string (we shipped "Firefox/128.0" while running ESR 140 / 149)
+    # creates a UA-vs-engine mismatch that bot managers like Akamai
+    # cross-check — Autotrader served its block page on every request.
+    # Headless Firefox sends the same UA as headed, so there is nothing
+    # to hide here (unlike Chrome's "HeadlessChrome" token).
 
     # Don't resist fingerprinting (it makes you look MORE suspicious)
     options.set_preference("privacy.resistFingerprinting", False)

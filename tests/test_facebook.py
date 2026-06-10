@@ -1,8 +1,10 @@
 """Regression tests for the Facebook Marketplace scraper's _process_listing.
 
-FB cards use specific div classes (`x1gslohp xkh6y0r`) for price/title/city/
-mileage — synthetic HTML in this shape exercises the parsing without needing
-to actually scrape FB (which bot-walls non-session traffic).
+FB's generated CSS classes rotate between builds, so the parser reads the
+structural shape instead: each result card is an <a href="/marketplace/
+item/<id>/…"> anchor whose span texts carry price, title, "City, ST" and
+"NNNK miles" (each field rendered in several nested copies). The synthetic
+cards here mirror real captures from a live search page (June 2026).
 """
 from bs4 import BeautifulSoup
 
@@ -14,35 +16,32 @@ MIN_CONFIG = {"MinPrice": 5000, "MaxPrice": 30000}
 
 def _make_card(price="$15,990", title="2021 Subaru Forester Premium",
                city="Salt Lake City, UT", miles="60K miles",
-               include_miles=True, href="/marketplace/item/12345",
-               img="https://example.com/photo.jpg"):
-    divs = [
-        f'<div class="x1gslohp xkh6y0r">{price}</div>',
-        f'<div class="x1gslohp xkh6y0r">{title}</div>',
-        f'<div class="x1gslohp xkh6y0r">{city}</div>',
-    ]
+               include_miles=True,
+               href="/marketplace/item/12345/?ref=search&referral_code=null",
+               img="https://example.com/photo.jpg", lead_spans=()):
+    # FB renders each field in several nested copies — simulate the dupes
+    spans = list(lead_spans) + [price, title, title, city, city]
     if include_miles:
-        divs.append(f'<div class="x1gslohp xkh6y0r">{miles}</div>')
-    a_open = f'<a href="{href}">' if href else ""
-    a_close = "</a>" if href else ""
+        spans.append(miles)
     img_tag = f'<img src="{img}"/>' if img else ""
-    html = f'<div>{a_open}{img_tag}{"".join(divs)}{a_close}</div>'
-    return BeautifulSoup(html, "html.parser").div
+    inner = "".join(f"<span>{s}</span>" for s in spans)
+    html = f'<a href="{href}">{img_tag}{inner}</a>'
+    return BeautifulSoup(html, "html.parser").a
 
 
-def _scrape_one(card):
+def _scrape_one(card, seen_ids=None):
     captured = []
     scraper = FacebookScraper(None, MIN_CONFIG,
                               lambda **kw: captured.append(kw),
                               car_list=["Subaru Forester"])
-    scraper._process_listing(card, "Subaru Forester")
+    scraper._process_listing(card, "Subaru Forester", seen_ids)
     return captured[0] if captured else None
 
 
 # ── Core parsing ──────────────────────────────────────────────────
 
 
-def test_four_divs_extracts_price_title_city_miles():
+def test_extracts_price_title_city_miles():
     row = _scrape_one(_make_card())
     assert row is not None
     assert row["price"] == "15,990"   # stripped "$" prefix
@@ -50,64 +49,94 @@ def test_four_divs_extracts_price_title_city_miles():
     assert row["location"] == "Salt Lake City, UT"
     assert row["mileage_raw"] == "60K miles"
     assert row["source"] == "facebook"
+    assert row["image_url"] == "https://example.com/photo.jpg"
 
 
-def test_three_divs_yields_mileage_n_a():
+def test_missing_mileage_yields_n_a():
     row = _scrape_one(_make_card(include_miles=False))
     assert row is not None
     assert row["mileage_raw"] == "N/A"
 
 
-def test_href_made_absolute():
-    row = _scrape_one(_make_card(href="/marketplace/item/abc"))
-    assert row["href"] == "https://www.facebook.com/marketplace/item/abc"
+def test_href_canonicalized_to_item_url_without_tracking_params():
+    row = _scrape_one(_make_card(
+        href="/marketplace/item/1540041667515431/?ref=search&__tn__=x"))
+    assert row["href"] == (
+        "https://www.facebook.com/marketplace/item/1540041667515431/")
 
 
-def test_href_left_alone_if_already_absolute():
-    row = _scrape_one(_make_card(href="https://www.facebook.com/marketplace/item/abc"))
-    assert row["href"] == "https://www.facebook.com/marketplace/item/abc"
+def test_discounted_listing_uses_current_price():
+    """Price-drop cards prepend a combined "$new$old" span before the
+    individual price spans — exactly as captured live."""
+    row = _scrape_one(_make_card(
+        price="$9,950", lead_spans=("$9,950$10,950",),
+        title="2005 Toyota tacoma access cab TRD Off-Road"))
+    assert row is not None
+    assert row["price"] == "9,950"
+
+
+def test_foreign_currency_prefix_parsed():
+    row = _scrape_one(_make_card(price="MX$10,200",
+                                 title="Toyota Tacoma 2006 v6",
+                                 include_miles=False))
+    assert row is not None
+    assert row["price"] == "10,200"
+
+
+def test_dealership_suffix_sets_seller_type_and_cleans_mileage():
+    row = _scrape_one(_make_card(miles="145K miles · Dealership"))
+    assert row is not None
+    assert row["seller_type"] == "dealer"
+    assert row["mileage_raw"] == "145K miles"
+
+
+def test_private_listing_has_blank_seller_type():
+    row = _scrape_one(_make_card())
+    assert row["seller_type"] == ""
+
+
+def test_missing_image_still_inserts_with_blank_url():
+    # Lazy-loaded cards may not have a thumbnail yet — keep the listing
+    row = _scrape_one(_make_card(img=""))
+    assert row is not None
+    assert row["image_url"] == ""
+
+
+def test_seen_ids_dedups_repeated_cards():
+    seen = set()
+    assert _scrape_one(_make_card(), seen) is not None
+    assert _scrape_one(_make_card(), seen) is None
 
 
 # ── Skip conditions (return without inserting) ────────────────────
 
 
-def test_card_with_no_link_is_skipped():
-    # No href -> no <a> tag
-    html = ('<div>'
-            '<img src="https://example.com/p.jpg"/>'
-            '<div class="x1gslohp xkh6y0r">$10,000</div>'
-            '<div class="x1gslohp xkh6y0r">2020 Forester</div>'
-            '<div class="x1gslohp xkh6y0r">Provo, UT</div>'
-            '<div class="x1gslohp xkh6y0r">80K miles</div>'
-            '</div>')
-    card = BeautifulSoup(html, "html.parser").div
+def test_anchor_without_item_id_is_skipped():
+    card = BeautifulSoup(
+        '<a href="/marketplace/category/cars"><span>$10,000</span>'
+        '<span>2020 Forester</span></a>', "html.parser").a
     assert _scrape_one(card) is None
 
 
-def test_card_with_no_image_is_skipped():
-    html = ('<div><a href="/marketplace/item/x">'
-            '<div class="x1gslohp xkh6y0r">$10,000</div>'
-            '<div class="x1gslohp xkh6y0r">2020 Forester</div>'
-            '<div class="x1gslohp xkh6y0r">Provo, UT</div>'
-            '<div class="x1gslohp xkh6y0r">80K miles</div>'
-            '</a></div>')
-    card = BeautifulSoup(html, "html.parser").div
-    assert _scrape_one(card) is None
-
-
-def test_wrong_div_count_is_skipped():
-    # Only 2 divs — not 3 or 4
-    html = ('<div><a href="/x"><img src="x"/>'
-            '<div class="x1gslohp xkh6y0r">$10,000</div>'
-            '<div class="x1gslohp xkh6y0r">2020 Forester</div>'
-            '</a></div>')
-    card = BeautifulSoup(html, "html.parser").div
-    assert _scrape_one(card) is None
-
-
-def test_price_without_dollar_sign_is_skipped():
+def test_card_without_price_is_skipped():
     row = _scrape_one(_make_card(price="Free"))
     assert row is None
+
+
+def test_card_with_only_price_is_skipped():
+    card = BeautifulSoup(
+        '<a href="/marketplace/item/99/"><span>$10,000</span></a>',
+        "html.parser").a
+    assert _scrape_one(card) is None
+
+
+def test_title_containing_miles_not_mistaken_for_mileage():
+    """A title like "2010 Tacoma low miles!" must not be classified as the
+    mileage span (mileage must start with digits + K/miles)."""
+    row = _scrape_one(_make_card(title="Tacoma super low miles runs great"))
+    assert row is not None
+    assert row["car_name"] == "Tacoma super low miles runs great"
+    assert row["mileage_raw"] == "60K miles"
 
 
 # ── Title-type detection from listing text ────────────────────────
