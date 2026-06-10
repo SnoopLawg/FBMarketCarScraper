@@ -3,13 +3,29 @@ __pycache__/
 *.pyc
 venv/
 
+# Secrets / credentials — NEVER commit
+.env
+.env.*
+!.env.example
+
+# macOS noise
+.DS_Store
+
 # Local databases & cookies / session state
 *.db
+*.db-shm
+*.db-wal
 *.pkl
 deleted_listings.txt
 favorite_listings.txt
 notified_deals.txt
 viewed_listings.txt
+
+# Persistent Firefox profile (holds live FB session cookies)
+fb_profile/
+
+# One-off diagnostic scripts (kept local, not shipped)
+diag_*.py
 
 # Scraper debug artifacts (root-level screenshots & snapshots;
 # static/ assets stay tracked thanks to the leading slash)

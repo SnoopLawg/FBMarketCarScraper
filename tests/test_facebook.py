@@ -165,12 +165,16 @@ def test_title_type_blank_when_no_keywords():
 # ── Login-state detector (added after the logged-out-anon-view bug) ──
 
 
-def _fake_driver(html, url="https://facebook.com/marketplace"):
-    """Minimal stand-in for a Selenium driver: just exposes page_source +
-    current_url, which is all _is_logged_in() reads."""
+def _fake_driver(html, url="https://facebook.com/marketplace", c_user=None):
+    """Minimal stand-in for a Selenium driver: exposes page_source,
+    current_url, and get_cookie() — all that _is_logged_in() reads."""
     class _D:
         page_source = html
         current_url = url
+        def get_cookie(self, name):
+            if name == "c_user" and c_user:
+                return {"name": "c_user", "value": c_user}
+            return None
     return _D()
 
 
@@ -207,12 +211,30 @@ def test_is_logged_in_false_on_login_url():
     assert s._is_logged_in() is False
 
 
-def test_is_logged_in_true_on_authenticated_marketplace():
-    """Real logged-in page has no /login link and no signup CTA."""
-    html = ('<html><body>Marketplace '
-            '<a href="/messages">Messages</a></body></html>')
-    s = _new_scraper(_fake_driver(html))
+def test_is_logged_in_true_when_c_user_cookie_present():
+    """The authenticated session carries the c_user cookie — the primary
+    positive signal, regardless of page HTML."""
+    html = '<html><body>Marketplace</body></html>'
+    s = _new_scraper(_fake_driver(html, c_user="100012345678"))
     assert s._is_logged_in() is True
+
+
+def test_is_logged_in_false_on_interstitial_without_c_user():
+    """reCAPTCHA / account-picker pages have none of the old negative
+    markers but also no c_user — must NOT false-positive as logged in."""
+    html = ('<html><body><div class="g-recaptcha"></div>'
+            'I\'m not a robot</body></html>')
+    s = _new_scraper(_fake_driver(html))   # no c_user cookie
+    assert s._is_logged_in() is False
+
+
+def test_is_logged_in_false_on_checkpoint_url_even_with_cookie():
+    """A leftover c_user during a checkpoint/2FA flow must not count as
+    logged in — the challenge URL is a hard negative."""
+    s = _new_scraper(_fake_driver(
+        "<html></html>",
+        url="https://www.facebook.com/checkpoint/", c_user="100012345678"))
+    assert s._is_logged_in() is False
 
 
 # ── 2FA TOTP handling ─────────────────────────────────────────────

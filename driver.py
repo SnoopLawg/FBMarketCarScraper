@@ -52,7 +52,7 @@ def _apply_proxy(options, proxy_url):
         logging.info(f"Using HTTP proxy: {host}:{port}")
 
 
-def create_driver(proxy_config=None):
+def create_driver(proxy_config=None, persistent_profile=None):
     """Create a Firefox WebDriver with stealth settings.
 
     Args:
@@ -63,6 +63,14 @@ def create_driver(proxy_config=None):
               {"urls": ["http://...", "socks5://..."]} — random rotation
             The proxy is applied per-driver, so each new driver creation
             picks a random proxy from the list (if urls is provided).
+        persistent_profile: Optional directory path for an IN-PLACE
+            persistent Firefox profile (created if missing). Unlike
+            `options.profile` (which copies the profile to a temp dir and
+            discards changes), this keeps cookies, localStorage and device
+            state across runs — so Facebook sees the same "device" every
+            scrape instead of a brand-new browser, which is what triggers
+            account-picker/password challenges. Only one driver may use
+            the directory at a time.
     """
     options = Options()
 
@@ -70,11 +78,39 @@ def create_driver(proxy_config=None):
     if os.environ.get("HEADLESS") == "1":
         options.add_argument("--headless")
 
-    # Use dedicated Firefox profile (has FB login cookies)
-    profile_path = Path(FIREFOX_PROFILE)
-    if profile_path.exists():
-        logging.info(f"Using Firefox profile: {FIREFOX_PROFILE}")
-        options.profile = FIREFOX_PROFILE
+    if persistent_profile:
+        prof = Path(persistent_profile)
+        prof.mkdir(parents=True, exist_ok=True)
+        # Clear stale singleton locks left by crashed runs (the worker
+        # never runs two drivers on this profile concurrently)
+        for lock_name in ("lock", ".parentlock"):
+            try:
+                (prof / lock_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        logging.info(f"Using persistent Firefox profile: {prof}")
+        options.add_argument("-profile")
+        options.add_argument(str(prof))
+        # Keep the persistent profile slim — no disk cache buildup
+        options.set_preference("browser.cache.disk.enable", False)
+        # Retain the session across restarts. Facebook sets c_user/xs as
+        # SESSION cookies on automated logins (an anti-transplant measure);
+        # Firefox normally drops those on quit. "Restore previous session"
+        # (startup.page=3) persists session cookies to sessionstore on a
+        # clean shutdown and restores them next launch — so a session FB
+        # grants survives between scrape runs instead of reverting to the
+        # account-picker every time.
+        options.set_preference("browser.startup.page", 3)
+        options.set_preference("browser.sessionstore.resume_from_crash", True)
+        options.set_preference("browser.sessionstore.interval", 5000)
+    else:
+        # Use dedicated Firefox profile (has FB login cookies).
+        # NOTE: options.profile COPIES the profile per session; changes
+        # made during the run are discarded.
+        profile_path = Path(FIREFOX_PROFILE)
+        if profile_path.exists():
+            logging.info(f"Using Firefox profile: {FIREFOX_PROFILE}")
+            options.profile = FIREFOX_PROFILE
 
     # ── Proxy configuration ──
     if proxy_config:

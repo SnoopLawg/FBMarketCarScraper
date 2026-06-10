@@ -33,8 +33,19 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 - `scrapers/base.py` — `BaseScraper` ABC with shared Selenium helpers (scrolling, anti-detection delays, stealth JS injection, screenshot-on-error, yield counting via `counted_insert()`)
 - `scrapers/facebook.py`, `craigslist.py`, `carscom.py`, `autotrader.py` — each implements `scrape()`, iterates over `DesiredCar` list, calls `counted_insert()` for each listing found. Cars.com and Autotrader scrapers also extract vehicle history data (owner count, accident history, deal ratings, Carfax report URLs) from listing cards
 - `scrapers/__init__.py` — `ALL_SCRAPERS` registry dict mapping source name → scraper class
-- `driver.py` — Firefox WebDriver factory with anti-detection settings; uses a dedicated Firefox profile (`6kmbn0d4.fbscraper`) for FB cookies; supports HTTP/SOCKS proxy configuration with random rotation
-- `scraper_worker.py` — background threading wrapper that exposes status tracking for the web UI to poll; records per-source run metrics to `scrape_runs` table and logs yield health warnings
+- `driver.py` — Firefox WebDriver factory with anti-detection settings; supports HTTP/SOCKS proxy configuration with random rotation. Two profile modes: `options.profile` (copy-per-run, dedicated `6kmbn0d4.fbscraper`) or `persistent_profile=<dir>` (in-place, survives across runs — used for Facebook so the device identity + session cookies persist). The persistent path sets `browser.startup.page=3` so FB's session-scoped `c_user`/`xs` cookies survive a clean shutdown. Does NOT override the user agent (a UA-vs-engine mismatch is what bot managers cross-check)
+- `scraper_worker.py` — background threading wrapper that exposes status tracking for the web UI to poll; records per-source run metrics to `scrape_runs` table and logs yield health warnings. A source that finishes with 0 listings but a non-trivial historical average is recorded as `failed` (with a screenshot), not `completed` — so silent selector rot / bot walls surface in `/api/health` instead of looking healthy
+
+### Facebook authentication
+Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_ensure_logged_in`) is layered, in priority order:
+1. **Native persistent-profile session** — with `FB_PROFILE_DIR` set, the device's own `datr`+`c_user`+`xs` cookies live on disk and survive between runs, so most runs are already logged in with zero work. This is the durable path.
+2. **Account-picker "Continue"** — device token still valid, resumes without a password.
+3. **Backup-cookie restore** — `_load_cookies()` re-injects `fb_cookies.pkl` (saved with a forced future expiry by `_save_cookies()`) into the profile. This is the server's first-run bootstrap path.
+4. **Credential auto-login** — `FB_EMAIL`/`FB_PASSWORD` (+ `FB_TOTP_SECRET` for TOTP 2FA). Heals a lapsed session headlessly, BUT headless `/login` triggers reCAPTCHA Enterprise (unsolvable) — so this is a last resort, not the primary path.
+
+`_is_logged_in()` keys off the **`c_user` cookie** (the only reliable positive signal); HTML denylists false-positive on captcha/picker/2FA interstitials.
+
+**Bootstrap (one-time, per machine/server):** run `bootstrap_fb_profile.py` — opens a visible Firefox on the persistent profile, waits for an interactive human login (solving any captcha/2FA once), then saves the session to both the profile and `fb_cookies.pkl`. For the headless server, ship the resulting `fb_cookies.pkl` to `/data/` so its first run restores the session into `/data/fb_profile`; thereafter it rides the persistent profile. Env vars: `FB_PROFILE_DIR`, `FB_EMAIL`, `FB_PASSWORD`, `FB_TOTP_SECRET` (all passed through `docker-compose.yml`)
 
 ### Data Layer
 - `database.py` — `Database` class wrapping SQLite (`marketplace_listings.db`). Handles schema creation, migrations, and all CRUD. Key tables: `listings`, `average_prices`, `price_history`, `vin_cache`, `vehicle_ratings`, `vehicle_recalls`, `scrape_runs`

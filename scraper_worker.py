@@ -110,7 +110,9 @@ def _run_enrich(on_complete, limit):
             "message": f"Creating browser for {total_needed} listings...",
         })
 
-        driver = create_driver(proxy_config=config.get("Proxy"))
+        driver = create_driver(
+            proxy_config=config.get("Proxy"),
+            persistent_profile=os.environ.get("FB_PROFILE_DIR"))
 
         try:
             from scrapers.facebook import FacebookScraper
@@ -221,7 +223,14 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
         getattr(ALL_SCRAPERS.get(n), "NEEDS_DRIVER", True)
         for n in source_names if n in ALL_SCRAPERS
     )
-    driver = create_driver(proxy_config=config.get("Proxy")) if needs_driver else None
+    # The FB driver uses a persistent profile (if configured) so Facebook
+    # sees a stable device identity across runs instead of a fresh browser
+    # every 5 hours. Other sources don't need it — and must not share it
+    # (Firefox locks the profile dir to a single instance).
+    fb_profile = (os.environ.get("FB_PROFILE_DIR")
+                  if "facebook" in source_names else None)
+    driver = create_driver(proxy_config=config.get("Proxy"),
+                           persistent_profile=fb_profile) if needs_driver else None
 
     def insert_fn(**kwargs):
         db.insert_listing(**kwargs, deleted_set=deleted_set)

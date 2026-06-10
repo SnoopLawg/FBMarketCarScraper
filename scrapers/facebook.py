@@ -504,22 +504,58 @@ class FacebookScraper(BaseScraper):
     # ── Login / cookie management ─────────────────────────────────
 
     def _ensure_logged_in(self):
-        """Load cookies, then *navigate and validate* — stale cookies load
-        fine but FB silently serves the anon-view marketplace which has
-        ~1/3 the listings (most cards stripped of price/title). We must
-        validate after navigating, not trust the pickle.
+        """Establish an authenticated FB session, in priority order:
+
+          1. Native profile session — with a persistent profile
+             (FB_PROFILE_DIR) the device's own datr+xs cookies live on
+             disk and survive between runs, so most runs are already
+             logged in with zero work. This is the durable path.
+          2. Account-picker "Continue" — device token still valid, one
+             click resumes the session without a password.
+          3. Credential auto-login — FB_EMAIL/FB_PASSWORD (+ FB_TOTP_SECRET
+             for 2FA), seeded by the backup pickle. Heals a lapsed session
+             headlessly.
+
+        We must *navigate and validate*, not trust on-disk state: stale
+        cookies load fine but FB silently serves the anon-view marketplace
+        (~1/3 of listings, prices/titles stripped). Crucially we check the
+        native session BEFORE injecting the backup pickle — re-injecting
+        stale pickle cookies over a live persistent-profile session would
+        knock it back to the anon view.
         """
         self.log("Checking login status...")
         try:
-            self._load_cookies()  # don't short-circuit — always validate
             self.driver.get("https://www.facebook.com/")
             self.inject_stealth()
             time.sleep(2)
 
+            # 1. Persistent profile may already hold a live session
             if self._is_logged_in():
-                self.log("Logged in (validated).")
-                self._save_cookies()  # refresh expiry on disk
+                self.log("Logged in (native profile session).")
+                self._save_cookies()  # refresh the backup pickle
                 return True
+
+            # 2. Account-picker Continue (valid device token, no password)
+            if self._click_profile_continue() and self._is_logged_in():
+                self.log("Logged in via account-picker Continue.")
+                self._save_cookies()
+                return True
+
+            # 3. Re-seed from the backup pickle, then validate again — this
+            #    bootstraps a brand-new persistent profile from a synced
+            #    session and is a no-op if the profile is already current.
+            if self._load_cookies():
+                self.driver.get("https://www.facebook.com/")
+                self.inject_stealth()
+                time.sleep(2)
+                if self._is_logged_in():
+                    self.log("Logged in (restored from backup cookies).")
+                    self._save_cookies()
+                    return True
+                if self._click_profile_continue() and self._is_logged_in():
+                    self.log("Logged in via Continue (after cookie restore).")
+                    self._save_cookies()
+                    return True
 
             # Stale c_user pushes FB into an account-picker / recovery flow
             # (no email field), so auto_login can't find its inputs. Clear
@@ -529,19 +565,51 @@ class FacebookScraper(BaseScraper):
             except Exception:
                 pass
 
-            # Cookies missing or stale — try credential auto-login
+            # 4. Credential auto-login (FB_EMAIL/FB_PASSWORD/FB_TOTP_SECRET)
             if self._auto_login():
                 self._save_cookies()
                 return True
 
             logging.warning(
-                "[Facebook] SESSION EXPIRED — fb_cookies.pkl is stale and "
-                "no FB_EMAIL/FB_PASSWORD auto-login. Skipping FB scrape "
-                "(anon-view yields ~1/3 of real listings). Refresh "
-                "fb_cookies.pkl from a logged-in browser to restore.")
+                "[Facebook] SESSION EXPIRED — no live profile session, no "
+                "valid backup cookies, and FB_EMAIL/FB_PASSWORD auto-login "
+                "unavailable or failed. Skipping FB scrape (anon-view yields "
+                "~1/3 of real listings). Set FB_PROFILE_DIR + credentials, "
+                "or re-seed fb_cookies.pkl from a logged-in browser.")
             return False
         except Exception as e:
             logging.error(f"[Facebook] Login error: {e}")
+            return False
+
+    def _click_profile_continue(self):
+        """Try to resume a session from FB's account-picker page.
+
+        FB sometimes shows a picker with the profile name, a "Continue"
+        button, and "Use another profile". If the profile's device token
+        is still valid, Continue resumes the session with one click; if
+        not, FB asks for the password and the subsequent _is_logged_in()
+        check fails, falling through to credential auto-login. Returns
+        True if the button was found and clicked.
+        """
+        try:
+            if "Use another profile" not in self.driver.page_source:
+                return False
+            clicked = self.driver.execute_script("""
+                const els = document.querySelectorAll(
+                    "div[role='button'], button");
+                for (const el of els) {
+                    if ((el.textContent || '').trim() === 'Continue') {
+                        el.click();
+                        return true;
+                    }
+                }
+                return false;
+            """)
+            if clicked:
+                self.log("Account picker detected — clicked Continue.")
+                self.human_delay(4, 7)
+            return bool(clicked)
+        except Exception:
             return False
 
     def _auto_login(self):
@@ -559,16 +627,30 @@ class FacebookScraper(BaseScraper):
             self.inject_stealth()
             self.human_delay(2, 4)
 
-            email_field = self.driver.find_element(By.NAME, "email")
-            pass_field = self.driver.find_element(By.NAME, "pass")
+            # The /login route normally serves the full email+password form,
+            # but a recognized-device session that just lapsed shows a
+            # password-ONLY modal (no email field) — handle both. The
+            # password field has been name="pass" for years.
+            try:
+                pass_field = self.driver.find_element(By.NAME, "pass")
+            except Exception:
+                pass_field = self.driver.find_element(
+                    By.CSS_SELECTOR, "input[type='password']")
+
+            email_field = None
+            try:
+                email_field = self.driver.find_element(By.NAME, "email")
+            except Exception:
+                self.log("No email field — password-only (recognized-device) "
+                         "modal; filling password only.")
 
             # Type like a human — character by character with small delays
-            email_field.clear()
-            for char in email:
-                email_field.send_keys(char)
-                time.sleep(random.uniform(0.03, 0.12))
-
-            self.human_delay(0.3, 0.8)
+            if email_field is not None:
+                email_field.clear()
+                for char in email:
+                    email_field.send_keys(char)
+                    time.sleep(random.uniform(0.03, 0.12))
+                self.human_delay(0.3, 0.8)
 
             pass_field.clear()
             for char in password:
@@ -673,28 +755,56 @@ class FacebookScraper(BaseScraper):
         return True
 
     def _is_logged_in(self):
-        """True only if FB is serving the *authenticated* view. Validated
-        empirically against the anon marketplace, which lacks /messages
-        links and shows `<a href="/login">` + "create new account" CTAs
-        even though no `loginbutton` ID or `email` input is present.
+        """True only if FB is serving the *authenticated* view.
+
+        Primary signal is the `c_user` cookie — Facebook sets it only for
+        an authenticated session, so it cleanly distinguishes the real
+        logged-in view from the anon marketplace, the account-picker, a
+        2FA page, or a reCAPTCHA challenge (none of which carry c_user).
+        A pure HTML denylist used to false-positive on those interstitials
+        (they lack the old negative markers), so the cookie comes first.
         """
         try:
+            url = self.driver.current_url
+            # Login / challenge / checkpoint URLs are never the authed view
+            if any(x in url for x in ("/login", "/checkpoint",
+                                      "two_step_verification", "/recover")):
+                return False
+
+            # Positive signal: the authenticated-user cookie
+            try:
+                if self.driver.get_cookie("c_user"):
+                    return True
+            except Exception:
+                pass
+
+            # Fallback HTML negatives (cookie unreadable for some reason)
             page = self.driver.page_source.lower()
-            # Hard negatives — actual login UI is on screen
             if 'id="loginbutton"' in page or 'name="email"' in page:
                 return False
-            if "/login" in self.driver.current_url:
-                return False
-            # Anon-marketplace negatives — page renders fine but pushes signup
             if 'href="/login' in page or "create new account" in page:
                 return False
-            return True
+            return False   # no c_user and no positive proof → not logged in
         except Exception:
             return False
 
     def _save_cookies(self):
+        """Persist the current session cookies to the backup pickle.
+
+        Facebook hands out c_user/xs as SESSION cookies (no expiry) on
+        automated logins, so get_cookies() returns them without an expiry
+        and Firefox would drop them on quit. Force a far-future expiry so
+        the backup is genuinely persistent and _load_cookies() can restore
+        a live session on the next run WITHOUT going through /login (which
+        triggers reCAPTCHA headlessly).
+        """
+        cookies = self.driver.get_cookies()
+        far_future = int(time.time()) + 60 * 60 * 24 * 60   # ~60 days
+        for c in cookies:
+            if not c.get("expiry"):
+                c["expiry"] = far_future
         with open(COOKIE_FILE, "wb") as f:
-            pickle.dump(self.driver.get_cookies(), f)
+            pickle.dump(cookies, f)
 
     def _load_cookies(self):
         if not COOKIE_FILE.exists():
@@ -705,8 +815,17 @@ class FacebookScraper(BaseScraper):
             self.driver.get("https://www.facebook.com/")
             self.inject_stealth()
             for cookie in cookies:
-                for key in ["sameSite", "expiry"]:
-                    cookie.pop(key, None)
+                # sameSite values from get_cookies (None/"No Restriction")
+                # are not valid add_cookie inputs — drop the key.
+                cookie.pop("sameSite", None)
+                # Preserve expiry (coerced to int) so restored auth cookies
+                # stay PERSISTENT. Stripping it made them session cookies,
+                # which Firefox drops on quit — defeating the restore.
+                if "expiry" in cookie:
+                    try:
+                        cookie["expiry"] = int(cookie["expiry"])
+                    except (TypeError, ValueError):
+                        cookie.pop("expiry", None)
                 try:
                     self.driver.add_cookie(cookie)
                 except Exception:
