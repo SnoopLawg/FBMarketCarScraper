@@ -799,8 +799,13 @@ def find_deals(db, desired_cars, config, is_discovery=False):
             nhtsa_key = (car_query.lower(), year)
             nhtsa_rating = nhtsa_cache.get(nhtsa_key)
 
-            # Detect drivetrain
+            # Detect drivetrain. Prefer an explicit drive type captured from
+            # the listing's detail page (row["drivetrain"]) over the
+            # model-default guess — only fall back to the name/default when
+            # the name itself didn't state it explicitly.
             dt, dt_source = detect_drivetrain(row["car_name"], car_query)
+            if dt_source != "explicit" and row.get("drivetrain"):
+                dt, dt_source = row["drivetrain"], "explicit"
 
             # Days listed — prefer listed_at (actual listing date from source)
             # over created_at (when we first scraped it)

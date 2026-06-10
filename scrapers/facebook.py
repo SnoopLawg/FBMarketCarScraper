@@ -612,6 +612,21 @@ class FacebookScraper(BaseScraper):
         if "professional seller" in text or ">dealership<" in text:
             info["seller_type"] = "dealer"
 
+        # ── Drivetrain ───────────────────────────────────────
+        # FB's "About this vehicle" shows an explicit "Drive type" (e.g.
+        # "All Wheel Drive"). Match the full phrases only — bare "awd"/"fwd"
+        # tokens appear in unrelated text. This overrides the model-default
+        # guess at scoring time, so an AWD RAV4 isn't scored as base FWD.
+        for phrase, dt in (
+            ("all wheel drive", "awd"), ("all-wheel drive", "awd"),
+            ("four wheel drive", "4wd"), ("four-wheel drive", "4wd"),
+            ("front wheel drive", "fwd"), ("front-wheel drive", "fwd"),
+            ("rear wheel drive", "rwd"), ("rear-wheel drive", "rwd"),
+        ):
+            if phrase in text:
+                info["drivetrain"] = dt
+                break
+
         return info
 
     # ── Login / cookie management ─────────────────────────────────

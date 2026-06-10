@@ -88,7 +88,8 @@ class Database:
                 seller_type TEXT,
                 sold INTEGER DEFAULT 0,
                 sold_at TEXT,
-                sold_checked_at TEXT
+                sold_checked_at TEXT,
+                drivetrain TEXT
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_href_source ON listings(href, source);
             CREATE INDEX IF NOT EXISTS idx_listings_car_query ON listings(car_query);
@@ -357,6 +358,19 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        # Explicit drivetrain from a listing's detail page (e.g. FB's
+        # "Drive type: All Wheel Drive"). Overrides the model-default guess
+        # at scoring time so AWD/4WD listings aren't mis-scored as FWD.
+        if "drivetrain" not in columns:
+            logging.info("Migrating DB: adding drivetrain column...")
+            try:
+                self.cur.execute(
+                    "ALTER TABLE listings ADD COLUMN drivetrain TEXT")
+                self.conn.commit()
+                logging.info("drivetrain migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Sold tracking: a listing detected as "Sold" on its FB detail page.
         # Its price is the actual market-clearing price — weighted heavily in
         # averages — so sold listings are kept (never stale-deleted).
@@ -509,7 +523,7 @@ class Database:
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
             "title_type, vin, description, owner_count, carfax_url, listed_at, "
-            "image_urls, seller_type, sold, sold_at "
+            "image_urls, seller_type, sold, sold_at, drivetrain "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -895,7 +909,7 @@ class Database:
         """Update multiple detail fields for a listing."""
         allowed = {"title_type", "trim", "seller", "condition",
                    "deal_rating", "accident_history", "description", "vin",
-                   "image_urls", "seller_type", "sold"}
+                   "image_urls", "seller_type", "sold", "drivetrain"}
         sets = []
         vals = []
         for k, v in kwargs.items():

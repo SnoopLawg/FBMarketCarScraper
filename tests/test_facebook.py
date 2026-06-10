@@ -206,6 +206,26 @@ def test_detail_info_no_bare_lemon_false_positive():
     assert "title_type" not in info or info["title_type"] != "lemon"
 
 
+# ── Drivetrain extraction from the detail page ───────────────────
+
+
+def test_detail_info_extracts_all_wheel_drive():
+    text = ("about this vehicle driven 92,607 miles drive type: "
+            "all wheel drive seller's description clean rav4").lower()
+    assert _detail_scraper()._extract_detail_info(text)["drivetrain"] == "awd"
+
+
+def test_detail_info_extracts_front_wheel_drive():
+    text = ("about this vehicle drive type: front wheel drive "
+            "seller's description").lower()
+    assert _detail_scraper()._extract_detail_info(text)["drivetrain"] == "fwd"
+
+
+def test_detail_info_no_drivetrain_when_absent():
+    text = "about this vehicle driven 50,000 miles seller's description nice car"
+    assert "drivetrain" not in _detail_scraper()._extract_detail_info(text)
+
+
 # ── Title-type detection from listing text ────────────────────────
 
 
