@@ -166,6 +166,46 @@ def test_is_sold_false_on_sold_as_is_in_description():
     assert _sold_scraper()._is_sold(html) is False
 
 
+# ── Detail-page title detection scoping (related-listings leak) ──
+
+
+def _detail_scraper():
+    return FacebookScraper(None, MIN_CONFIG, lambda **k: None, car_list=["_"])
+
+
+def test_detail_info_ignores_lemon_in_related_listings_rail():
+    """Regression: a clean RAV4 was hard-capped to F because the word
+    'lemon' (+ 'law'/'title' elsewhere) appeared in the 'Today's picks'
+    related-listings rail. Detection must be scoped to THIS listing."""
+    text = (
+        "About this vehicle Driven 92,607 miles Automatic transmission "
+        "Very good condition Drive type: All Wheel Drive "
+        "Seller's description Selling a clean well-maintained RAV4. "
+        "Today's picks 2015 BMW lemon law buyback salvage title $8000 "
+    ).lower()
+    info = _detail_scraper()._extract_detail_info(text)
+    assert info.get("title_type") != "lemon"
+    assert info.get("title_type") != "salvage"
+
+
+def test_detail_info_still_flags_salvage_in_own_description():
+    text = (
+        "About this vehicle Driven 80,000 miles "
+        "Seller's description This truck has a salvage title, runs great. "
+        "Today's picks 2020 Honda clean title $20000"
+    ).lower()
+    info = _detail_scraper()._extract_detail_info(text)
+    assert info["title_type"] == "salvage"
+
+
+def test_detail_info_no_bare_lemon_false_positive():
+    """'lemon' + 'law' without the specific buyback phrase must NOT flag."""
+    text = ("about this vehicle seller's description great car, no issues. "
+            "by using marketplace you agree to local law.").lower()
+    info = _detail_scraper()._extract_detail_info(text)
+    assert "title_type" not in info or info["title_type"] != "lemon"
+
+
 # ── Title-type detection from listing text ────────────────────────
 
 

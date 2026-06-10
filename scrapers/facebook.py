@@ -239,14 +239,17 @@ class FacebookScraper(BaseScraper):
                     # extracted description text (catches titles mentioned
                     # in seller descriptions behind "See more")
                     if "title_type" not in details:
-                        desc_lower = description.lower()
+                        # Scope to the listing's own text (not related rails)
+                        # and require specific phrases — bare "lemon"+"title"
+                        # false-positived off other listings.
+                        desc_lower = self._scope_listing_text(description.lower())
                         if "salvage title" in desc_lower:
                             details["title_type"] = "salvage"
-                        elif "rebuilt title" in desc_lower:
+                        elif "rebuilt title" in desc_lower or "branded title" in desc_lower:
                             details["title_type"] = "rebuilt"
-                        elif "branded title" in desc_lower:
-                            details["title_type"] = "rebuilt"
-                        elif "lemon" in desc_lower and "title" in desc_lower:
+                        elif ("lemon law buyback" in desc_lower
+                              or "manufacturer buyback" in desc_lower
+                              or "lemon title" in desc_lower):
                             details["title_type"] = "lemon"
                         elif "clean title" in desc_lower:
                             details["title_type"] = "clean"
@@ -512,6 +515,37 @@ class FacebookScraper(BaseScraper):
                  f"of {len(rows)} checked.")
         return sold_count
 
+    # Markers that begin FB's "related listings" / footer regions. Anything
+    # at or after these belongs to OTHER listings or chrome, not this car —
+    # scanning it caused a clean RAV4 to be mis-flagged "lemon" from a car in
+    # the "Today's picks" rail (hard-capping it to an F).
+    _NOISE_MARKERS = (
+        "today's picks", "more like this", "you may also like",
+        "similar listings", "related searches", "more from",
+        "sponsored", "suggested for you", "people who viewed",
+    )
+    _LISTING_START_MARKERS = ("about this vehicle", "seller's description",
+                              "seller information", "vehicle details")
+
+    def _scope_listing_text(self, text):
+        """Trim full-page text down to THIS listing's own content.
+
+        FB detail pages embed sidebar nav, a related-listings rail, and a
+        footer. Keyword detection (title/accident/condition) must only see
+        the listing's own About/description region, or it picks up other
+        cars' attributes."""
+        t = text
+        for start in self._LISTING_START_MARKERS:
+            i = t.find(start)
+            if i != -1:
+                t = t[i:]
+                break
+        for end in self._NOISE_MARKERS:
+            j = t.find(end)
+            if j != -1:
+                t = t[:j]
+        return t
+
     def _extract_detail_info(self, page_text):
         """Extract title type, condition, and other info from a FB listing detail page."""
         info = {}
@@ -523,21 +557,23 @@ class FacebookScraper(BaseScraper):
                 and "marketplace" not in text[:500]):
             return info
 
+        # Scope to this listing's own content (drops related-listing rails)
+        text = self._scope_listing_text(text)
+
         # ── Title type detection ─────────────────────────────────
-        # Facebook shows title status in vehicle details or description
-        # Check structured patterns first (more reliable), then broad text
+        # Only specific multi-word phrases — bare "salvage"/"lemon" + a nearby
+        # common word ("law", "vehicle") false-positived far too easily.
         title_patterns = [
-            # Structured: ">clean title<" or ">salvage title<"
             (">salvage title<", "salvage"),
             (">rebuilt title<", "rebuilt"),
             (">clean title<", "clean"),
-            ('"salvage title"', "salvage"),
-            ('"rebuilt title"', "rebuilt"),
-            ('"clean title"', "clean"),
-            # Common seller descriptions
             ("salvage title", "salvage"),
             ("rebuilt title", "rebuilt"),
             ("branded title", "rebuilt"),
+            ("flood title", "salvage"),
+            ("lemon law buyback", "lemon"),
+            ("manufacturer buyback", "lemon"),
+            ("lemon title", "lemon"),
             ("clean title", "clean"),
         ]
         for pattern, ttype in title_patterns:
@@ -545,27 +581,9 @@ class FacebookScraper(BaseScraper):
                 info["title_type"] = ttype
                 break
 
-        # Broader fallback — "salvage" alone is a strong signal on a car listing
-        if "title_type" not in info:
-            if "salvage" in text and ("title" in text or "vehicle" in text):
-                info["title_type"] = "salvage"
-            elif "rebuilt" in text and "title" in text:
-                info["title_type"] = "rebuilt"
-            elif "lemon" in text and ("title" in text or "law" in text):
-                info["title_type"] = "lemon"
-
-        # Override: if structured field says "clean" but description mentions
-        # rebuilt/salvage, trust the description — sellers sometimes
-        # misrepresent the structured title field
-        if info.get("title_type") == "clean":
-            # Look in seller description area (after the structured fields)
-            seller_idx = text.find("seller")
-            desc_text = text[seller_idx:] if seller_idx > 0 else ""
-            if desc_text:
-                if "rebuilt title" in desc_text or ("rebuilt" in desc_text and "title" in desc_text):
-                    info["title_type"] = "rebuilt"
-                elif "salvage title" in desc_text or ("salvage" in desc_text and "title" in desc_text):
-                    info["title_type"] = "salvage"
+        # (No bare-keyword fallback: "salvage"/"lemon"/"rebuilt" near a common
+        # word like "law"/"vehicle" produced false positives that hard-capped
+        # clean cars. Only the specific phrases above are trusted.)
 
         # ── Accident history ─────────────────────────────────────
         if "no accident" in text or "no accidents" in text or "0 accidents" in text:
