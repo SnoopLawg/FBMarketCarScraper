@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from vin import extract_vin
+from parsing import parse_price
 
 SCRIPT_DIR = Path(__file__).parent.parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
@@ -217,9 +218,12 @@ class FacebookScraper(BaseScraper):
 
                 details = self._extract_detail_info(page_text)
 
-                # A listing can sell between scrapes — catch it on this visit
+                # A listing can sell between scrapes — catch it on this visit,
+                # capturing the actual final price from the detail page.
                 if self._is_sold(page_source):
-                    details["sold"] = 1
+                    db.mark_sold(
+                        href,
+                        sold_price=self._extract_detail_price(page_source))
 
                 # Capture visible description text for future re-parsing
                 description = self._extract_description(page_source)
@@ -437,6 +441,27 @@ class FacebookScraper(BaseScraper):
         except Exception:
             return False
 
+    @staticmethod
+    def _extract_detail_price(page_source):
+        """Parse the listing price from a FB detail page.
+
+        The price is the first standalone `$N,NNN` span at the top of the
+        page (verified: $5,500 sold / $20,989 active). Later "$15"-style
+        spans are financing/monthly-estimate noise, so we take the first
+        plausible car price (>= $500).
+        """
+        try:
+            soup = BeautifulSoup(page_source, "html.parser")
+            for sp in soup.find_all("span"):
+                t = sp.get_text(strip=True)
+                if re.fullmatch(r"[A-Z]{0,3}\$[\d,]+", t):
+                    val = parse_price(t)
+                    if val and val >= 500:
+                        return val
+        except Exception:
+            pass
+        return None
+
     def check_sold_listings(self, db, limit=60):
         """Re-visit active FB listings to catch ones that have sold.
 
@@ -470,9 +495,14 @@ class FacebookScraper(BaseScraper):
                 consecutive_blocked = 0
 
                 if self._is_sold(self.driver.page_source):
-                    db.mark_sold(href)
+                    # The detail page shows the actual final price — capture
+                    # it (sold listings left search, so our last search price
+                    # may be stale). mark_sold logs the change to price_history.
+                    sold_price = self._extract_detail_price(self.driver.page_source)
+                    db.mark_sold(href, sold_price=sold_price)
                     sold_count += 1
-                    self.log(f"  SOLD: {row['car_name'][:45]}")
+                    px = f" @ ${sold_price:,.0f}" if sold_price else ""
+                    self.log(f"  SOLD: {row['car_name'][:45]}{px}")
                 else:
                     db.mark_sold_checked(href)
             except Exception as e:

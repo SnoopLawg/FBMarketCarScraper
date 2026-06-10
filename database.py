@@ -815,13 +815,28 @@ class Database:
         except sqlite3.Error as e:
             logging.error(f"DB vehicle rating upsert error: {e}")
 
-    def mark_sold(self, href):
+    def mark_sold(self, href, sold_price=None):
         """Flag a listing as sold (idempotent — keeps the first sold_at).
 
-        The current price is the sale price, so we leave it untouched; the
-        analysis layer treats sold listings as high-confidence comparables.
+        If sold_price is given (the actual final price read from the sold
+        detail page), update the stored price to it — sold listings leave
+        search so the last search-scraped price may be stale, and this is
+        our highest-value comp. The change is logged to price_history.
         """
         try:
+            if sold_price is not None:
+                row = self.cur.execute(
+                    "SELECT price, source FROM listings WHERE href = ?",
+                    (href,)).fetchone()
+                if row and row["price"] is not None and row["price"] != sold_price:
+                    self.cur.execute(
+                        "INSERT INTO price_history "
+                        "(listing_href, source, old_price, new_price) "
+                        "VALUES (?, ?, ?, ?)",
+                        (href, row["source"], row["price"], sold_price))
+                self.cur.execute(
+                    "UPDATE listings SET price = ? WHERE href = ?",
+                    (sold_price, href))
             self.cur.execute(
                 "UPDATE listings SET sold = 1, "
                 "sold_at = COALESCE(sold_at, CURRENT_TIMESTAMP), "
