@@ -227,10 +227,25 @@ class KSLScraper(BaseScraper):
     # adjacent \"suggestedTitleType\" key.)
     _TITLE_TYPE_RE = re.compile(r'\\"titleType\\":\\"([^"\\]+)')
 
+    class Blocked(Exception):
+        """KSL's bot protection (PerimeterX) is rejecting us — back off."""
+
     def _fetch_title_type(self, href):
-        """GET a KSL detail page and return (canonical_title_type, raw) or (None, None)."""
+        """GET a KSL detail page and return (canonical_title_type, raw).
+
+        Raises Blocked when the response is the bot wall rather than a
+        listing page — the caller must NOT mark the row enriched (that's
+        how 500 rows got burned as 'enriched, no title' when a high-volume
+        run tripped the block) and should abort the batch.
+        """
         resp = self._session.get(href, timeout=30)
+        if resp.status_code in (403, 429):
+            raise self.Blocked(f"HTTP {resp.status_code}")
         resp.raise_for_status()
+        # A real listing page is a Next.js RSC document. The PerimeterX
+        # interstitial ("Access to this page has been denied") has neither.
+        if "__next_f" not in resp.text:
+            raise self.Blocked("no RSC payload — bot wall or page rot")
         m = self._TITLE_TYPE_RE.search(resp.text)
         if not m:
             return None, None
@@ -238,51 +253,72 @@ class KSLScraper(BaseScraper):
         return detect_title_type(raw), raw
 
     def _enrich_batch(self, db, rows):
-        """Fetch + store title_type for a batch of rows. Returns count updated."""
+        """Fetch + store title_type for a batch of rows.
+
+        Returns (updated, fetched, aborted). Only a successfully-read page
+        with no title field is marked enriched; blocks and errors leave the
+        row un-enriched for a later retry. Three consecutive blocks aborts
+        the batch — hammering a wall just extends the block.
+        """
         enriched = 0
+        fetched = 0
+        consecutive_blocks = 0
         for row in rows:
+            fetched += 1
             href = row["href"]
             try:
                 tt, raw = self._fetch_title_type(href)
+                consecutive_blocks = 0
                 if tt:
                     db.update_listing_details(href, title_type=tt)
                     enriched += 1
                     self.log(f"  Enriched: {row['car_name'][:40]} → title={tt} ({raw})")
                 else:
-                    # No mappable title (e.g. "Not Specified", or page shape
-                    # changed) — mark done so we don't re-fetch it every run.
+                    # Page read fine, listing just doesn't state a title —
+                    # mark done so we don't re-fetch it every run.
                     db.mark_enriched(href)
+            except self.Blocked as e:
+                consecutive_blocks += 1
+                logging.warning(f"[KSL] blocked on {href[:60]}: {e} "
+                                f"({consecutive_blocks}/3)")
+                if consecutive_blocks >= 3:
+                    logging.warning(
+                        "[KSL] bot wall confirmed — aborting enrichment; "
+                        "rows stay un-enriched and retry next run")
+                    return enriched, fetched, True
+                time.sleep(random.uniform(20, 40))
             except Exception as e:
+                # Transient error — leave un-enriched for retry.
                 logging.warning(f"[KSL] Title enrich error for {href[:60]}: {e}")
-                try:
-                    db.mark_enriched(href)
-                except Exception:
-                    pass
-            time.sleep(random.uniform(0.6, 1.5))
-        return enriched
+            time.sleep(random.uniform(2.0, 4.5))
+        return enriched, fetched, False
 
-    def enrich_listings(self, db, limit=120, max_total=2000):
-        """Capture title_type from KSL detail pages — exhaustively, in one job.
+    def enrich_listings(self, db, limit=40, max_total=80):
+        """Capture title_type from KSL detail pages.
 
-        The search-results JSON lacks the title status, so every KSL listing
-        lands with title_type unset and scores as 'unknown' (which let a
-        rebuilt car top the board uncapped). KSL detail pages are cheap HTTP
-        (no Cloudflare wall, unlike Cars.com/Autotrader), so rather than
-        trickle a fixed cap per run, we drain ALL un-enriched listings in this
-        same scrape job — so a listing's title is solid on the first run it's
-        seen, with no after-the-fact catch-up. `limit` is the DB batch size;
-        `max_total` is a politeness safety cap on detail fetches per run.
-        Re-scrapes skip already-enriched rows (enriched_at preserved), so
-        steady state only fetches genuinely new listings.
+        The search-results JSON lacks the title status, so KSL listings land
+        with title_type unset (which let a rebuilt car top the board
+        uncapped). Detail pages are plain HTTP — but KSL fronts them with
+        PerimeterX, and a high-volume run (450+ rapid fetches) got the
+        server IP captcha-walled. So: modest per-run cap, polite delays, and
+        a circuit breaker on block detection. At 4 scrapes/day this still
+        converges on the backlog in ~2 days, and in steady state (only new
+        listings each run) titles ARE first-run data.
         """
         total = 0
-        while total < max_total:
-            rows = db.get_listings_missing_title_type(source="ksl", limit=limit)
+        fetched_total = 0
+        while fetched_total < max_total:
+            rows = db.get_listings_missing_title_type(
+                source="ksl", limit=min(limit, max_total - fetched_total))
             if not rows:
                 break
-            if total == 0:
+            if fetched_total == 0:
                 self.log(f"Enriching KSL titles (up to {max_total} this run)...")
-            total += self._enrich_batch(db, rows)
+            updated, fetched, aborted = self._enrich_batch(db, rows)
+            total += updated
+            fetched_total += fetched
+            if aborted:
+                break
         if total:
             self.log(f"KSL title enrichment complete: {total} updated this run.")
         else:
