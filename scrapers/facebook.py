@@ -61,6 +61,11 @@ class FacebookScraper(BaseScraper):
             # Spread the per-run budget across cars over successive runs
             random.shuffle(cars)
 
+        # Run-level dedupe: the same listing surfaces under many car searches
+        # (the buy+sell list overlaps heavily). Track item ids across ALL
+        # searches so each listing is parsed/enriched once per run, not 3-4x.
+        seen_ids = set()
+
         for i, car_query in enumerate(cars):
             self.log(f"Scraping: {car_query}")
             if i > 0:
@@ -75,7 +80,6 @@ class FacebookScraper(BaseScraper):
             soup = BeautifulSoup(self.driver.page_source, "html.parser")
             listings = soup.select("a[href*='/marketplace/item/']")
             found_before = self._listing_count
-            seen_ids = set()
 
             if not inline:
                 for item in listings:

@@ -503,6 +503,13 @@ def _run_scrape(on_complete):
                     if not scraper_cls:
                         continue
 
+                    # Skip Facebook in discovery: it has no inline-enrichment
+                    # context here, so it would insert card-only (unknown-
+                    # title) rows and undo the solid-only guarantee. FB's main
+                    # scrape already enriches the buy/sell list properly.
+                    if name == "facebook":
+                        continue
+
                     batch = get_discovery_batch(config, name, db)
                     if not batch:
                         continue

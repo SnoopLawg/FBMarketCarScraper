@@ -141,13 +141,16 @@ def get_discovery_batch(config, source, db):
     if not cars:
         return []
 
+    # Small batches: discovery rotates across runs, so a big per-run batch
+    # just bloats each scrape (30 cars x every source x anti-bot delays was
+    # ~1h40m). 8/run still cycles the whole list over a day of 4-hourly runs.
     disc_config = config.get("DiscoveryCars", {})
     if isinstance(disc_config, dict):
-        fb_batch = disc_config.get("fb_batch_size", 12)
-        other_batch = disc_config.get("batch_size", 30)
+        fb_batch = disc_config.get("fb_batch_size", 6)
+        other_batch = disc_config.get("batch_size", 8)
     else:
-        fb_batch = 12
-        other_batch = 30
+        fb_batch = 6
+        other_batch = 8
 
     batch_size = fb_batch if source == "facebook" else other_batch
     total = len(cars)
