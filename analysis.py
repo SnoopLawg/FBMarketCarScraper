@@ -9,7 +9,8 @@ from nhtsa import parse_make_model, get_vehicle_rating, get_recalls_batch, get_r
 from epa import get_mpg_batch, estimate_monthly_fuel_cost
 from trim_tiers import get_trim_tier, tier_name
 from drivetrain import detect_drivetrain, drivetrain_label, is_awd_or_4wd
-from vin_validate import validate_vin_against_listing, compute_vin_penalty
+from vin_validate import (
+    validate_vin_against_listing, compute_vin_penalty, _normalize_drivetrain)
 from parsing import parse_owner_count, parse_service_history, parse_listed_date
 
 # How many asking-price samples one sold (market-clearing) comp is worth in
@@ -453,13 +454,14 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
         reasons["reliability"] = "No NHTSA data available — neutral score"
 
     # ── Drivetrain factor (10 points max) ─────────────────────────
+    _dt_confirmed = dt_source in ("explicit", "vin")
     if is_awd_or_4wd(drivetrain):
-        if dt_source == "explicit":
+        if _dt_confirmed:
             drivetrain_score = 10.0
         else:
             drivetrain_score = 6.0
     elif drivetrain in ("fwd", "2wd"):
-        if dt_source == "explicit":
+        if _dt_confirmed:
             drivetrain_score = 2.0
         else:
             drivetrain_score = 3.0
@@ -471,7 +473,12 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
     # Build drivetrain reasoning
     dt_display = (drivetrain or "unknown").upper()
     if is_awd_or_4wd(drivetrain):
-        _conf = "confirmed" if dt_source == "explicit" else "inferred"
+        if dt_source == "vin":
+            _conf = "VIN-confirmed"
+        elif dt_source == "explicit":
+            _conf = "confirmed"
+        else:
+            _conf = "inferred"
         reasons["drivetrain"] = f"{dt_display} ({_conf})"
     elif drivetrain in ("fwd", "2wd"):
         reasons["drivetrain"] = f"{dt_display} — no AWD/4WD bonus"
@@ -848,6 +855,16 @@ def find_deals(db, desired_cars, config, is_discovery=False):
                         "drivetrain_source": dt_source,
                     })
                     vin_mismatches = val_result["mismatches"]
+
+                    # The VIN is ground truth for THIS physical car, so a
+                    # decoded drivetrain overrides our text/model-default guess
+                    # (and even an explicit listing claim — the mismatch above
+                    # already flags a misleading listing). Validation runs first
+                    # on the original claim so the mismatch signal is preserved.
+                    # Fixes e.g. an Escape defaulted to FWD whose VIN says 4WD.
+                    vin_dt = _normalize_drivetrain(vd.get("drive_type"))
+                    if vin_dt in ("awd", "4wd", "fwd", "rwd") and vin_dt != dt:
+                        dt, dt_source = vin_dt, "vin"
 
             # Owner count — prefer structured data from scraper (Autotrader/
             # Cars.com extract "1-Owner" badges), fall back to description parsing.

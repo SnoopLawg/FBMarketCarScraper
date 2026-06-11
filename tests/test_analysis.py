@@ -152,3 +152,40 @@ def test_all_asking_listings_is_plain_mean():
     calculate_averages(db, ["Honda CR-V"], mileage_threshold=100000)
     avg_lower, _ = db.averages[(2021, "clean")]
     assert avg_lower == 22000
+
+
+# ── Drivetrain scoring confidence (VIN-confirmed = fully confirmed) ──
+
+from analysis import compute_deal_score
+
+
+def _score(drivetrain, dt_source):
+    """Score an otherwise-neutral deal and return its drivetrain factor."""
+    return compute_deal_score(
+        price=20000, avg_price=20000, mileage=40000, year=2022,
+        deal_rating="", accident_history=None, title_type="clean",
+        nhtsa_rating=None, drivetrain=drivetrain, dt_source=dt_source,
+    )["drivetrain_score"]
+
+
+def test_vin_confirmed_awd_scores_like_explicit():
+    # A VIN-decoded drivetrain is ground truth — it earns the full
+    # confirmed-AWD bonus, not the lower inferred score.
+    assert _score("4wd", "vin") == 10.0
+    assert _score("4wd", "explicit") == 10.0
+    assert _score("4wd", "default") == 6.0
+
+
+def test_vin_confirmed_fwd_scores_like_explicit():
+    assert _score("fwd", "vin") == 2.0
+    assert _score("fwd", "explicit") == 2.0
+    assert _score("fwd", "default") == 3.0
+
+
+def test_vin_confirmed_awd_reason_labels_source():
+    reasons = compute_deal_score(
+        price=20000, avg_price=20000, mileage=40000, year=2022,
+        deal_rating="", accident_history=None, title_type="clean",
+        nhtsa_rating=None, drivetrain="4wd", dt_source="vin",
+    )["reasons"]
+    assert "VIN-confirmed" in reasons["drivetrain"]
