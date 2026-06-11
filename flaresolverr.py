@@ -28,9 +28,14 @@ def is_enabled():
 
 
 class FlareSolverrClient:
-    def __init__(self, base_url=None, session_name="carscraper"):
+    def __init__(self, base_url=None, session_name="carscraper", recycle_every=15):
         self.base_url = (base_url or os.environ.get("FLARESOLVERR_URL") or "").rstrip("/")
         self.session_name = session_name
+        # FlareSolverr's persistent browser leaks ~20-25 MB per request, so it
+        # OOMs after ~40 fetches. Tear the session down and rebuild it every
+        # `recycle_every` requests (and after any failure) to flush that memory.
+        self.recycle_every = recycle_every
+        self._req_count = 0
         self._session_id = None
         self._http = requests.Session()
 
@@ -67,6 +72,11 @@ class FlareSolverrClient:
         finally:
             self._session_id = None
 
+    def _recycle(self):
+        """Destroy and recreate the browser session to flush leaked memory."""
+        self.close()
+        self.open()
+
     def __enter__(self):
         self.open()
         return self
@@ -79,6 +89,11 @@ class FlareSolverrClient:
         """Return solved HTML for url, or None on failure/block."""
         if not self.enabled:
             return None
+        # Proactively recycle before the session grows large enough to OOM.
+        if self._session_id and self._req_count and \
+                self._req_count % self.recycle_every == 0:
+            self._recycle()
+        self._req_count += 1
         payload = {"cmd": "request.get", "url": url, "maxTimeout": max_timeout_ms}
         if self._session_id:
             payload["session"] = self._session_id
@@ -86,6 +101,11 @@ class FlareSolverrClient:
             data = self._post(payload, timeout=max_timeout_ms / 1000 + 30)
         except Exception as e:
             logging.warning(f"[FlareSolverr] get failed for {url[:60]}: {e}")
+            # Session may be wedged/OOM — rebuild it for the next call.
+            try:
+                self._recycle()
+            except Exception:
+                pass
             return None
         if data.get("status") != "ok":
             logging.warning(f"[FlareSolverr] non-ok for {url[:60]}: {data.get('message')}")
