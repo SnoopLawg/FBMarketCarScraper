@@ -310,8 +310,110 @@ class CarsComScraper(BaseScraper):
             logging.warning(f"[Cars.com] Parse error: {e}")
             return False
 
-    def enrich_listings(self, db, limit=60):
-        """Visit Cars.com detail pages to extract seller notes and title info."""
+    # Seller's notes live in <section id="sellers-notes"> on the detail page.
+    _NOTES_RE = re.compile(r'<section id="sellers-notes".*?>(.*?)</section>',
+                           re.DOTALL | re.IGNORECASE)
+
+    @staticmethod
+    def _extract_seller_notes(html):
+        """Pull the plain-text seller's notes from a Cars.com detail page."""
+        if not html:
+            return ""
+        m = CarsComScraper._NOTES_RE.search(html)
+        if not m:
+            return ""
+        text = re.sub(r'<[^>]+>', ' ', m.group(1))
+        text = re.sub(r'\s+', ' ', text).strip()
+        # Strip the heading / clamp toggle boilerplate that precedes the notes.
+        text = re.sub(r"^Seller'?s notes\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"(Show (more|less) seller'?s notes)", "", text,
+                      flags=re.IGNORECASE).strip()
+        return text
+
+    @classmethod
+    def _extract_detail_fields(cls, html):
+        """Title/description/VIN from a Cars.com detail page's seller notes.
+
+        Title detection is SCOPED to the seller's notes (not the whole page) so
+        boilerplate like 'cars with rebuilt titles' links can't false-positive.
+        """
+        notes = cls._extract_seller_notes(html)
+        details = {}
+        if notes:
+            tt = detect_title_type(notes.lower())
+            if tt:
+                details["title_type"] = tt
+            details["description"] = notes[:2000]
+            vin = extract_vin(notes)
+            if vin:
+                details["vin"] = vin
+            low = notes.lower()
+            if "rebuilt title" in low or "salvage" in low or "rear-end" in low \
+                    or "accident" in low or "damage" in low:
+                details["accident_history"] = "Accident Reported"
+        return details
+
+    def enrich_listings(self, db, limit=60, max_total=300):
+        """Capture title/notes from Cars.com detail pages.
+
+        Cars.com gates detail pages behind Cloudflare (a hard WAF block to our
+        headless Selenium). When a FlareSolverr endpoint is configured we route
+        detail fetches through it (a real browser that solves the challenge);
+        otherwise we fall back to the legacy Selenium path (which Cloudflare
+        will block, but kept so the method is a no-op rather than an error on
+        machines without FlareSolverr). FlareSolverr is heavier than KSL's
+        plain HTTP, so we cap detail solves per run (max_total) and let
+        successive scrapes drain the backlog; re-scrapes skip enriched rows.
+        """
+        from flaresolverr import is_enabled
+        if is_enabled():
+            return self._enrich_via_flaresolverr(db, limit, max_total)
+        return self._enrich_via_selenium(db, limit)
+
+    def _enrich_via_flaresolverr(self, db, limit, max_total):
+        from flaresolverr import FlareSolverrClient
+        enriched = total = 0
+        with FlareSolverrClient() as fs:
+            if not fs.enabled:
+                return 0
+            while total < max_total:
+                rows = db.get_listings_missing_title_type(
+                    source="carscom", limit=limit)
+                if not rows:
+                    break
+                if total == 0:
+                    self.log(f"Enriching Cars.com via FlareSolverr "
+                             f"(up to {max_total} this run)...")
+                for row in rows:
+                    if total >= max_total:
+                        break
+                    href = row["href"]
+                    total += 1
+                    try:
+                        html = fs.get(href)
+                        details = self._extract_detail_fields(html)
+                        if details:
+                            db.update_listing_details(href, **details)
+                            enriched += 1
+                            self.log(f"  Enriched: {row['car_name'][:38]} → "
+                                     f"title={details.get('title_type','—')}")
+                        else:
+                            db.mark_enriched(href)
+                    except Exception as e:
+                        logging.warning(
+                            f"[Cars.com] FlareSolverr enrich error "
+                            f"for {href[:60]}: {e}")
+                        try:
+                            db.mark_enriched(href)
+                        except Exception:
+                            pass
+                    time.sleep(random.uniform(1, 2.5))
+        self.log(f"Cars.com enrichment complete: {enriched} titles updated "
+                 f"({total} pages fetched this run).")
+        return enriched
+
+    def _enrich_via_selenium(self, db, limit=60):
+        """Legacy Selenium enrichment (Cloudflare-blocked; kept as fallback)."""
         rows = db.get_listings_missing_title_type(source="carscom", limit=limit)
         if not rows:
             self.log("No Cars.com listings need enrichment.")

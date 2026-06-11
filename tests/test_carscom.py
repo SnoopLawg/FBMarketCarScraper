@@ -131,3 +131,37 @@ def test_floor_rejects_implausibly_low_price():
     </fuse-card>'''
     card = BeautifulSoup(html, "html.parser").select_one("[data-listing-id]")
     assert _scrape_one(card) is None
+
+
+# ── Detail-page seller-notes extraction (Cloudflare/FlareSolverr path) ──
+
+def test_extracts_rebuilt_title_from_sellers_notes_section():
+    html = (
+        '<section id="reviews">clean title link boilerplate</section>'
+        '<section id="sellers-notes" trv=""><h2>Seller\'s notes</h2>'
+        '<cars-line-clamp collapsed-text="Show more seller\'s notes">'
+        'This is a 2022 Hyundai Tucson SEL AWD with a rebuilt title. '
+        'It previously had rear-end damage and was professionally repaired.'
+        '</cars-line-clamp></section>'
+    )
+    fields = CarsComScraper._extract_detail_fields(html)
+    assert fields["title_type"] == "rebuilt"
+    assert "rebuilt title" in fields["description"].lower()
+    assert fields["accident_history"] == "Accident Reported"
+
+
+def test_title_detection_scoped_to_notes_not_page_boilerplate():
+    # "rebuilt title" only in unrelated page chrome → must NOT be flagged.
+    html = (
+        '<a href="/rebuilt-title-cars">Shop cars with a rebuilt title</a>'
+        '<section id="sellers-notes"><h2>Seller\'s notes</h2>'
+        '<cars-line-clamp>Clean one-owner, well maintained.</cars-line-clamp>'
+        '</section>'
+    )
+    fields = CarsComScraper._extract_detail_fields(html)
+    assert fields.get("title_type") is None
+
+
+def test_no_sellers_notes_section_yields_no_fields():
+    assert CarsComScraper._extract_detail_fields("<div>no notes here</div>") == {}
+    assert CarsComScraper._extract_detail_fields("") == {}
