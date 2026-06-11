@@ -253,10 +253,11 @@
 {% endblock %}
 
 {% block body %}
-<div class="page">
-    <div class="flex items-center justify-between mb-4">
-        <h1 style="font-size:20px;font-weight:700;letter-spacing:-0.3px">Sell My Car</h1>
-        <button class="btn btn-ghost btn-sm" onclick="refreshSellData()">Refresh Prices</button>
+<div class="page" style="max-width:980px">
+    <div class="grid-header">
+        <div class="grid-title">Sell my car</div>
+        <div class="grid-header-spacer"></div>
+        <button class="topbar-btn" onclick="refreshSellData()"><span class="material-symbols-outlined">refresh</span> Refresh valuations</button>
     </div>
 
     {% if not sell_data %}

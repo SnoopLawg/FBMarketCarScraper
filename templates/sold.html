@@ -2,61 +2,56 @@
 {% block title %}Sold - AutoAlert{% endblock %}
 {% block nav_sold %}active{% endblock %}
 
-
-{% block head %}
-<style>/* Sold — shared styles in /static/css/components.css */</style>
-{% endblock %}
-
+{% set src_labels = {'facebook':'Facebook','craigslist':'Craigslist','carscom':'Cars.com','autotrader':'Autotrader','ksl':'KSL'} %}
 
 {% block body %}
-<div class="page">
-    <div style="margin-bottom:8px;">
-        <h1 style="margin:0;font-size:22px;">Sold listings</h1>
-        <p class="text-secondary text-sm" style="margin:4px 0 0;">
-            Confirmed sale prices — what cars actually went for. These are
-            weighted heavily in the market averages used to score deals, and
-            are kept as permanent comps (not stale-deleted).
-        </p>
+<div class="grid-header">
+    <div class="grid-title">Sold comps
+        <span class="grid-sub">· market-clearing prices, weighted ×8 in averages</span>
     </div>
-
-    {% if deals or sources %}
-    <form method="get" class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;">
-        <select name="source" onchange="this.form.submit()" class="filter-select">
-            <option value="">All sources ({{ sold_count }})</option>
-            {% for s in sources %}
-            <option value="{{ s }}" {{ 'selected' if current_source == s }}>{{ s }}</option>
-            {% endfor %}
-        </select>
-        <select name="car" onchange="this.form.submit()" class="filter-select">
-            <option value="">All models</option>
-            {% for c in cars %}
-            <option value="{{ c }}" {{ 'selected' if current_car == c }}>{{ c }}</option>
-            {% endfor %}
-        </select>
-        <select name="sort" onchange="this.form.submit()" class="filter-select">
-            <option value="recent" {{ 'selected' if current_sort == 'recent' }}>Recently sold</option>
-            <option value="price" {{ 'selected' if current_sort == 'price' }}>Price</option>
-            <option value="score" {{ 'selected' if current_sort == 'score' }}>Deal score</option>
-        </select>
-    </form>
-    {% endif %}
-
-    {% if deals %}
-    <div class="deal-grid">
-        {% for deal in deals %}
-        {% set card_id = "sold-" ~ loop.index %}
-        {% set show_save = false %}
-        {% include '_deal_card.html' %}
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="empty-state">
-        <div style="font-size:40px; margin-bottom:12px;">No sold listings yet</div>
-        <p>When a tracked Facebook listing is detected as sold on re-scrape,
-           it shows up here as a market comp.</p>
+    <div class="grid-header-spacer"></div>
+    {% if sources %}
+    <div class="sort-bar">
+        <a class="sort-pill {{ 'on' if current_sort == 'recent' else '' }}" href="?sort=recent{% if current_source %}&source={{ current_source }}{% endif %}">Recent</a>
+        <a class="sort-pill {{ 'on' if current_sort == 'price' else '' }}" href="?sort=price{% if current_source %}&source={{ current_source }}{% endif %}">Price</a>
+        <a class="sort-pill {{ 'on' if current_sort == 'score' else '' }}" href="?sort=score{% if current_source %}&source={{ current_source }}{% endif %}">Score</a>
     </div>
     {% endif %}
 </div>
+<div class="grid-page-intro">Detected via the FB “Sold” marker on re-visit. These are what cars actually sold for — not asking prices — and they’re kept permanently as comps.</div>
+
+{% if deals %}
+<div class="comps-table">
+    <div class="comps-row comps-head">
+        <span>VEHICLE</span>
+        <span class="ralign">SOLD AT</span>
+        <span class="ralign">WAS ASKING</span>
+        <span class="ralign">MILES</span>
+        <span>SOURCE</span>
+        <span>DETECTED</span>
+    </div>
+    {% for d in deals %}
+    <a class="comps-row" href="{{ d.href }}" target="_blank">
+        <span class="comps-name">{{ d.car_name or d.car_query }}</span>
+        <span class="ralign comps-sold">${{ '{:,.0f}'.format(d.price) }}</span>
+        <span class="ralign comps-ask">
+            {%- if d.price_history and d.price_history.old_price and d.price_history.old_price != d.price -%}
+                ${{ '{:,.0f}'.format(d.price_history.old_price) }}
+            {%- else -%}—{%- endif -%}
+        </span>
+        <span class="ralign comps-dim">{{ '{:,.0f}'.format(d.mileage) if d.mileage else '—' }}</span>
+        <span class="comps-dim">{{ src_labels.get(d.source, d.source) }}</span>
+        <span class="comps-mono">{{ d.sold_at[:10] if d.sold_at else '—' }}</span>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <span class="material-symbols-outlined" style="font-size:40px">done_all</span>
+    <div style="font-size:14px;margin-top:10px">No sold listings yet</div>
+    <p>When a tracked Facebook listing is detected as sold on re-scrape, it shows up here as a market comp.</p>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

@@ -11,7 +11,8 @@
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/tokens.css">
     <link rel="stylesheet" href="/static/css/base.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -19,34 +20,67 @@
     {% block head %}{% endblock %}
 </head>
 <body>
-    <nav class="topnav">
-        <div class="topnav-inner">
-            <a href="/" class="topnav-brand"><img src="/static/logo.svg" alt="AutoAlert" style="height:56px;vertical-align:middle"></a>
-            <div class="topnav-links">
-                <a href="/" class="topnav-link {% block nav_deals %}{% endblock %}">Deals</a>
-                <a href="/discover" class="topnav-link {% block nav_discover %}{% endblock %}">Discover</a>
-                <a href="/sold" class="topnav-link {% block nav_sold %}{% endblock %}">Sold</a>
-                <a href="/sell" class="topnav-link {% block nav_sell %}{% endblock %}">Sell</a>
-                <a href="/favorites" class="topnav-link {% block nav_favorites %}{% endblock %}">Favorites</a>
-                <a href="/analytics" class="topnav-link {% block nav_analytics %}{% endblock %}">Analytics</a>
-                <a href="/settings" class="topnav-link {% block nav_settings %}{% endblock %}">Settings</a>
-            </div>
-            <button class="btn btn-sm mobile-scrape-btn" id="mobile-scrape-btn"
-                    onclick="startScrape()" style="display:none;margin-left:auto;background:var(--accent);color:#fff;border-color:var(--accent);min-height:36px;padding:0 12px;">
-                <i data-lucide="refresh-cw" style="width:16px;height:16px"></i>
-            </button>
-            <button class="btn btn-sm" id="enrich-btn"
-                    onclick="startEnrich()" style="margin-left:auto;background:var(--purple);color:#fff;border-color:var(--purple);">
-                Enrich Titles
-            </button>
-            <button class="btn btn-primary btn-sm" id="scrape-btn"
-                    onclick="startScrape()" style="margin-left:8px;">
-                Scrape Now
-            </button>
+    <header class="topbar">
+        <a href="/" class="topbar-brand"><img src="/static/logo.svg" alt="AutoAlert"></a>
+        <div class="status-pill">
+            <span class="status-dot"></span>
+            {{ status_text }}
         </div>
-    </nav>
+        <div class="topbar-spacer"></div>
+        <button class="topbar-btn" id="enrich-btn" onclick="startEnrich()">
+            <span class="material-symbols-outlined">auto_awesome</span> <span id="enrich-btn-label">Enrich</span>
+        </button>
+        <button class="topbar-btn topbar-btn-primary" id="scrape-btn" onclick="startScrape()">
+            <span class="material-symbols-outlined">refresh</span> <span id="scrape-btn-label">Scrape now</span>
+        </button>
+        <button class="topbar-btn topbar-btn-primary mobile-scrape-btn" id="mobile-scrape-btn"
+                onclick="startScrape()">
+            <span class="material-symbols-outlined">refresh</span>
+        </button>
+    </header>
+    <div class="topbar-progress" id="topbar-progress">
+        <div class="topbar-progress-fill" id="topbar-progress-fill"></div>
+    </div>
 
-    {% block body %}{% endblock %}
+    <div class="cockpit-grid">
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                <a href="/" class="sidebar-link {% block nav_deals %}{% endblock %}">
+                    <span class="material-symbols-outlined">bolt</span> Deals
+                    <span class="sidebar-count">{{ nav_counts.deals }}</span>
+                </a>
+                <a href="/discover" class="sidebar-link {% block nav_discover %}{% endblock %}">
+                    <span class="material-symbols-outlined">explore</span> Discover
+                    <span class="sidebar-count">{{ nav_counts.discover }}</span>
+                </a>
+                <a href="/sold" class="sidebar-link {% block nav_sold %}{% endblock %}">
+                    <span class="material-symbols-outlined">done_all</span> Sold comps
+                    <span class="sidebar-count">{{ nav_counts.sold }}</span>
+                </a>
+                <a href="/sell" class="sidebar-link {% block nav_sell %}{% endblock %}">
+                    <span class="material-symbols-outlined">sell</span> Sell my car
+                    <span class="sidebar-count"></span>
+                </a>
+                <a href="/favorites" class="sidebar-link {% block nav_favorites %}{% endblock %}">
+                    <span class="material-symbols-outlined">favorite</span> Favorites
+                    <span class="sidebar-count">{{ nav_counts.favorites or '' }}</span>
+                </a>
+                <a href="/analytics" class="sidebar-link {% block nav_analytics %}{% endblock %}">
+                    <span class="material-symbols-outlined">monitoring</span> Analytics
+                    <span class="sidebar-count"></span>
+                </a>
+                <a href="/settings" class="sidebar-link {% block nav_settings %}{% endblock %}">
+                    <span class="material-symbols-outlined">settings</span> Settings
+                    <span class="sidebar-count"></span>
+                </a>
+            </nav>
+            {% block sidebar_filters %}{% endblock %}
+        </aside>
+
+        <main class="cockpit-main">
+            {% block body %}{% endblock %}
+        </main>
+    </div>
 
     <div class="scrape-toast" id="scrape-toast">
         <div class="scrape-toast-title" id="scrape-toast-title">Scraping...</div>
@@ -315,10 +349,20 @@
 
     let _scrapePolling = null;
 
+    function _setScrapeLabel(t) { const e = document.getElementById('scrape-btn-label'); if (e) e.textContent = t; }
+    function _setEnrichLabel(t) { const e = document.getElementById('enrich-btn-label'); if (e) e.textContent = t; }
+    function _topbarProgress(pct) {
+        const wrap = document.getElementById('topbar-progress');
+        const fill = document.getElementById('topbar-progress-fill');
+        if (fill) fill.style.width = (pct || 0) + '%';
+        if (wrap) wrap.classList.toggle('active', pct != null);
+    }
+
     async function startScrape() {
         const btn = document.getElementById('scrape-btn');
         btn.disabled = true;
-        btn.textContent = 'Scraping...';
+        _setScrapeLabel('Scraping…');
+        _topbarProgress(2);
 
         try {
             const res = await fetch('/api/scrape', {method: 'POST'});
@@ -326,7 +370,8 @@
 
             if (!data.started) {
                 btn.disabled = false;
-                btn.textContent = 'Scrape Now';
+                _setScrapeLabel('Scrape now');
+                _topbarProgress(null);
                 alert(data.message);
                 return;
             }
@@ -335,7 +380,8 @@
             _scrapePolling = setInterval(pollScrapeStatus, 3000);
         } catch (e) {
             btn.disabled = false;
-            btn.textContent = 'Scrape Now';
+            _setScrapeLabel('Scrape now');
+            _topbarProgress(null);
         }
     }
 
@@ -346,18 +392,21 @@
 
             document.getElementById('scrape-toast-msg').textContent = s.message;
             document.getElementById('scrape-progress-bar').style.width = s.progress + '%';
+            _topbarProgress(s.progress);
 
             if (s.phase === 'done') {
                 clearInterval(_scrapePolling);
                 document.getElementById('scrape-toast-title').textContent = 'Complete!';
                 document.getElementById('scrape-toast-title').style.color = 'var(--green)';
                 document.getElementById('scrape-btn').disabled = false;
-                document.getElementById('scrape-btn').textContent = 'Scrape Now';
+                _setScrapeLabel('Scrape now');
                 document.getElementById('enrich-btn').disabled = false;
-                document.getElementById('enrich-btn').textContent = 'Enrich Titles';
+                _setEnrichLabel('Enrich');
+                _topbarProgress(100);
                 setTimeout(() => {
                     document.getElementById('scrape-toast').style.display = 'none';
                     document.getElementById('scrape-toast-title').style.color = '';
+                    _topbarProgress(null);
                     window.location.reload();
                 }, 2000);
             } else if (s.phase === 'error') {
@@ -366,9 +415,10 @@
                 document.getElementById('scrape-toast-title').style.color = 'var(--red)';
                 document.getElementById('scrape-toast-msg').textContent = s.error || 'Unknown error';
                 document.getElementById('scrape-btn').disabled = false;
-                document.getElementById('scrape-btn').textContent = 'Scrape Now';
+                _setScrapeLabel('Scrape now');
                 document.getElementById('enrich-btn').disabled = false;
-                document.getElementById('enrich-btn').textContent = 'Enrich Titles';
+                _setEnrichLabel('Enrich');
+                _topbarProgress(null);
                 setTimeout(() => {
                     document.getElementById('scrape-toast').style.display = 'none';
                     document.getElementById('scrape-toast-title').style.color = '';
@@ -384,7 +434,7 @@
         const scrapeBtn = document.getElementById('scrape-btn');
         btn.disabled = true;
         scrapeBtn.disabled = true;
-        btn.textContent = 'Enriching...';
+        _setEnrichLabel('Enriching…');
 
         try {
             const res = await fetch('/api/enrich', {
@@ -397,18 +447,19 @@
             if (!data.started) {
                 btn.disabled = false;
                 scrapeBtn.disabled = false;
-                btn.textContent = 'Enrich Titles';
+                _setEnrichLabel('Enrich');
                 alert(data.message);
                 return;
             }
 
             document.getElementById('scrape-toast').style.display = 'block';
-            document.getElementById('scrape-toast-title').textContent = 'Enriching Titles...';
+            document.getElementById('scrape-toast-title').textContent = 'Enriching Titles…';
+            _topbarProgress(2);
             _scrapePolling = setInterval(pollScrapeStatus, 3000);
         } catch (e) {
             btn.disabled = false;
             scrapeBtn.disabled = false;
-            btn.textContent = 'Enrich Titles';
+            _setEnrichLabel('Enrich');
         }
     }
 
@@ -416,11 +467,12 @@
     fetch('/api/scrape/status').then(r => r.json()).then(s => {
         if (s.running) {
             document.getElementById('scrape-btn').disabled = true;
-            document.getElementById('scrape-btn').textContent = 'Scraping...';
+            _setScrapeLabel('Scraping…');
             document.getElementById('enrich-btn').disabled = true;
             document.getElementById('scrape-toast').style.display = 'block';
             document.getElementById('scrape-toast-msg').textContent = s.message;
             document.getElementById('scrape-progress-bar').style.width = s.progress + '%';
+            _topbarProgress(s.progress);
             _scrapePolling = setInterval(pollScrapeStatus, 3000);
         }
     }).catch(() => {});

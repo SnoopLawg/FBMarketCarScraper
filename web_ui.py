@@ -48,6 +48,28 @@ def _append_to_file(filepath, value):
         f.write(value + "\n")
 
 
+@app.context_processor
+def inject_shell():
+    """Sidebar nav counts + top-bar status text, available to every template
+    via the shared base.html shell (computed from in-memory deal state)."""
+    buyable = [d for d in _deals
+               if not d.get("sold") and d["href"] not in _deleted]
+    sold_n = sum(1 for d in _deals if d.get("sold"))
+    grade_a = sum(1 for d in buyable if d.get("deal_grade") == "A")
+    active = len(buyable)
+    status_text = (f"{active} active deals · {grade_a} Grade A"
+                   if active else "No deals yet — run a scrape")
+    return {
+        "nav_counts": {
+            "deals": len([d for d in buyable if d["href"] not in _favorites]),
+            "discover": len(_discovery_deals),
+            "sold": sold_n,
+            "favorites": len(_favorites),
+        },
+        "status_text": status_text,
+    }
+
+
 def _enrich_deals_for_render(deals):
     """Attach price history, VIN decode, market range, and price trend to a
     list of deal dicts so the deal-card partial can render fully. Shared by

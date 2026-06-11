@@ -10,26 +10,24 @@
 
 
 {% block body %}
-<div class="page">
-    <div style="margin-bottom:16px;" class="flex items-center justify-between">
-        <span class="text-secondary text-sm">{{ total }} favorite{{ 's' if total != 1 else '' }}</span>
-    </div>
-
-    {% if deals %}
-    <div class="deal-grid">
-        {% for deal in deals %}
-        {% set card_id = "fav-" ~ loop.index %}
-        {% set show_save = false %}
-        {% include '_deal_card.html' %}
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="empty-state">
-        <div style="font-size:40px; margin-bottom:12px;">No favorites yet</div>
-        <p>Save listings from the Deals page to see them here.</p>
-    </div>
-    {% endif %}
+<div class="grid-header">
+    <div class="grid-title">Favorites <span class="grid-sub">· {{ total }} saved</span></div>
 </div>
+
+{% if deals %}
+<div class="deal-grid">
+    {% for deal in deals %}
+    {% set card_id = "fav-" ~ loop.index %}
+    {% set show_save = false %}
+    {% include '_deal_card.html' %}
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <span class="material-symbols-outlined" style="font-size:40px">heart_plus</span>
+    <div style="font-size:14px;margin-top:10px">No favorites yet — tap the heart on any deal</div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

@@ -1,39 +1,50 @@
 /* ── Design Tokens ──────────────────────────────────────────
    Single source of truth for all design values.
    Import this FIRST in every page.
+   Cockpit theme — near-black surfaces, orange accent, Geist type.
    ───────────────────────────────────────────────────────── */
 
 :root {
     /* ── Surface colors ── */
-    --bg-primary: #111116;
-    --bg-card: #1a1a24;
-    --bg-card-hover: #22222e;
-    --bg-input: #14141c;
-    --bg-nav: #151520;
-    --bg-elevated: #1e1e2a;
+    --bg-primary: #0e0f13;
+    --bg-card: #15171c;
+    --bg-card-hover: #1b1e24;
+    --bg-input: #16181d;
+    --bg-nav: #111318;
+    --bg-elevated: #1b1e24;
 
     /* ── Borders ── */
-    --border: #1e1e2e;
-    --border-hover: #3b3b5c;
+    --border: #23262d;
+    --border-subtle: #1f2329;
+    --border-hover: #3a3f49;
 
     /* ── Text ── */
-    --text-primary: #f0f0f5;
-    --text-secondary: #9090a8;
-    --text-muted: #5c5c74;
+    --text-primary: #eef0f3;
+    --text-secondary: #9aa3b2;
+    --text-muted: #5d6675;
 
     /* ── Accent colors ── */
-    --accent: #5b8dee;
-    --accent-hover: #7aa4f7;
+    --accent: #f97316;          /* orange — primary brand accent */
+    --accent-hover: #fb8a3c;
+    --accent-soft: #fb923c;     /* lighter orange for text/links */
+    --blue: #60a5fa;            /* secondary (grade B, info bars) */
     --green: #34d399;
-    --green-muted: #1a3d2e;
+    --green-muted: rgba(52,211,153,0.13);
     --red: #f87171;
-    --red-muted: #3d1a1a;
+    --red-muted: rgba(248,113,113,0.13);
     --yellow: #fbbf24;
     --purple: #a78bfa;
     --orange: #fb923c;
 
+    /* ── Grade colors ── */
+    --grade-a: #34d399;
+    --grade-b: #60a5fa;
+    --grade-c: #fbbf24;
+    --grade-d: #fb923c;
+    --grade-f: #f87171;
+
     /* ── Brand ── */
-    --brand-orange: #e8621a;
+    --brand-orange: #f97316;
 
     /* ── Spacing ── */
     --space-1: 4px;
@@ -45,13 +56,13 @@
     --space-8: 32px;
 
     /* ── Radius ── */
-    --radius-sm: 6px;
+    --radius-sm: 7px;
     --radius-md: 8px;
     --radius-lg: 12px;
 
     /* ── Typography ── */
-    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    --font: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'Geist Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 
     /* ── Transitions ── */
     --transition-fast: 0.15s ease;
@@ -59,10 +70,10 @@
     --transition-slow: 0.3s ease;
 
     /* ── Shadows ── */
-    --shadow-card: 0 2px 8px rgba(0,0,0,0.2);
-    --shadow-card-hover: 0 8px 24px rgba(0,0,0,0.35);
-    --shadow-modal: 0 16px 48px rgba(0,0,0,0.5);
-    --shadow-toast: 0 8px 24px rgba(0,0,0,0.4);
+    --shadow-card: 0 2px 8px rgba(0,0,0,0.25);
+    --shadow-card-hover: 0 8px 24px rgba(0,0,0,0.4);
+    --shadow-modal: 0 24px 64px rgba(0,0,0,0.5);
+    --shadow-toast: 0 12px 32px rgba(0,0,0,0.45);
 
     /* ── Z-index scale ── */
     --z-toolbar: 90;
@@ -71,8 +82,9 @@
     --z-modal: 300;
 
     /* ── Layout ── */
-    --max-width: 1320px;
-    --max-width-narrow: 720px;
-    --nav-height: 56px;
-    --nav-height-mobile: 48px;
+    --max-width: 100%;
+    --max-width-narrow: 980px;
+    --nav-height: 58px;
+    --nav-height-mobile: 52px;
+    --sidebar-width: 236px;
 }

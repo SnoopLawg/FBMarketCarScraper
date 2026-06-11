@@ -3,36 +3,7 @@
 {% block nav_discover %}active{% endblock %}
 {% block nav_m_discover %}active{% endblock %}
 
-
-{% block head %}
-<style>
-    /* Discover-specific: category tabs */
-    .category-tabs {
-        max-width: 1320px; margin: 0 auto; padding: 12px 24px 0;
-        display: flex; gap: 6px; flex-wrap: wrap;
-    }
-    .category-tab {
-        font-size: 13px; font-weight: 500; color: var(--text-secondary);
-        padding: 7px 14px; border-radius: 20px; border: 1px solid var(--border);
-        text-decoration: none; transition: all 0.15s;
-        display: inline-flex; align-items: center; gap: 6px;
-    }
-    .category-tab:hover { color: var(--text-primary); border-color: var(--border-hover); background: rgba(255,255,255,0.03); }
-    .category-tab.active { color: var(--text-primary); background: rgba(91,141,238,0.12); border-color: var(--accent); }
-    .category-tab-count {
-        font-size: 11px; font-weight: 600; background: rgba(255,255,255,0.08);
-        color: var(--text-muted); padding: 1px 6px; border-radius: 10px; min-width: 20px; text-align: center;
-    }
-    .category-tab.active .category-tab-count { background: rgba(91,141,238,0.2); color: var(--accent); }
-
-    @media (max-width: 640px) {
-        .category-tabs { padding: 8px 10px 0; overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; gap: 4px; }
-        .category-tab { white-space: nowrap; font-size: 12px; padding: 6px 12px; }
-    }
-</style>
-{% endblock %}
-
-{% block body %}
+{% set src_labels = {'facebook':'Facebook','craigslist':'Craigslist','carscom':'Cars.com','autotrader':'Autotrader','ksl':'KSL'} %}
 {% set filter_params = 'category=' ~ current_category ~ '&source=' ~ current_source
     ~ ('&title=' ~ current_title if current_title else '')
     ~ ('&seller_type=' ~ current_seller_type if current_seller_type else '')
@@ -44,121 +15,133 @@
     ~ ('&price_min=' ~ current_price_min if current_price_min else '')
     ~ ('&price_max=' ~ current_price_max if current_price_max else '') %}
 
+{% block sidebar_filters %}
+    <div class="filter-section-label">SOURCE</div>
+    <div class="filter-source-list">
+        {% for s in sources %}
+        {% set on = (not current_source) or current_source == s %}
+        <a class="filter-source {{ 'on' if on else '' }}"
+           onclick="applyFilter('source', {{ "''" if current_source == s else ("'" ~ s ~ "'") }})">
+            <span class="filter-source-box">{{ '✓' if on else '' }}</span>
+            {{ src_labels.get(s, s|capitalize) }}
+        </a>
+        {% endfor %}
+    </div>
+    <div class="filter-section-label">TITLE</div>
+    <div class="filter-chips">
+        {% for tid, tlabel in [['', 'All'], ['clean','Clean'], ['rebuilt','Rebuilt'], ['salvage','Salvage'], ['unknown','Unknown']] %}
+        <a class="filter-chip {{ 'on' if current_title == tid else '' }}" onclick="applyFilter('title', '{{ tid }}')">{{ tlabel }}</a>
+        {% endfor %}
+    </div>
+    <div class="filter-section-label">SEARCH</div>
+    <div class="filter-search-wrap">
+        <input type="text" class="filter-search" placeholder="Search cars…" id="search-input"
+               value="{{ current_search }}" onkeydown="if(event.key==='Enter') applyAllFilters()">
+    </div>
+    <div class="filter-section-label">PRICE</div>
+    <div class="filter-price-wrap">
+        <input type="number" class="filter-search filter-price" placeholder="Min $" id="price-min" value="{{ current_price_min }}">
+        <span class="filter-price-dash">–</span>
+        <input type="number" class="filter-search filter-price" placeholder="Max $" id="price-max" value="{{ current_price_max }}">
+    </div>
+    <details class="filter-more">
+        <summary>More filters</summary>
+        <div class="filter-section-label" style="margin-top:14px">SELLER</div>
+        <div class="filter-search-wrap">
+            <select class="filter-search" onchange="applyFilter('seller_type', this.value)">
+                <option value="">All sellers</option>
+                <option value="dealer" {{ 'selected' if current_seller_type == 'dealer' else '' }}>Dealer</option>
+                <option value="private" {{ 'selected' if current_seller_type == 'private' else '' }}>Private</option>
+                <option value="unknown" {{ 'selected' if current_seller_type == 'unknown' else '' }}>Unknown</option>
+            </select>
+        </div>
+        <div class="filter-section-label">YEAR</div>
+        <div class="filter-price-wrap">
+            <input type="number" class="filter-search filter-price" placeholder="Min" id="year-min" value="{{ current_year_min }}">
+            <span class="filter-price-dash">–</span>
+            <input type="number" class="filter-search filter-price" placeholder="Max" id="year-max" value="{{ current_year_max }}">
+        </div>
+        <div class="filter-section-label">MILES</div>
+        <div class="filter-price-wrap">
+            <input type="number" class="filter-search filter-price" placeholder="Min" id="mileage-min" value="{{ current_mileage_min }}">
+            <span class="filter-price-dash">–</span>
+            <input type="number" class="filter-search filter-price" placeholder="Max" id="mileage-max" value="{{ current_mileage_max }}">
+        </div>
+    </details>
+    {% if current_source or current_title or current_search or current_seller_type or current_price_min or current_price_max %}
+    <div class="filter-reset"><a onclick="clearFilters()">Reset filters</a></div>
+    {% endif %}
+{% endblock %}
+
+{% block body %}
+<div class="grid-header">
+    <div class="grid-title">Discover <span class="grid-sub">· scoring well, but outside your tracked list</span></div>
+    <div class="grid-header-spacer"></div>
+    <div class="sort-bar">
+        <a href="?sort=score&{{ filter_params }}" class="sort-pill {{ 'on' if current_sort == 'score' else '' }}">Score</a>
+        <a href="?sort=discount&{{ filter_params }}" class="sort-pill {{ 'on' if current_sort == 'discount' else '' }}">Best deal</a>
+        <a href="?sort=price&{{ filter_params }}" class="sort-pill {{ 'on' if current_sort == 'price' else '' }}">Price</a>
+        <a href="?sort=mileage&{{ filter_params }}" class="sort-pill {{ 'on' if current_sort == 'mileage' else '' }}">Miles</a>
+    </div>
+</div>
+
 <div class="category-tabs">
     <a href="?sort={{ current_sort }}" class="category-tab {{ 'active' if not current_category else '' }}">
-        All
-        <span class="category-tab-count">{{ total_all }}</span>
+        All <span class="category-tab-count">{{ total_all }}</span>
     </a>
     {% for cat_id, cat_label in categories.items() %}
     <a href="?category={{ cat_id }}&sort={{ current_sort }}"
        class="category-tab {{ 'active' if current_category == cat_id else '' }}">
-        {{ cat_label }}
-        <span class="category-tab-count">{{ category_counts.get(cat_id, 0) }}</span>
+        {{ cat_label }} <span class="category-tab-count">{{ category_counts.get(cat_id, 0) }}</span>
     </a>
     {% endfor %}
 </div>
 
-<div class="toolbar">
-    <div class="toolbar-inner">
-        <span class="toolbar-count">{{ total }} deal{{ 's' if total != 1 else '' }}</span>
-
-        <button class="filter-toggle-mobile" onclick="toggleMobileFilters()">
-            <i data-lucide="sliders-horizontal" style="width:14px;height:14px"></i> Filters
-        </button>
-
-        <select class="input" style="width:auto" onchange="applyFilter('source', this.value)">
-            <option value="">All Sources</option>
-            {% for s in sources %}
-            <option value="{{ s }}" {{ 'selected' if s == current_source else '' }}>{{ s }}</option>
-            {% endfor %}
-        </select>
-
-        <select class="input" style="width:auto" onchange="applyFilter('title', this.value)">
-            <option value="">All Titles</option>
-            <option value="clean" {{ 'selected' if current_title == 'clean' else '' }}>Clean</option>
-            <option value="rebuilt" {{ 'selected' if current_title == 'rebuilt' else '' }}>Rebuilt</option>
-            <option value="salvage" {{ 'selected' if current_title == 'salvage' else '' }}>Salvage</option>
-            <option value="unknown" {{ 'selected' if current_title == 'unknown' else '' }}>Unknown</option>
-        </select>
-
-        <select class="input" style="width:auto" onchange="applyFilter('seller_type', this.value)">
-            <option value="">All Sellers</option>
-            <option value="dealer" {{ 'selected' if current_seller_type == 'dealer' else '' }}>Dealer</option>
-            <option value="private" {{ 'selected' if current_seller_type == 'private' else '' }}>Private</option>
-            <option value="unknown" {{ 'selected' if current_seller_type == 'unknown' else '' }}>Unknown</option>
-        </select>
-
-        <div class="sort-group">
-            <a href="?sort=score&{{ filter_params }}"
-               class="sort-btn {{ 'active' if current_sort == 'score' else '' }}">Score</a>
-            <a href="?sort=discount&{{ filter_params }}"
-               class="sort-btn {{ 'active' if current_sort == 'discount' else '' }}">Best Deal</a>
-            <a href="?sort=price&{{ filter_params }}"
-               class="sort-btn {{ 'active' if current_sort == 'price' else '' }}">Price</a>
-            <a href="?sort=mileage&{{ filter_params }}"
-               class="sort-btn {{ 'active' if current_sort == 'mileage' else '' }}">Miles</a>
-        </div>
-    </div>
-
-    <div class="filter-row" id="filter-row" data-clear-url="/discover">
-        <input type="text" class="input" style="width:180px" placeholder="Search cars..."
-               id="search-input" value="{{ current_search }}"
-               onkeydown="if(event.key==='Enter') applyAllFilters()">
-
-        <div class="flex items-center gap-2">
-            <span class="text-muted text-sm">Year:</span>
-            <input type="number" class="input" style="width:80px" placeholder="Min"
-                   id="year-min" value="{{ current_year_min }}">
-            <span class="text-muted">-</span>
-            <input type="number" class="input" style="width:80px" placeholder="Max"
-                   id="year-max" value="{{ current_year_max }}">
-        </div>
-
-        <div class="flex items-center gap-2">
-            <span class="text-muted text-sm">Miles:</span>
-            <input type="number" class="input" style="width:100px" placeholder="Min"
-                   id="mileage-min" value="{{ current_mileage_min }}">
-            <span class="text-muted">-</span>
-            <input type="number" class="input" style="width:100px" placeholder="Max"
-                   id="mileage-max" value="{{ current_mileage_max }}">
-        </div>
-
-        <div class="flex items-center gap-2">
-            <span class="text-muted text-sm">Price:</span>
-            <input type="number" class="input" style="width:100px" placeholder="Min"
-                   id="price-min" value="{{ current_price_min }}">
-            <span class="text-muted">-</span>
-            <input type="number" class="input" style="width:100px" placeholder="Max"
-                   id="price-max" value="{{ current_price_max }}">
-        </div>
-
-        <button class="btn btn-ghost btn-sm" onclick="clearFilters()">Clear</button>
-    </div>
+{% if deals %}
+<div class="deal-grid">
+    {% for deal in deals %}
+    {% set card_id = "disc-card-" ~ loop.index %}
+    {% set show_save = true %}
+    {% include '_deal_card.html' %}
+    {% endfor %}
 </div>
-
-<div class="page">
-    {% if deals %}
-    <div class="deal-grid">
-        {% for deal in deals %}
-        {% set card_id = "disc-card-" ~ loop.index %}
-        {% set show_save = true %}
-        {% include '_deal_card.html' %}
-        {% endfor %}
-    </div>
+{% else %}
+<div class="empty-state">
+    <span class="material-symbols-outlined" style="font-size:40px">explore</span>
+    {% if total_all == 0 %}
+    <div style="font-size:14px;margin-top:10px">No discovery data yet</div>
+    <p>Discovery cars are scraped during the next run. Hit “Scrape now” to get started.</p>
     {% else %}
-    <div class="empty-state">
-        {% if total_all == 0 %}
-        <div style="font-size:40px; margin-bottom:12px;">No discovery data yet</div>
-        <p>Discovery cars will be scraped during the next scrape run. Hit "Scrape Now" to get started.</p>
-        {% else %}
-        <div style="font-size:40px; margin-bottom:12px;">No matches</div>
-        <p>Try a different category or adjust your filters.</p>
-        {% endif %}
-    </div>
+    <div style="font-size:14px;margin-top:10px">No matches</div>
+    <p>Try a different category or adjust your filters.</p>
     {% endif %}
 </div>
+{% endif %}
 {% endblock %}
 
+{% block head %}
+<style>
+    .category-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+    .category-tab {
+        font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+        padding: 6px 12px; border-radius: 99px; border: 1px solid var(--border);
+        text-decoration: none; transition: all 0.15s;
+        display: inline-flex; align-items: center; gap: 6px;
+    }
+    .category-tab:hover { color: var(--text-primary); border-color: var(--border-hover); }
+    .category-tab.active { color: var(--accent-soft); background: rgba(249,115,22,0.12); border-color: rgba(249,115,22,0.4); }
+    .category-tab-count {
+        font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+        background: var(--bg-input); color: var(--text-muted);
+        padding: 1px 7px; border-radius: 10px; min-width: 18px; text-align: center;
+    }
+    .category-tab.active .category-tab-count { background: rgba(249,115,22,0.2); color: var(--accent-soft); }
+    @media (max-width: 640px) {
+        .category-tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+        .category-tab { white-space: nowrap; }
+    }
+</style>
+{% endblock %}
 
 {% block scripts %}
 <script src="/static/js/carousel.js"></script>

@@ -38,7 +38,7 @@
         cursor: pointer;
         transition: all 0.15s;
     }
-    .suggestion-chip:hover { color: var(--accent); border-color: var(--accent); background: rgba(91,141,238,0.06); }
+    .suggestion-chip:hover { color: var(--accent); border-color: var(--accent); background: rgba(249,115,22,0.06); }
 
     .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
     .field-group .input { width: 100%; }
@@ -84,7 +84,12 @@
 {% endblock %}
 
 {% block body %}
-<div class="page-narrow">
+<div class="page-narrow" style="max-width:760px">
+    <div class="grid-header">
+        <div class="grid-title">Settings</div>
+        <div class="grid-header-spacer"></div>
+        <button class="topbar-btn topbar-btn-primary" style="min-width:0" onclick="saveSettings()">Save changes</button>
+    </div>
     <div class="panel">
         <div class="panel-title">Desired Cars</div>
         <div class="car-list" id="car-list">
