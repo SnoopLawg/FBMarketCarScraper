@@ -581,12 +581,25 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
 
 
 def score_to_grade(score):
-    """Convert numeric score to letter grade."""
-    if score >= 80:
+    """Convert numeric score to letter grade.
+
+    Thresholds are anchored to the empirical score distribution now that
+    title/VIN data is honest (n=805: mean 45, median 43, p90 63, max 80).
+    The old 80/65/50/35 school-grade cutoffs made the *median market
+    listing* a "D" and Grade A nearly unattainable (1 of 805), silencing
+    Grade-A alerts. Grades are market-relative standing:
+      A ≥75  genuine outlier (~top 1%) — act quickly
+      B ≥62  worth a look this week (~top 12%)
+      C ≥48  above-median listing
+      D ≥35  below-median; nothing special
+      F <35  weak or hard-capped (salvage ≤30 / lemon ≤25 land here;
+             rebuilt's 45 cap keeps it at best a D)
+    """
+    if score >= 75:
         return "A"
-    if score >= 65:
+    if score >= 62:
         return "B"
-    if score >= 50:
+    if score >= 48:
         return "C"
     if score >= 35:
         return "D"
@@ -971,6 +984,111 @@ def find_deals(db, desired_cars, config, is_discovery=False):
 
     logging.info(f"Found {len(deals)} deals (after dedup).")
     return deals
+
+
+# ── Buyer guidance ───────────────────────────────────────────────
+
+def compute_buyer_guidance(deal):
+    """Turn a scored deal into negotiation guidance.
+
+    Returns a dict with a data-backed offer range plus the leverage points,
+    questions, and red flags derived from this listing's own signals (days
+    on market, price cuts, market position, title, accident/owner history).
+    Every lever is shown to the user so the numbers are explainable.
+    """
+    price = deal.get("price") or 0
+    if not price or deal.get("sold"):
+        return None
+
+    leverage, questions, flags = [], [], []
+    seller_type = deal.get("seller_type") or ""
+    # Base negotiating room: dealers price closer to invoice but move on aged
+    # stock; private sellers pad asking prices a little more.
+    room = 0.04 if seller_type == "dealer" else 0.05
+
+    days = deal.get("days_listed") or 0
+    if days > 60:
+        room += 0.04
+        leverage.append(f"On market {days} days — stale inventory, "
+                        f"seller is motivated")
+    elif days > 30:
+        room += 0.025
+        leverage.append(f"On market {days} days — listing is aging")
+    elif days > 14:
+        room += 0.01
+        leverage.append(f"On market {days} days")
+
+    ph = deal.get("price_history")
+    if ph and (ph.get("old_price") or 0) > price:
+        drop = ph["old_price"] - price
+        room += 0.02
+        leverage.append(f"Already cut ${drop:,.0f} — seller is moving on price")
+
+    mr = deal.get("market_range")
+    avg = deal.get("avg_price")
+    if mr and (mr.get("count") or 0) >= 5:
+        if mr.get("low") and price <= mr["low"]:
+            # Already a bottom-of-market price: haggling risks losing it.
+            room = min(room, 0.02)
+            leverage.append("Priced at the bottom of the local market — "
+                            "little room; prioritize speed over haggling")
+        elif mr.get("high") and price >= mr["high"]:
+            room += 0.03
+            leverage.append(
+                f"Priced above the typical local range "
+                f"(${mr['fair']:,.0f}–${mr['high']:,.0f} across "
+                f"{mr['count']} comps)")
+    if avg and price < avg * 0.85:
+        flags.append(f"{round((1 - price / avg) * 100)}% below average — "
+                     f"verify why before paying (title, damage, scam)")
+
+    tt = (deal.get("title_type") or "").lower()
+    if tt in ("rebuilt", "salvage", "lemon"):
+        room += 0.05
+        leverage.append(f"{tt.capitalize()} title — financing and resale are "
+                        f"harder; push firmly on price")
+        questions.append("What was damaged, who did the rebuild, and is the "
+                         "post-rebuild inspection documented?")
+        flags.append(f"{tt.capitalize()} title — insurers may write down; "
+                     f"resale typically 20-40% below clean")
+    elif not tt or tt == "unknown":
+        questions.append("Confirm the title is clean and in-hand — ask to "
+                         "see it before any deposit")
+
+    accident = (deal.get("accident_history") or "").lower()
+    if accident and "no" not in accident:
+        room += 0.02
+        leverage.append("Accident on record — clean-history comps cost more")
+        questions.append("Ask for the repair invoices for the reported accident")
+
+    if not deal.get("vin"):
+        questions.append("Get the VIN and run a free history check "
+                         "(NICB/VehicleHistory) before viewing")
+    if deal.get("vin_mismatches"):
+        flags.append("VIN decode disagrees with the listing — "
+                     "verify year/spec in person")
+
+    rc = deal.get("recalls_count") or 0
+    if rc:
+        questions.append(f"Have the {rc} open recall{'s' if rc > 1 else ''} "
+                         f"been completed? (free fix at any dealer)")
+    if deal.get("owner_count") is None:
+        questions.append("How many owners? (title or Carfax shows it)")
+    if not deal.get("service_history"):
+        questions.append("Ask for maintenance records — regular oil changes "
+                         "at minimum")
+
+    room = min(room, 0.15)
+    target = int(round(price * (1 - room) / 100) * 100)
+    open_offer = int(round(price * (1 - min(room + 0.03, 0.18)) / 100) * 100)
+    return {
+        "offer_open": open_offer,
+        "offer_target": target,
+        "room_pct": round(room * 100),
+        "leverage": leverage[:4],
+        "questions": questions[:5],
+        "red_flags": flags[:4],
+    }
 
 
 # ── Sell Pricing ─────────────────────────────────────────────────

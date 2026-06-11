@@ -102,6 +102,18 @@
 
         <div class="stats-row" id="stats-row"></div>
 
+        <!-- Market timing: is now a good time to buy this model? -->
+        <div class="chart-card full" id="timingCard" style="margin-bottom:24px;display:none">
+            <div class="chart-title">Market Timing — <span id="timing-car"></span>
+                <span id="timing-verdict" style="font-weight:400;font-size:12px;margin-left:8px"></span>
+            </div>
+            <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px" id="timing-grid">
+                <div><canvas id="timingChart"></canvas></div>
+                <div><canvas id="cutsChart"></canvas></div>
+            </div>
+            <div id="timing-note" style="font-size:11px;color:var(--text-muted);margin-top:8px"></div>
+        </div>
+
         <div class="chart-grid">
             <div class="chart-card">
                 <div class="chart-title">Listings by Source</div>
@@ -210,6 +222,7 @@ fetch('/api/analytics')
         document.getElementById('content').style.display = 'block';
         populateCarFilter(data.listings);
         render(data);
+        loadTiming('');
     })
     .catch(err => {
         // Never leave the page stuck on "Loading…": surface the real reason.
@@ -238,6 +251,88 @@ function applyFilter() {
     Object.values(_charts).forEach(c => { try { c.destroy(); } catch(e) {} });
     _charts = {};
     render(_rawData);
+    loadTiming(document.getElementById('car-filter').value);
+}
+
+/* ── Market timing (is now a good time to buy?) ── */
+function loadTiming(car) {
+    fetch('/api/trends' + (car ? '?car=' + encodeURIComponent(car) : ''))
+        .then(r => r.json())
+        .then(renderTiming)
+        .catch(() => {});
+}
+
+function renderTiming(t) {
+    const card = document.getElementById('timingCard');
+    if (!t || !t.car) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    document.getElementById('timing-car').textContent = t.car;
+
+    ['timing', 'cuts'].forEach(k => { try { _charts[k] && _charts[k].destroy(); } catch(e) {} });
+
+    // Group snapshots by year; keep the 4 best-covered years
+    const byYear = {};
+    (t.series || []).forEach(s => {
+        (byYear[s.year] = byYear[s.year] || []).push(s);
+    });
+    const years = Object.keys(byYear)
+        .sort((a, b) => byYear[b].length - byYear[a].length).slice(0, 4)
+        .sort();
+    const dates = [...new Set((t.series || []).map(s => s.snapshot_date))].sort();
+    const palette = ['#60a5fa', '#34d399', '#fbbf24', '#fb923c'];
+
+    _charts.timing = new Chart(document.getElementById('timingChart'), {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: years.map((y, i) => ({
+                label: y,
+                data: dates.map(d => {
+                    const hit = byYear[y].find(s => s.snapshot_date === d);
+                    return hit ? hit.avg_price : null;
+                }),
+                borderColor: palette[i % palette.length],
+                backgroundColor: 'transparent',
+                spanGaps: true, tension: 0.3, pointRadius: 2,
+            })),
+        },
+        options: {
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } },
+                       title: { display: true, text: 'Avg asking price (clean title) by day' } },
+            scales: { y: { ticks: { callback: v => '$' + (v/1000) + 'k' } } },
+        },
+    });
+
+    const cw = (t.cuts || []).map(c => c.wk.slice(5));
+    _charts.cuts = new Chart(document.getElementById('cutsChart'), {
+        type: 'bar',
+        data: {
+            labels: cw,
+            datasets: [{ label: 'Price cuts/wk (' + t.car + ')',
+                         data: (t.cuts || []).map(c => c.cuts),
+                         backgroundColor: '#f97316aa' }],
+        },
+        options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } },
+                              title: { display: true, text: 'Seller price cuts = market softness' } } },
+    });
+
+    // Verdict from the best-covered year's first→last price
+    const vEl = document.getElementById('timing-verdict');
+    const note = document.getElementById('timing-note');
+    if (dates.length < 5) {
+        vEl.textContent = '· collecting history (' + dates.length + ' day' + (dates.length === 1 ? '' : 's') + ' so far)';
+        vEl.style.color = 'var(--text-muted)';
+        note.textContent = 'Trend verdicts unlock after ~1 week of daily snapshots. Price-cut bars use live data already: a rising bar count means sellers are under pressure (buyer-friendly).';
+        return;
+    }
+    note.textContent = '';
+    const main = years.length ? byYear[years[0]] : [];
+    if (main.length >= 2) {
+        const pct = (main[main.length - 1].avg_price - main[0].avg_price) / main[0].avg_price * 100;
+        if (pct < -2)      { vEl.textContent = '· prices softening ' + pct.toFixed(1) + '% — buyer-friendly window'; vEl.style.color = 'var(--grade-a)'; }
+        else if (pct > 2)  { vEl.textContent = '· prices firming +' + pct.toFixed(1) + '% — waiting costs money'; vEl.style.color = 'var(--grade-d)'; }
+        else               { vEl.textContent = '· stable (' + pct.toFixed(1) + '%) — negotiate on the car, not the market'; vEl.style.color = 'var(--text-secondary)'; }
+    }
 }
 
 function filterData(data) {

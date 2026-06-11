@@ -189,3 +189,56 @@ def test_vin_confirmed_awd_reason_labels_source():
         nhtsa_rating=None, drivetrain="4wd", dt_source="vin",
     )["reasons"]
     assert "VIN-confirmed" in reasons["drivetrain"]
+
+
+# ── Buyer guidance (the "how to handle this deal" panel) ──
+
+from analysis import compute_buyer_guidance
+
+
+def _guidance_deal(**over):
+    base = {
+        "price": 20000, "avg_price": 22000, "days_listed": 5,
+        "seller_type": "private", "title_type": "clean",
+        "price_history": None, "market_range": None, "recalls_count": 0,
+        "owner_count": 1, "service_history": "records", "vin": "X" * 17,
+        "vin_mismatches": None, "accident_history": "No Accidents",
+    }
+    base.update(over)
+    return base
+
+
+def test_guidance_offer_below_asking_and_ordered():
+    g = compute_buyer_guidance(_guidance_deal())
+    assert g["offer_open"] <= g["offer_target"] < 20000
+
+
+def test_guidance_stale_listing_increases_room():
+    fresh = compute_buyer_guidance(_guidance_deal(days_listed=2))
+    stale = compute_buyer_guidance(_guidance_deal(days_listed=75))
+    assert stale["room_pct"] > fresh["room_pct"]
+    assert any("75 days" in l for l in stale["leverage"])
+
+
+def test_guidance_bottom_of_market_clamps_room():
+    g = compute_buyer_guidance(_guidance_deal(
+        days_listed=80,
+        market_range={"count": 12, "low": 21000, "fair": 23000, "high": 26000}))
+    # Priced below the market low → don't haggle a steal away.
+    assert g["room_pct"] <= 2
+    assert any("bottom" in l.lower() for l in g["leverage"])
+
+
+def test_guidance_unknown_title_asks_for_title():
+    g = compute_buyer_guidance(_guidance_deal(title_type=None))
+    assert any("title" in q.lower() for q in g["questions"])
+
+
+def test_guidance_too_good_flags_scam_check():
+    g = compute_buyer_guidance(_guidance_deal(price=14000, avg_price=22000))
+    assert any("verify why" in f for f in g["red_flags"])
+
+
+def test_guidance_sold_or_priceless_returns_none():
+    assert compute_buyer_guidance(_guidance_deal(price=0)) is None
+    assert compute_buyer_guidance(_guidance_deal(sold=True)) is None

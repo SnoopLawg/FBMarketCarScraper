@@ -422,7 +422,7 @@ select.input {
 
 /* Expandable details toggle (cockpit) */
 .deal-card .deal-details-extra { max-height: 0; overflow: hidden; transition: max-height var(--transition-slow); }
-.deal-card.expanded .deal-details-extra { max-height: 320px; margin-bottom: 8px; }
+.deal-card.expanded .deal-details-extra { max-height: 1100px; margin-bottom: 8px; }
 .deal-card .deal-details-toggle { margin-bottom: 10px; }
 
 /* ── Deal Card ────────────────────────────────────────────── */
@@ -548,7 +548,7 @@ select.input {
 
 /* Progressive disclosure */
 .deal-details-extra { max-height: 0; overflow: hidden; transition: max-height var(--transition-slow); }
-.deal-card.expanded .deal-details-extra { max-height: 200px; }
+.deal-card.expanded .deal-details-extra { max-height: 1100px; }
 .deal-details-toggle {
     font-size: 12px; color: var(--text-muted); cursor: pointer;
     padding: 4px 0; border: none; background: none;
@@ -754,3 +754,29 @@ a.comps-row:hover { background: rgba(255,255,255,0.02); }
     .bottom-nav { display: none; }
     .filter-row-mobile-select { display: none !important; }
 }
+
+/* ── Buyer playbook (expanded card) ── */
+.playbook {
+    margin-top: 10px; padding: 10px 12px;
+    background: var(--bg-primary); border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+}
+.playbook-offer { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.playbook-offer-label { font-size: 10px; letter-spacing: 0.8px; color: var(--text-muted); font-weight: 600; }
+.playbook-offer-range { font-family: var(--font-mono); font-size: 15px; font-weight: 700; color: var(--grade-a); }
+.playbook-offer-arrow { color: var(--text-muted); font-weight: 400; }
+.playbook-offer-room { font-size: 11px; color: var(--text-muted); }
+.playbook-section { margin-top: 8px; }
+.playbook-label {
+    font-size: 10px; letter-spacing: 0.8px; font-weight: 600;
+    color: var(--text-secondary); display: flex; align-items: center; gap: 5px;
+    margin-bottom: 3px;
+}
+.playbook-label .lucide { width: 12px; height: 12px; }
+.playbook-label-warn { color: var(--grade-d); }
+.playbook-item {
+    font-size: 12px; color: var(--text-secondary); line-height: 1.45;
+    padding: 1px 0 1px 10px; position: relative;
+}
+.playbook-item::before { content: "·"; position: absolute; left: 0; color: var(--text-muted); }
+.playbook-item-warn { color: var(--grade-d); }

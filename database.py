@@ -755,6 +755,50 @@ class Database:
         except Exception:
             pass  # Don't break averages if snapshot fails
 
+    def get_top_car_query(self):
+        """The desired-car model with the most active listings."""
+        row = self.cur.execute(
+            "SELECT car_query, COUNT(*) n FROM listings "
+            "WHERE deleted_at IS NULL AND is_discovery = 0 "
+            "GROUP BY car_query ORDER BY n DESC LIMIT 1").fetchone()
+        return row["car_query"] if row else None
+
+    def get_trend_series(self, car_query, days=90):
+        """Daily snapshot series for a car: (date, year, avg_price, count).
+
+        Clean-group only — mixing rebuilt/salvage averages into the same
+        line would make the trend jump on composition, not price.
+        """
+        self.cur.execute("""
+            SELECT snapshot_date, year, avg_price, listing_count
+            FROM price_trend_snapshots
+            WHERE car_query = ? AND title_group = 'clean'
+              AND snapshot_date >= date('now', ?)
+            ORDER BY snapshot_date ASC, year ASC
+        """, (car_query, f'-{days} days'))
+        return [dict(r) for r in self.cur.fetchall()]
+
+    def get_price_cut_stats(self, car_query=None, weeks=8):
+        """Weekly price-cut counts + average cut size — a market-softness
+        signal (more/larger cuts = sellers under pressure = buyer's market).
+        """
+        q = """
+            SELECT strftime('%Y-%W', ph.changed_at) AS wk,
+                   COUNT(*) AS cuts,
+                   AVG(ph.old_price - ph.new_price) AS avg_cut
+            FROM price_history ph
+            JOIN listings l ON l.href = ph.listing_href
+            WHERE ph.new_price < ph.old_price
+              AND ph.changed_at >= datetime('now', ?)
+        """
+        params = [f'-{weeks * 7} days']
+        if car_query:
+            q += " AND l.car_query = ?"
+            params.append(car_query)
+        q += " GROUP BY wk ORDER BY wk ASC"
+        self.cur.execute(q, params)
+        return [dict(r) for r in self.cur.fetchall()]
+
     def get_price_trend(self, car_query, year, title_group="clean",
                         days=30):
         """Get price trend for a car/year over the last N days.

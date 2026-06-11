@@ -14,7 +14,8 @@ from threading import Timer
 
 from flask import Flask, render_template, request, jsonify, Response
 
-from analysis import title_group, compute_market_range, find_sell_data
+from analysis import (title_group, compute_market_range, find_sell_data,
+                      compute_buyer_guidance)
 from config import (load_config, save_config, load_discovery_cars,
                     get_discovery_category_map, DISCOVERY_CATEGORIES)
 from database import Database, DB_PATH
@@ -107,6 +108,10 @@ def _enrich_deals_for_render(deals):
             d["price_trend"] = trend_cache.get((d["car_query"], d["year"], grp))
         else:
             d["price_trend"] = None
+
+    # Buyer playbook — needs price_history + market_range, so compute last.
+    for d in deals:
+        d["guidance"] = compute_buyer_guidance(d)
     return deals
 
 
@@ -214,41 +219,9 @@ def index():
     page = min(page, num_pages)
     filtered = filtered[(page - 1) * PER_PAGE: page * PER_PAGE]
 
-    # Enrich with price history
-    deal_hrefs = [d["href"] for d in filtered]
-    price_histories = _db.get_price_history_batch(deal_hrefs) if _db else {}
-    for d in filtered:
-        d["price_history"] = price_histories.get(d["href"])
-
-    # Enrich with VIN decode data
-    deal_vins = [d["vin"] for d in filtered if d.get("vin")]
-    vin_data = _db.get_vin_data_batch(deal_vins) if _db and deal_vins else {}
-    for d in filtered:
-        d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
-
-    # Enrich with market value ranges (cached per car/year/title group)
-    _market_cache = {}
-    trend_keys = set()
-    for d in filtered:
-        if not d.get("car_query") or not d.get("year"):
-            d["market_range"] = None
-            continue
-        grp = title_group(d.get("title_type"))
-        cache_key = (d["car_query"], d["year"], grp)
-        if cache_key not in _market_cache:
-            prices = _db.get_market_prices(d["car_query"], d["year"], grp) if _db else []
-            _market_cache[cache_key] = compute_market_range(prices)
-        d["market_range"] = _market_cache[cache_key]
-        trend_keys.add(cache_key)
-
-    # Enrich with price trends
-    _trend_cache = _db.get_price_trends_batch(trend_keys) if _db and trend_keys else {}
-    for d in filtered:
-        if d.get("car_query") and d.get("year"):
-            grp = title_group(d.get("title_type"))
-            d["price_trend"] = _trend_cache.get((d["car_query"], d["year"], grp))
-        else:
-            d["price_trend"] = None
+    # Price history, VIN decode, market range, trend, buyer playbook —
+    # same enrichment the discover/sold views use.
+    filtered = _enrich_deals_for_render(filtered)
 
     sources = sorted(set(d["source"] for d in _deals))
     cars = sorted(set(d["car_query"] for d in _deals))
@@ -913,6 +886,27 @@ def analytics():
     return render_template("analytics.html")
 
 
+@app.route("/api/trends")
+def market_trends():
+    """Market-timing data: daily asking-price snapshots per model year +
+    weekly price-cut stats (a buyer's/seller's-market softness signal)."""
+    if not _db:
+        return jsonify({"error": "no db"}), 503
+    car = request.args.get("car", "")
+    if not car:
+        # Default to the model with the most active listings.
+        car = _db.get_top_car_query() or ""
+    series = _db.get_trend_series(car) if car else []
+    cuts = _db.get_price_cut_stats(car) if car else []
+    cuts_all = _db.get_price_cut_stats(None)
+    return jsonify({
+        "car": car,
+        "series": series,
+        "cuts": cuts,
+        "cuts_all_models": cuts_all,
+    })
+
+
 @app.route("/api/analytics")
 def analytics_data():
     rows = _db.get_analytics_data() if _db else []
@@ -1177,4 +1171,12 @@ def start_web_ui(deals, port=5001, sell_data=None, discovery_deals=None):
     if not os.environ.get("DOCKER_MODE"):
         Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
 
-    app.run(host=host, port=port, debug=False)
+    # Serve with waitress (production WSGI) rather than Flask's dev server —
+    # the dev server is single-purpose/fragile under concurrent requests
+    # (it segfaulted on parallel /api/analytics + /api/health before the DB
+    # lock landed). Falls back to the dev server if waitress is missing.
+    try:
+        from waitress import serve
+        serve(app, host=host, port=port, threads=8)
+    except ImportError:
+        app.run(host=host, port=port, debug=False)

@@ -197,6 +197,36 @@
                 Found {{ deal.created_at[:10] }}{% if deal.updated_at and deal.updated_at[:10] != deal.created_at[:10] %} &middot; Updated {{ deal.updated_at[:10] }}{% endif %}
             </div>
             {% endif %}
+
+            {# ── Buyer playbook: data-backed offer + how to handle it ── #}
+            {% if deal.guidance %}
+            {% set g = deal.guidance %}
+            <div class="playbook">
+                <div class="playbook-offer">
+                    <span class="playbook-offer-label">SUGGESTED OFFER</span>
+                    <span class="playbook-offer-range">${{ '{:,.0f}'.format(g.offer_open) }} <span class="playbook-offer-arrow">→</span> ${{ '{:,.0f}'.format(g.offer_target) }}</span>
+                    <span class="playbook-offer-room">~{{ g.room_pct }}% room</span>
+                </div>
+                {% if g.leverage %}
+                <div class="playbook-section">
+                    <div class="playbook-label"><i data-lucide="trending-down"></i> YOUR LEVERAGE</div>
+                    {% for l in g.leverage %}<div class="playbook-item">{{ l }}</div>{% endfor %}
+                </div>
+                {% endif %}
+                {% if g.questions %}
+                <div class="playbook-section">
+                    <div class="playbook-label"><i data-lucide="message-circle-question"></i> ASK THE SELLER</div>
+                    {% for q in g.questions %}<div class="playbook-item">{{ q }}</div>{% endfor %}
+                </div>
+                {% endif %}
+                {% if g.red_flags %}
+                <div class="playbook-section">
+                    <div class="playbook-label playbook-label-warn"><i data-lucide="alert-triangle"></i> RED FLAGS</div>
+                    {% for f in g.red_flags %}<div class="playbook-item playbook-item-warn">{{ f }}</div>{% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
         <button class="deal-details-toggle" onclick="this.closest('.deal-card').classList.toggle('expanded')">
             <i data-lucide="chevron-down"></i> <span>Show more</span>

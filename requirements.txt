@@ -3,3 +3,4 @@ selenium>=4.41
 beautifulsoup4>=4.14
 requests>=2.32
 pyotp>=2.9        # TOTP for FB 2FA — scrapers/facebook.py:_handle_2fa_if_present
+waitress>=3.0    # production WSGI server — Flask dev server is single-purpose/fragile
