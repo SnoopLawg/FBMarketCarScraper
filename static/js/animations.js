@@ -8,7 +8,12 @@ let animate, stagger, inView, spring, timeline;
 
 async function initMotion() {
     try {
-        const m = await import('https://cdn.jsdelivr.net/npm/motion@11/+esm');
+        // Pinned to 10.x: this file targets Motion 10's API (easing: spring(),
+        // timeline) which broke when the floating "@11" spec auto-bumped to
+        // 11.18.2 (spring()/timeline removed) — that left content stuck at
+        // opacity:0 (blank pages). Pin the exact version so a CDN bump can't
+        // silently break it again. revealAll() is still the ultimate backstop.
+        const m = await import('https://cdn.jsdelivr.net/npm/motion@10.18.0/+esm');
         animate = m.animate;
         stagger = m.stagger;
         inView = m.inView;

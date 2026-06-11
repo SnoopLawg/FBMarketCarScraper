@@ -18,6 +18,32 @@
     <link rel="stylesheet" href="/static/css/components.css">
     {% block stylesheets %}{% endblock %}
     {% block head %}{% endblock %}
+    <script>
+    /* Defined here (before deal-card images parse) so a broken image's inline
+       onerror doesn't throw "carouselImgError is not defined" — FB CDN image
+       URLs expire, so this fires often. Tries the fallback image, else swaps
+       in a placeholder. carousel.js may enhance, but this is the source. */
+    function carouselImgError(img) {
+        const carousel = img.closest('.carousel');
+        const fallback = carousel && carousel.dataset.fallback;
+        if (fallback && img.src !== fallback && !img.dataset.triedFallback) {
+            img.dataset.triedFallback = '1';
+            img.src = fallback;
+        } else {
+            img.style.display = 'none';
+            if (img.classList.contains('active') && carousel) {
+                const wrapper = carousel.closest('.deal-img-wrapper');
+                if (wrapper && !wrapper.querySelector('.deal-img-empty')) {
+                    carousel.style.display = 'none';
+                    const ph = document.createElement('div');
+                    ph.className = 'deal-img-empty';
+                    ph.textContent = 'listing photo';
+                    wrapper.appendChild(ph);
+                }
+            }
+        }
+    }
+    </script>
 </head>
 <body>
     <header class="topbar">

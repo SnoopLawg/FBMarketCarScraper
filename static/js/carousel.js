@@ -1,24 +1,6 @@
-/* ── Image Carousel ── */
-function carouselImgError(img) {
-    const carousel = img.closest('.carousel');
-    const fallback = carousel && carousel.dataset.fallback;
-    if (fallback && img.src !== fallback && !img.dataset.triedFallback) {
-        img.dataset.triedFallback = '1';
-        img.src = fallback;
-    } else {
-        img.style.display = 'none';
-        if (img.classList.contains('active') && carousel) {
-            const wrapper = carousel.closest('.deal-img-wrapper');
-            if (wrapper && !wrapper.querySelector('.deal-img-empty')) {
-                carousel.style.display = 'none';
-                const ph = document.createElement('div');
-                ph.className = 'deal-img-empty';
-                ph.textContent = 'No image';
-                wrapper.appendChild(ph);
-            }
-        }
-    }
-}
+/* ── Image Carousel ──
+   carouselImgError() is defined early in base.html <head> so broken-image
+   onerror handlers resolve during HTML parse (before this file loads). */
 
 function carouselNav(btn, dir) {
     const carousel = btn.closest('.carousel');
