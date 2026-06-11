@@ -14,7 +14,25 @@ import time
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 
+from flaresolverr import FlareSolverrClient, is_enabled as _flaresolverr_enabled
+
 _CACHE_DAYS = 7
+
+
+def _mileage_adjustment_factor(year, mileage):
+    """Value multiplier for mileage deviation from the 12k-mi/yr norm.
+
+    Rule of thumb for mainstream used cars: ~5% of value per 10k miles
+    above/below expected, capped at ±25%. Used only when a source returns a
+    generalized (mileage-blind) price — KBB's own trim page and Edmunds' TMV
+    are already mileage-adjusted and skip this.
+    """
+    if not year or not mileage:
+        return 1.0
+    age = max(1, datetime.now().year - int(year))
+    expected = age * 12000
+    factor = 1.0 - ((mileage - expected) / 10000.0) * 0.05
+    return max(0.75, min(1.25, factor))
 
 # Map our condition to KBB's URL param and pricing key
 _KBB_CONDITION_URL = {
@@ -136,16 +154,30 @@ def _fetch_kbb(sell_car, zip_code):
     kbb_condition = _KBB_CONDITION_URL.get(condition, "good")
     condition_key = _KBB_CONDITION_KEY.get(condition, "good")
 
+    # KBB's trim page (the one carrying mileage/condition-adjusted pricing)
+    # is frequently WAF-blocked for headless Selenium, which forced the
+    # generalized base-price fallback. FlareSolverr's real Chromium gets
+    # through, so prefer it when configured.
+    use_fs = _flaresolverr_enabled()
+    fs = FlareSolverrClient(session_name="valuations") if use_fs else None
     driver = None
+
+    def get_html(url, settle_secs):
+        if use_fs:
+            return fs.get(url, max_timeout_ms=60000) or ""
+        driver.get(url)
+        time.sleep(settle_secs)
+        return driver.page_source
+
     try:
-        driver = _create_headless_driver()
+        if use_fs:
+            fs.open()
+        else:
+            driver = _create_headless_driver()
 
         # Step 1: Load overview page to get trims and base pricing
         overview_url = f"https://www.kbb.com/{make_slug}/{model_slug}/{year}/"
-        driver.get(overview_url)
-        time.sleep(3)
-
-        soup = BeautifulSoup(driver.page_source, "html.parser")
+        soup = BeautifulSoup(get_html(overview_url, 3), "html.parser")
         nd = soup.find("script", id="__NEXT_DATA__")
         if not nd:
             logging.warning("KBB: no __NEXT_DATA__ on overview page")
@@ -201,10 +233,7 @@ def _fetch_kbb(sell_car, zip_code):
             f"&pricetype=private-party&condition={kbb_condition}"
             f"&zipcode={zip_code}"
         )
-        driver.get(trim_url)
-        time.sleep(4)
-
-        soup = BeautifulSoup(driver.page_source, "html.parser")
+        soup = BeautifulSoup(get_html(trim_url, 4), "html.parser")
         nd = soup.find("script", id="__NEXT_DATA__")
         if not nd:
             logging.warning("KBB: no __NEXT_DATA__ on trim page")
@@ -212,7 +241,7 @@ def _fetch_kbb(sell_car, zip_code):
             if base_price and base_price > 500:
                 return _build_kbb_result_from_base(
                     base_price, trims_data, user_trim, condition,
-                    overview_url,
+                    overview_url, year=year, mileage=mileage,
                 )
             return None
 
@@ -257,6 +286,7 @@ def _fetch_kbb(sell_car, zip_code):
         if base_price and base_price > 500:
             return _build_kbb_result_from_base(
                 base_price, trims_data, user_trim, condition, overview_url,
+                year=year, mileage=mileage,
             )
 
         return None
@@ -265,6 +295,11 @@ def _fetch_kbb(sell_car, zip_code):
         logging.warning(f"KBB fetch error: {e}")
         return None
     finally:
+        if fs:
+            try:
+                fs.close()
+            except Exception:
+                pass
         if driver:
             try:
                 driver.quit()
@@ -272,8 +307,14 @@ def _fetch_kbb(sell_car, zip_code):
                 pass
 
 
-def _build_kbb_result_from_base(base_price, trims_data, user_trim, condition, url):
-    """Build a KBB result from overview page base pricing (no condition adjustment)."""
+def _build_kbb_result_from_base(base_price, trims_data, user_trim, condition,
+                                url, year=None, mileage=None):
+    """Build a KBB result from overview page base pricing.
+
+    The overview fppPrice is mileage-blind (a "typical example" of the
+    model/year), so apply our explicit mileage adjustment — a 60k-mile 2022
+    should not be quoted the same as a 20k-mile one.
+    """
     # Find the user's trim fppPrice if available
     if user_trim:
         user_lower = user_trim.lower()
@@ -285,16 +326,22 @@ def _build_kbb_result_from_base(base_price, trims_data, user_trim, condition, ur
                     base_price = fpp
                 break
 
+    factor = _mileage_adjustment_factor(year, mileage)
+    adjusted = round(base_price * factor)
+    note = condition
+    if abs(factor - 1.0) >= 0.005:
+        note = f"{condition} · mileage-adjusted ({'+' if factor > 1 else ''}{round((factor - 1) * 100)}%)"
+
     return {
         "source": "kbb",
         "source_label": "Kelley Blue Book",
         "private_party_low": None,
         "private_party_high": None,
-        "private_party_mid": base_price,
+        "private_party_mid": adjusted,
         "trade_in_value": None,
         "dealer_retail": None,
         "url": url,
-        "condition_used": condition,
+        "condition_used": note,
         "fetched_at": datetime.utcnow().isoformat(),
     }
 
