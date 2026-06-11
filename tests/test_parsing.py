@@ -6,8 +6,50 @@ breaks every listing's data.
 import pytest
 
 from parsing import (parse_price, parse_mileage, extract_year,
-                     parse_owner_count, classify_seller_type)
+                     parse_owner_count, classify_seller_type,
+                     detect_title_type)
 from analysis import title_group
+
+
+# ── detect_title_type (accuracy: catch real titles, reject boilerplate) ──
+
+def test_title_clean_from_fb_structured_field():
+    # FB "About this vehicle" → "Clean title / no significant damage"
+    assert detect_title_type(
+        "clean title this vehicle has no significant damage or problems") == "clean"
+
+
+def test_title_rebuilt_from_branded_description():
+    # Real FB seller description: "REBUILT / BRANDED TITLE"
+    assert detect_title_type(
+        "great truck. rebuilt / branded title. 2.7l 4 cyl") == "rebuilt"
+
+
+def test_title_branded_alone_is_rebuilt():
+    assert detect_title_type("this truck has a branded title") == "rebuilt"
+
+
+def test_title_salvage_phrase():
+    assert detect_title_type("sold with a salvage title, runs great") == "salvage"
+
+
+def test_title_lemon_only_on_buyback_phrase():
+    assert detect_title_type("manufacturer buyback lemon law buyback") == "lemon"
+
+
+def test_title_lemon_law_disclaimer_is_NOT_lemon():
+    """The Cars.com / FB 'Lemon Law' boilerplate must not flag a car as a
+    lemon — this produced 55+ bogus F-caps."""
+    assert detect_title_type(
+        "by using this site you agree to your state's lemon law rights") is None
+
+
+def test_title_bare_salvage_word_is_not_salvage():
+    assert detect_title_type("plenty of salvage yards near you") is None
+
+
+def test_title_absent_returns_none():
+    assert detect_title_type("driven 80,000 miles, automatic, gasoline") is None
 
 
 # ── parse_price ───────────────────────────────────────────────────

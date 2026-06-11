@@ -4,6 +4,46 @@ import re
 from datetime import datetime, timedelta
 
 
+# ── Title-status detection ───────────────────────────────────────
+# Specific, title-bearing phrases ONLY. Bare keywords ("salvage", "lemon")
+# false-positived badly: Cars.com's "Lemon Law" disclaimer boilerplate and
+# FB's related-listing rails produced 76 bogus "lemon" flags (vs 34 real
+# salvage+rebuilt), each hard-capping a clean car to an F. Detection should
+# be run on text already scoped to the listing's own content.
+_TITLE_PHRASES = [
+    # (matched phrase, resulting title_type) — order: most severe first
+    ("salvage title", "salvage"),
+    ("salvaged title", "salvage"),
+    ("flood title", "salvage"),
+    ("rebuilt title", "rebuilt"),
+    ("rebuilt / branded", "rebuilt"),
+    ("rebuilt/branded", "rebuilt"),
+    ("branded title", "rebuilt"),
+    ("reconstructed title", "rebuilt"),
+    ("rebuilt/restored", "rebuilt"),
+    ("r/r title", "rebuilt"),
+    ("lemon law buyback", "lemon"),
+    ("lemon law vehicle", "lemon"),
+    ("manufacturer buyback", "lemon"),
+    ("lemon title", "lemon"),
+    ("clean title", "clean"),
+]
+
+
+def detect_title_type(text):
+    """Detect title status from listing text, or None if not stated.
+
+    Trusts only specific title-bearing phrases — never bare "salvage"/
+    "lemon"/"rebuilt", which match boilerplate and unrelated text. Returns
+    one of 'salvage' | 'rebuilt' | 'lemon' | 'clean', or None.
+    """
+    t = (text or "").lower()
+    for phrase, ttype in _TITLE_PHRASES:
+        if phrase in t:
+            return ttype
+    return None
+
+
 # ── Seller type classification ───────────────────────────────────
 
 _DEALER_KEYWORDS = re.compile(

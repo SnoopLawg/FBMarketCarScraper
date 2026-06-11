@@ -13,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
-from parsing import classify_seller_type, parse_price
+from parsing import classify_seller_type, parse_price, detect_title_type
 from vin import extract_vin
 from driver import create_driver
 
@@ -239,16 +239,9 @@ class CarsComScraper(BaseScraper):
             card_text = card.get_text(" ", strip=True)
             card_text_lower = card_text.lower()
 
-            # Title type — search card text for salvage/rebuilt keywords
-            title_type = ""
-            if "salvage" in card_text_lower:
-                title_type = "salvage"
-            elif "rebuilt" in card_text_lower:
-                title_type = "rebuilt"
-            elif "lemon" in card_text_lower:
-                title_type = "lemon"
-            elif "clean title" in card_text_lower:
-                title_type = "clean"
+            # Title type — only specific title-bearing phrases (bare
+            # "lemon"/"salvage" matched Cars.com boilerplate)
+            title_type = detect_title_type(card_text_lower) or ""
 
             # Deal rating — fuse renders it in a <fuse-badge> ("Great Deal",
             # "Good Deal", "Fair Price", ...); keep class fallbacks for legacy.
@@ -339,15 +332,12 @@ class CarsComScraper(BaseScraper):
 
                 details = {}
 
-                # Title type from seller notes or page text
-                if "salvage" in body_lower:
-                    details["title_type"] = "salvage"
-                elif "rebuilt title" in body_lower or "rebuilt/restored" in body_lower or "r/r title" in body_lower:
-                    details["title_type"] = "rebuilt"
-                elif "lemon" in body_lower:
-                    details["title_type"] = "lemon"
-                elif "clean title" in body_lower:
-                    details["title_type"] = "clean"
+                # Title type — specific phrases only. "lemon" alone matched
+                # Cars.com's "Lemon Law" disclaimer on every page (55 bogus
+                # lemon flags); require "lemon law buyback" etc. instead.
+                tt = detect_title_type(body_lower)
+                if tt:
+                    details["title_type"] = tt
 
                 # Accident history
                 if "no accident" in body_lower:
@@ -377,15 +367,11 @@ class CarsComScraper(BaseScraper):
                         if vin:
                             details["vin"] = vin
 
-                        # Re-check title from description if not found above
+                        # Re-check title from the seller-notes block
                         if "title_type" not in details:
-                            desc_lower = desc.lower()
-                            if "salvage" in desc_lower:
-                                details["title_type"] = "salvage"
-                            elif "rebuilt" in desc_lower:
-                                details["title_type"] = "rebuilt"
-                            elif "clean title" in desc_lower:
-                                details["title_type"] = "clean"
+                            tt = detect_title_type(desc)
+                            if tt:
+                                details["title_type"] = tt
 
                 if details:
                     db.update_listing_details(href, **details)

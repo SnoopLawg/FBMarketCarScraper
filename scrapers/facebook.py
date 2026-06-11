@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from vin import extract_vin
-from parsing import parse_price
+from parsing import parse_price, detect_title_type
 
 SCRIPT_DIR = Path(__file__).parent.parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
@@ -239,20 +239,13 @@ class FacebookScraper(BaseScraper):
                     # extracted description text (catches titles mentioned
                     # in seller descriptions behind "See more")
                     if "title_type" not in details:
-                        # Scope to the listing's own text (not related rails)
-                        # and require specific phrases — bare "lemon"+"title"
-                        # false-positived off other listings.
-                        desc_lower = self._scope_listing_text(description.lower())
-                        if "salvage title" in desc_lower:
-                            details["title_type"] = "salvage"
-                        elif "rebuilt title" in desc_lower or "branded title" in desc_lower:
-                            details["title_type"] = "rebuilt"
-                        elif ("lemon law buyback" in desc_lower
-                              or "manufacturer buyback" in desc_lower
-                              or "lemon title" in desc_lower):
-                            details["title_type"] = "lemon"
-                        elif "clean title" in desc_lower:
-                            details["title_type"] = "clean"
+                        # Scope to the listing's own text, then the shared
+                        # phrase-only detector (catches "REBUILT / BRANDED
+                        # TITLE" etc. without bare-keyword false positives).
+                        tt = detect_title_type(
+                            self._scope_listing_text(description.lower()))
+                        if tt:
+                            details["title_type"] = tt
 
                 # Extract all listing images from detail page
                 image_urls = self._extract_images(page_source)
@@ -561,29 +554,14 @@ class FacebookScraper(BaseScraper):
         text = self._scope_listing_text(text)
 
         # ── Title type detection ─────────────────────────────────
-        # Only specific multi-word phrases — bare "salvage"/"lemon" + a nearby
-        # common word ("law", "vehicle") false-positived far too easily.
-        title_patterns = [
-            (">salvage title<", "salvage"),
-            (">rebuilt title<", "rebuilt"),
-            (">clean title<", "clean"),
-            ("salvage title", "salvage"),
-            ("rebuilt title", "rebuilt"),
-            ("branded title", "rebuilt"),
-            ("flood title", "salvage"),
-            ("lemon law buyback", "lemon"),
-            ("manufacturer buyback", "lemon"),
-            ("lemon title", "lemon"),
-            ("clean title", "clean"),
-        ]
-        for pattern, ttype in title_patterns:
-            if pattern in text:
-                info["title_type"] = ttype
-                break
-
-        # (No bare-keyword fallback: "salvage"/"lemon"/"rebuilt" near a common
-        # word like "law"/"vehicle" produced false positives that hard-capped
-        # clean cars. Only the specific phrases above are trusted.)
+        # Shared, phrase-only detector (parsing.detect_title_type) reads FB's
+        # structured "About this vehicle" field ("Clean title", "Salvage
+        # title", "Rebuilt/Reconstructed") and explicit description mentions
+        # ("REBUILT / BRANDED TITLE"). Bare keywords are deliberately NOT
+        # trusted — they hard-capped clean cars off related-listing text.
+        tt = detect_title_type(text)
+        if tt:
+            info["title_type"] = tt
 
         # ── Accident history ─────────────────────────────────────
         if "no accident" in text or "no accidents" in text or "0 accidents" in text:
