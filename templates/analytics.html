@@ -203,13 +203,22 @@ let _rawData = null;
 let _charts = {};
 
 fetch('/api/analytics')
-    .then(r => r.json())
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(data => {
         _rawData = data;
         document.getElementById('loading').style.display = 'none';
         document.getElementById('content').style.display = 'block';
         populateCarFilter(data.listings);
         render(data);
+    })
+    .catch(err => {
+        // Never leave the page stuck on "Loading…": surface the real reason.
+        const el = document.getElementById('loading');
+        if (el) {
+            el.innerHTML = 'Could not load analytics: ' + (err && err.message ? err.message : err) +
+                ' &nbsp; <a href="" onclick="location.reload();return false" style="color:var(--accent)">Retry</a>';
+        }
+        console.error('[analytics] load failed:', err);
     });
 
 function populateCarFilter(listings) {

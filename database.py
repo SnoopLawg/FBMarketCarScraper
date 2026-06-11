@@ -1,8 +1,10 @@
 """Database connection, schema, migration, and CRUD operations."""
 
+import functools
 import logging
 import os
 import sqlite3
+import threading
 from pathlib import Path
 
 from parsing import parse_price, parse_mileage, extract_year
@@ -12,6 +14,34 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
 DB_PATH = DATA_DIR / "marketplace_listings.db"
 
 
+def _synchronized(cls):
+    """Serialize every public method on a per-instance reentrant lock.
+
+    web_ui serves on Flask's threaded dev server against ONE shared sqlite
+    connection (check_same_thread=False). Two request threads using that same
+    connection/cursor at once corrupts cursor state and SEGFAULTS the process
+    — which is what made the Analytics page (it fires /api/analytics and
+    /api/health in parallel) hang on "Loading…". Holding the lock for the
+    duration of each DB call makes access safe. This is a single-user app, so
+    serializing quick SQLite ops costs nothing, and long non-DB work (e.g.
+    Selenium valuations) lives outside these methods and never holds the lock.
+    """
+    for name, attr in list(vars(cls).items()):
+        if name.startswith("_") or not callable(attr):
+            continue
+
+        def make(method):
+            @functools.wraps(method)
+            def wrapped(self, *args, **kwargs):
+                with self._lock:
+                    return method(self, *args, **kwargs)
+            return wrapped
+
+        setattr(cls, name, make(attr))
+    return cls
+
+
+@_synchronized
 class Database:
     # Per-process: paths whose schema has already been migrated this run.
     # Skips the per-open _migrate / _create_tables work after the first
@@ -23,6 +53,10 @@ class Database:
         self.db_path = db_path or DB_PATH
         self.conn = None
         self.cur = None
+        # Guards the shared connection/cursor against concurrent use by the
+        # threaded Flask dev server. Reentrant so a public method may call
+        # another public method without deadlocking.
+        self._lock = threading.RLock()
 
     def open(self):
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False,
