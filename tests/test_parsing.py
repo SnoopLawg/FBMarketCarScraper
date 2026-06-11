@@ -48,6 +48,32 @@ def test_title_bare_salvage_word_is_not_salvage():
     assert detect_title_type("plenty of salvage yards near you") is None
 
 
+# ── "title is {status}" phrasing (AutoSavvy etc.) ──
+
+def test_title_is_branded_reversed_phrasing_is_rebuilt():
+    # The exact AutoSavvy template the fixed phrase list missed.
+    assert detect_title_type(
+        "The current status of the title is branded, highlighting "
+        "AutoSavvy's commitment to transparency") == "rebuilt"
+
+
+def test_title_status_is_salvage():
+    assert detect_title_type("Title status is salvage") == "salvage"
+
+
+def test_title_is_clean_reversed_phrasing():
+    assert detect_title_type("the title is clean and well maintained") == "clean"
+
+
+def test_branded_word_without_title_context_is_not_flagged():
+    # 'branded' in product prose must NOT trip rebuilt without a title nearby.
+    assert detect_title_type("premium branded audio system, leather seats") is None
+
+
+def test_branded_audio_but_clean_title_resolves_clean():
+    assert detect_title_type("branded floor mats and the title is clean") == "clean"
+
+
 def test_title_absent_returns_none():
     assert detect_title_type("driven 80,000 miles, automatic, gasoline") is None
 

@@ -30,6 +30,20 @@ _TITLE_PHRASES = [
     ("clean title", "clean"),
 ]
 
+# Reversed phrasing the fixed phrases miss, e.g. AutoSavvy's template
+# "the current status of the title is branded". Requires 'title' adjacent to
+# the status word (via 'is'/':'/'='), so bare 'branded'/'clean' in prose
+# can't false-positive.
+_TITLE_STATUS_RE = re.compile(
+    r"\btitle\b\s*(?:status)?\s*(?:is|:|=)\s*(?:an?\s+|currently\s+)?"
+    r"(branded|rebuilt|reconstructed|salvaged?|flood|dismantled|clean)\b")
+_STATUS_MAP = {
+    "branded": "rebuilt", "rebuilt": "rebuilt", "reconstructed": "rebuilt",
+    "salvage": "salvage", "salvaged": "salvage", "flood": "salvage",
+    "dismantled": "salvage", "clean": "clean",
+}
+_SEVERITY = {"salvage": 0, "rebuilt": 1, "lemon": 2, "clean": 3}
+
 
 def detect_title_type(text):
     """Detect title status from listing text, or None if not stated.
@@ -42,6 +56,9 @@ def detect_title_type(text):
     for phrase, ttype in _TITLE_PHRASES:
         if phrase in t:
             return ttype
+    found = [_STATUS_MAP[m] for m in _TITLE_STATUS_RE.findall(t)]
+    if found:
+        return min(found, key=lambda x: _SEVERITY[x])
     return None
 
 
