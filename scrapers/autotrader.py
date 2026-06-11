@@ -3,6 +3,9 @@
 import json
 import re
 import logging
+import random
+import time
+
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -10,10 +13,18 @@ from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from parsing import classify_seller_type
+from flaresolverr import is_enabled as _flaresolverr_enabled
 
 
 class AutotraderScraper(BaseScraper):
     SOURCE_NAME = "autotrader"
+    # Autotrader's Akamai Bot Manager hard-blocks our headless Selenium
+    # (every run since June fails with 0 listings after ~10 wasted minutes).
+    # A FlareSolverr fetch — a real Chromium — passes it (verified live:
+    # full search page, 24 cards, __NEXT_DATA__ intact). When FlareSolverr
+    # is configured we fetch pages through it and skip Selenium entirely;
+    # without it we fall back to the old Selenium flow (likely blocked).
+    NEEDS_DRIVER = not _flaresolverr_enabled()
 
     def _is_bot_blocked(self):
         """Detect Autotrader's Akamai Bot Manager block page.
@@ -42,7 +53,100 @@ class AutotraderScraper(BaseScraper):
         except Exception as e:
             self.log(f"Warm-up failed (continuing): {e}")
 
+    def _build_search_url(self, car_query, zip_code, radius):
+        """Autotrader keyword-search URL for a car query.
+
+        e.g. /cars-for-sale/used-cars/toyota/tacoma?zip=...
+        """
+        parts = car_query.lower().split()
+        make = parts[0] if parts else ""
+        model = "-".join(parts[1:]) if len(parts) > 1 else ""
+        return (
+            f"https://www.autotrader.com/cars-for-sale/used-cars"
+            f"/{make}/{model}"
+            f"?zip={zip_code}&searchRadius={radius}"
+            f"&minPrice={self.min_price}&maxPrice={self.max_price}"
+        )
+
+    @staticmethod
+    def _is_blocked_html(html):
+        """Akamai block page detection on raw HTML (FlareSolverr path)."""
+        if not html:
+            return True
+        low = html[:20000].lower()
+        return "akamai-block" in low or "page unavailable" in low
+
+    def _process_page(self, html, car_query):
+        """Parse one search-results page; returns (cards_found, inserted)."""
+        soup = BeautifulSoup(html, "html.parser")
+        vin_map = self._extract_vin_map(soup)
+        cards = soup.select("[data-cmp='inventoryListing']")
+        if not cards:
+            cards = soup.select(".inventory-listing")
+        matched = 0
+        for card in cards:
+            if self._process_listing(card, car_query, vin_map):
+                matched += 1
+        return len(cards), matched
+
     def scrape(self):
+        if _flaresolverr_enabled():
+            return self._scrape_via_flaresolverr()
+        return self._scrape_via_selenium()
+
+    def _scrape_via_flaresolverr(self):
+        """Fetch search pages through FlareSolverr (real Chromium beats
+        Akamai); parsing is shared with the Selenium path."""
+        from flaresolverr import FlareSolverrClient
+
+        at_config = self.config["Sources"].get("autotrader", {})
+        zip_code = at_config.get("zip", "84101")
+        radius = at_config.get("search_radius", 100)
+        max_pages = at_config.get("max_pages", 3)
+
+        total_found = 0
+        total_matched = 0
+        blocked_pages = 0
+
+        with FlareSolverrClient(session_name="autotrader") as fs:
+            for i, car_query in enumerate(self.desired_cars):
+                self.log(f"Scraping: {car_query}")
+                if i > 0:
+                    time.sleep(random.uniform(2, 5))
+
+                base_url = self._build_search_url(car_query, zip_code, radius)
+                for page in range(max_pages):
+                    url = (base_url if page == 0
+                           else f"{base_url}&firstRecord={page * 25}")
+                    self.log(f"  Page {page + 1}...")
+                    html = fs.get(url, max_timeout_ms=90000)
+                    if html is None or self._is_blocked_html(html):
+                        blocked_pages += 1
+                        self.count_parse_error()
+                        logging.warning(
+                            f"[autotrader] page fetch failed/blocked for "
+                            f"{car_query} page {page + 1} — skipping query")
+                        break
+
+                    found, matched = self._process_page(html, car_query)
+                    if not found:
+                        self.log(f"  No results on page {page + 1}")
+                        break
+                    total_found += found
+                    total_matched += matched
+                    self.log(f"  Page {page + 1}: {found} listings")
+                    time.sleep(random.uniform(2, 5))
+
+        if blocked_pages:
+            logging.warning(
+                f"[autotrader] {blocked_pages} pages failed/blocked via "
+                f"FlareSolverr this run")
+        self.log(f"Done: {total_found} total listings, "
+                 f"{total_matched} inserted")
+
+    def _scrape_via_selenium(self):
+        """Legacy Selenium flow — Akamai blocks this; kept as the fallback
+        for machines without FlareSolverr."""
         at_config = self.config["Sources"].get("autotrader", {})
         zip_code = at_config.get("zip", "84101")
         radius = at_config.get("search_radius", 100)
@@ -60,17 +164,7 @@ class AutotraderScraper(BaseScraper):
             if i > 0:
                 self.delay_between_searches()
 
-            # Autotrader supports keyword search via the URL path + params
-            # e.g. /cars-for-sale/used-cars/toyota/tacoma/...
-            parts = car_query.lower().split()
-            make = parts[0] if parts else ""
-            model = "-".join(parts[1:]) if len(parts) > 1 else ""
-            base_url = (
-                f"https://www.autotrader.com/cars-for-sale/used-cars"
-                f"/{make}/{model}"
-                f"?zip={zip_code}&searchRadius={radius}"
-                f"&minPrice={self.min_price}&maxPrice={self.max_price}"
-            )
+            base_url = self._build_search_url(car_query, zip_code, radius)
 
             for page in range(max_pages):
                 url = base_url if page == 0 else f"{base_url}&firstRecord={page * 25}"
@@ -117,23 +211,13 @@ class AutotraderScraper(BaseScraper):
 
                 self.scroll_page(count=4)
 
-                soup = BeautifulSoup(self.driver.page_source, "html.parser")
-
-                # Extract VIN map from __NEXT_DATA__ JSON
-                vin_map = self._extract_vin_map(soup)
-
-                cards = soup.select("[data-cmp='inventoryListing']")
-                if not cards:
-                    cards = soup.select(".inventory-listing")
-                if not cards:
+                found, matched = self._process_page(
+                    self.driver.page_source, car_query)
+                if not found:
                     break
-
-                total_found += len(cards)
-                for card in cards:
-                    if self._process_listing(card, car_query, vin_map):
-                        total_matched += 1
-
-                self.log(f"  Page {page + 1}: {len(cards)} listings")
+                total_found += found
+                total_matched += matched
+                self.log(f"  Page {page + 1}: {found} listings")
 
         if blocked_pages:
             logging.warning(
