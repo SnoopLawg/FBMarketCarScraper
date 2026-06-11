@@ -237,22 +237,8 @@ class KSLScraper(BaseScraper):
         raw = m.group(1).strip()
         return detect_title_type(raw), raw
 
-    def enrich_listings(self, db, limit=60):
-        """Backfill title_type from KSL detail pages.
-
-        The search-results JSON lacks the title status, so every KSL listing
-        lands with title_type unset and scores as 'unknown' — which let a
-        rebuilt car top the board uncapped. Here we visit the detail page
-        (cheap HTTP, no browser) for listings that have never been enriched
-        and read the authoritative `titleType` field. Run post-scrape by the
-        worker, same as the other non-FB sources.
-        """
-        rows = db.get_listings_missing_title_type(source="ksl", limit=limit)
-        if not rows:
-            self.log("No KSL listings need title enrichment.")
-            return 0
-
-        self.log(f"Enriching {len(rows)} KSL listings (title)...")
+    def _enrich_batch(self, db, rows):
+        """Fetch + store title_type for a batch of rows. Returns count updated."""
         enriched = 0
         for row in rows:
             href = row["href"]
@@ -273,8 +259,35 @@ class KSLScraper(BaseScraper):
                 except Exception:
                     pass
             time.sleep(random.uniform(0.6, 1.5))
+        return enriched
 
-        self.log(f"KSL title enrichment complete: {enriched}/{len(rows)} updated.")
+    def enrich_listings(self, db, limit=120, max_total=2000):
+        """Capture title_type from KSL detail pages — exhaustively, in one job.
+
+        The search-results JSON lacks the title status, so every KSL listing
+        lands with title_type unset and scores as 'unknown' (which let a
+        rebuilt car top the board uncapped). KSL detail pages are cheap HTTP
+        (no Cloudflare wall, unlike Cars.com/Autotrader), so rather than
+        trickle a fixed cap per run, we drain ALL un-enriched listings in this
+        same scrape job — so a listing's title is solid on the first run it's
+        seen, with no after-the-fact catch-up. `limit` is the DB batch size;
+        `max_total` is a politeness safety cap on detail fetches per run.
+        Re-scrapes skip already-enriched rows (enriched_at preserved), so
+        steady state only fetches genuinely new listings.
+        """
+        total = 0
+        while total < max_total:
+            rows = db.get_listings_missing_title_type(source="ksl", limit=limit)
+            if not rows:
+                break
+            if total == 0:
+                self.log(f"Enriching KSL titles (up to {max_total} this run)...")
+            total += self._enrich_batch(db, rows)
+        if total:
+            self.log(f"KSL title enrichment complete: {total} updated this run.")
+        else:
+            self.log("No KSL listings need title enrichment.")
+        return total
         return enriched
 
     def log(self, msg):
