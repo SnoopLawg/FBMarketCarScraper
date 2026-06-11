@@ -36,6 +36,13 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 - `driver.py` — Firefox WebDriver factory with anti-detection settings; supports HTTP/SOCKS proxy configuration with random rotation. Two profile modes: `options.profile` (copy-per-run, dedicated `6kmbn0d4.fbscraper`) or `persistent_profile=<dir>` (in-place, survives across runs — used for Facebook so the device identity + session cookies persist). The persistent path sets `browser.startup.page=3` so FB's session-scoped `c_user`/`xs` cookies survive a clean shutdown. Does NOT override the user agent (a UA-vs-engine mismatch is what bot managers cross-check)
 - `scraper_worker.py` — background threading wrapper that exposes status tracking for the web UI to poll; records per-source run metrics to `scrape_runs` table and logs yield health warnings. A source that finishes with 0 listings but a non-trivial historical average is recorded as `failed` (with a screenshot), not `completed` — so silent selector rot / bot walls surface in `/api/health` instead of looking healthy
 
+### FlareSolverr (Cloudflare/Akamai bypass)
+- `flaresolverr.py` — client for a self-hosted FlareSolverr sidecar (a real Chromium that solves bot-manager challenges). Gated on `FLARESOLVERR_URL`; unset → callers no-op/fall back. Sessions recycle every ~15 requests (FlareSolverr leaks ~20-25 MB/request and its `sessions.destroy` doesn't free it — only a container restart truly flushes, so long batch jobs should chunk + restart the container)
+- **Autotrader** search is Akamai-blocked for Selenium → `scrape()` fetches pages via FlareSolverr when configured (`NEEDS_DRIVER` flips false), shared parsing via `_process_page()`
+- **Cars.com** detail pages (the only place seller's notes / title status live) are Cloudflare-blocked → `enrich_listings()` routes through FlareSolverr, extracts `<section id="sellers-notes">`, scoped title detection
+- **KBB** trim pages (mileage/condition-adjusted values) are WAF-blocked → `_fetch_kbb` uses FlareSolverr when available; base-price fallback applies an explicit mileage adjustment (~5%/10k mi deviation, capped ±25%)
+- **KSL** needs no bypass — detail JSON is plain HTTP; `enrich_listings` drains ALL un-enriched listings per run (titleType regex)
+
 ### Facebook authentication
 Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_ensure_logged_in`) is layered, in priority order:
 1. **Native persistent-profile session** — with `FB_PROFILE_DIR` set, the device's own `datr`+`c_user`+`xs` cookies live on disk and survive between runs, so most runs are already logged in with zero work. This is the durable path.
@@ -71,8 +78,11 @@ Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_e
   - **Trim Value (5pts):** Higher trim at a discount
   - **Freshness (5pts):** Days since first scraped
 - Hard score caps: rebuilt≤45, salvage≤30, lemon≤25
-- VIN cross-validation penalty (up to -15) applied before caps
-- Owner count and service history parsed from listing descriptions via `parsing.py`
+- VIN cross-validation penalty (up to -15) applied before caps; a VIN-decoded drivetrain *overrides* the text/default guess (source `vin` counts as confirmed)
+- Grades are market-relative, anchored to the empirical distribution (median listing ≈ 43): A≥75 (~top 1%), B≥62, C≥48 (above median), D≥35, F<35
+- Owner count and service history parsed from listing descriptions via `parsing.py`; `detect_title_type` matches title-bearing phrases plus the reversed "the title is branded" template (AutoSavvy)
+- `compute_buyer_guidance()` — per-deal negotiation playbook (suggested offer range, leverage, questions, red flags) derived from days-on-market, price cuts, market position, title/accident signals; attached in `web_ui._enrich_deals_for_render` and rendered in the deal card's expanded view
+- Market timing: `calculate_averages` records daily `price_trend_snapshots`; `/api/trends` + the Analytics "Market Timing" card chart per-year asking-price lines and weekly seller price-cut counts (market softness), with a buy/wait verdict once ~a week of history accrues
 
 ### Scraper Monitoring
 - `scrape_runs` table tracks every scrape run per source: start/end time, status, listings_found, errors, screenshot_path, duration
@@ -107,7 +117,7 @@ Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_e
 - Sold cars are excluded from the buyable Deals/Discover lists and CSV export; they get their own `/sold` tab (`sold.html`) as comps. New Grade-A *sold* listings don't trigger Discord alerts.
 
 ### Web UI
-- `web_ui.py` — Flask app with routes for deals list, sold comps, sell pricing, favorites, analytics, settings, and scraper health
+- `web_ui.py` — Flask app with routes for deals list, sold comps, sell pricing, favorites, analytics, settings, and scraper health. Served by **waitress** (production WSGI, 8 threads); `Database` serializes all access behind a per-instance RLock because one SQLite connection is shared across request threads (two threads on one cursor segfaulted the process before)
 - `templates/` — Jinja2 templates (`base.html`, `deals.html`, `sell.html`, `favorites.html`, `analytics.html`, `settings.html`, `_deal_card.html` partial)
 - State files: `favorite_listings.txt`, `deleted_listings.txt` (line-delimited href sets)
 
