@@ -342,29 +342,40 @@ function animateHealthBadges() {
     });
 }
 
+// ── Failsafe ──
+// The entrance animations pre-hide content (opacity:0) and rely on Motion to
+// reveal it. If Motion's animate() ever throws (e.g. a CDN version bump), that
+// content would be stuck invisible → blank page. revealAll() forcibly clears
+// any inline hidden state so the site is NEVER blank, animations or not.
+const ANIMATED_SELECTORS = '.deal-card, .stat-card, .chart-card, .sell-card, ' +
+    '.valuation-card, .settings-section, .setting-card, .page, .page-narrow, .empty-state';
+function revealAll() {
+    document.querySelectorAll(ANIMATED_SELECTORS).forEach(el => {
+        el.style.opacity = '';
+        el.style.transform = '';
+    });
+}
+
 // ── Master init ──
 async function initAnimations() {
+    // Unconditional failsafe: whatever happens with Motion, content is visible.
+    setTimeout(revealAll, 1500);
+
     const loaded = await initMotion();
-    if (!loaded) return;
+    if (!loaded) { revealAll(); return; }
 
-    // Run immediately — these set initial states
-    animatePageEntrance();
-    animateDealCards();
-    animateStatCards();
-    animateChartCards();
-    animateSellCards();
-    animateSettingsSections();
-    animateEmptyState();
-    animateBadges();
-    animateHealthBadges();
-    animateBottomNav();
-
-    // Enhance interactive elements
-    addCardHoverEffects();
-    enhanceScoreModal();
-    enhanceRecallsModal();
-    enhanceToast();
-    enhanceFilterRow();
+    // Each guarded so one failure can't leave content hidden or block the rest.
+    const steps = [
+        animatePageEntrance, animateDealCards, animateStatCards,
+        animateChartCards, animateSellCards, animateSettingsSections,
+        animateEmptyState, animateBadges, animateHealthBadges, animateBottomNav,
+        addCardHoverEffects, enhanceScoreModal, enhanceRecallsModal,
+        enhanceToast, enhanceFilterRow,
+    ];
+    for (const step of steps) {
+        try { step(); }
+        catch (e) { console.warn('[animations] step failed:', e); revealAll(); }
+    }
 }
 
 // Kick off when DOM is ready
