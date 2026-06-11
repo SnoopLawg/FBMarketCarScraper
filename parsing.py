@@ -15,6 +15,7 @@ _TITLE_PHRASES = [
     ("salvage title", "salvage"),
     ("salvaged title", "salvage"),
     ("flood title", "salvage"),
+    ("dismantled title", "salvage"),
     ("rebuilt title", "rebuilt"),
     ("rebuilt / branded", "rebuilt"),
     ("rebuilt/branded", "rebuilt"),

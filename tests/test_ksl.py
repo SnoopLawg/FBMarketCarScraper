@@ -100,3 +100,38 @@ def test_href_is_built_from_listing_id():
 def test_location_omitted_when_city_missing():
     row = _scrape_one(_full_listing(location={"city": "", "state": "UT"}))
     assert row["location"] == ""
+
+
+# ── Title-type extraction from detail page (the rebuilt-car miss) ──
+
+from parsing import detect_title_type
+
+
+def _title_from_detail(escaped_json):
+    """Apply the detail-page title regex the way _fetch_title_type does."""
+    m = KSLScraper._TITLE_TYPE_RE.search(escaped_json)
+    return detect_title_type(m.group(1)) if m else None
+
+
+def test_detail_rebuilt_title_extracted_and_mapped():
+    # Real KSL detail JSON shape: titleType sits next to suggestedTitleType.
+    blob = (r'\"mileage\":25742,\"titleType\":\"Rebuilt/Reconstructed Title\",'
+            r'\"suggestedTitleType\":{\"suggestedTitleType\":\"Clean Title\"}')
+    assert _title_from_detail(blob) == "rebuilt"
+
+
+def test_detail_regex_does_not_match_suggested_title_type():
+    # Must read titleType, not the adjacent suggestedTitleType (which is "Clean").
+    blob = (r'\"titleType\":\"Salvage Title\",'
+            r'\"suggestedTitleType\":{\"suggestedTitleType\":\"Clean Title\"}')
+    assert _title_from_detail(blob) == "salvage"
+
+
+def test_detail_clean_and_unspecified_titles():
+    assert _title_from_detail(r'\"titleType\":\"Clean Title\"') == "clean"
+    # "Not Specified" has no canonical mapping → None (stays unknown).
+    assert _title_from_detail(r'\"titleType\":\"Not Specified\"') is None
+
+
+def test_dismantled_title_maps_to_salvage():
+    assert detect_title_type("Dismantled Title") == "salvage"

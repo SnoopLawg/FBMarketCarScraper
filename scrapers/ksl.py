@@ -14,7 +14,7 @@ import random
 import requests
 
 from scrapers.base import BaseScraper
-from parsing import classify_seller_type
+from parsing import classify_seller_type, detect_title_type
 
 
 class KSLScraper(BaseScraper):
@@ -219,6 +219,63 @@ class KSLScraper(BaseScraper):
             self.count_parse_error()
             logging.warning(f"[KSL] Parse error: {e}")
             return False
+
+    # KSL detail pages embed the listing JSON with an escaped title field,
+    # e.g.  \"titleType\":\"Rebuilt/Reconstructed Title\"  — the search-results
+    # JSON we scrape omits it, so the detail page is the only place to read the
+    # real title status. (Anchored on the leading \" so it can't match the
+    # adjacent \"suggestedTitleType\" key.)
+    _TITLE_TYPE_RE = re.compile(r'\\"titleType\\":\\"([^"\\]+)')
+
+    def _fetch_title_type(self, href):
+        """GET a KSL detail page and return (canonical_title_type, raw) or (None, None)."""
+        resp = self._session.get(href, timeout=30)
+        resp.raise_for_status()
+        m = self._TITLE_TYPE_RE.search(resp.text)
+        if not m:
+            return None, None
+        raw = m.group(1).strip()
+        return detect_title_type(raw), raw
+
+    def enrich_listings(self, db, limit=60):
+        """Backfill title_type from KSL detail pages.
+
+        The search-results JSON lacks the title status, so every KSL listing
+        lands with title_type unset and scores as 'unknown' — which let a
+        rebuilt car top the board uncapped. Here we visit the detail page
+        (cheap HTTP, no browser) for listings that have never been enriched
+        and read the authoritative `titleType` field. Run post-scrape by the
+        worker, same as the other non-FB sources.
+        """
+        rows = db.get_listings_missing_title_type(source="ksl", limit=limit)
+        if not rows:
+            self.log("No KSL listings need title enrichment.")
+            return 0
+
+        self.log(f"Enriching {len(rows)} KSL listings (title)...")
+        enriched = 0
+        for row in rows:
+            href = row["href"]
+            try:
+                tt, raw = self._fetch_title_type(href)
+                if tt:
+                    db.update_listing_details(href, title_type=tt)
+                    enriched += 1
+                    self.log(f"  Enriched: {row['car_name'][:40]} → title={tt} ({raw})")
+                else:
+                    # No mappable title (e.g. "Not Specified", or page shape
+                    # changed) — mark done so we don't re-fetch it every run.
+                    db.mark_enriched(href)
+            except Exception as e:
+                logging.warning(f"[KSL] Title enrich error for {href[:60]}: {e}")
+                try:
+                    db.mark_enriched(href)
+                except Exception:
+                    pass
+            time.sleep(random.uniform(0.6, 1.5))
+
+        self.log(f"KSL title enrichment complete: {enriched}/{len(rows)} updated.")
+        return enriched
 
     def log(self, msg):
         logging.info(f"[{self.SOURCE_NAME}] {msg}")
