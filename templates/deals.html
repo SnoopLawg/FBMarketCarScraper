@@ -122,6 +122,18 @@
     {% include '_deal_card.html' %}
     {% endfor %}
 </div>
+
+{% if num_pages > 1 %}
+{% set pageqs = [] %}
+{% for k, v in request.args.items() %}{% if k != 'page' %}{{ pageqs.append(k ~ '=' ~ v) or '' }}{% endif %}{% endfor %}
+{% set pagebase = pageqs|join('&') %}
+{% macro pagelink(n) %}?{{ pagebase }}{% if pagebase %}&{% endif %}page={{ n }}{% endmacro %}
+<div class="pagination">
+    {% if page > 1 %}<a class="page-btn" href="{{ pagelink(page - 1) }}">‹ Prev</a>{% else %}<span class="page-btn disabled">‹ Prev</span>{% endif %}
+    <span class="page-status">Page {{ page }} of {{ num_pages }} <span class="page-status-dim">· {{ total }} deals</span></span>
+    {% if page < num_pages %}<a class="page-btn" href="{{ pagelink(page + 1) }}">Next ›</a>{% else %}<span class="page-btn disabled">Next ›</span>{% endif %}
+</div>
+{% endif %}
 {% else %}
 <div class="empty-state">
     <span class="material-symbols-outlined" style="font-size:40px">search_off</span>

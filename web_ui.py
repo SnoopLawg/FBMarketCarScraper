@@ -201,6 +201,19 @@ def index():
     else:  # discount
         filtered.sort(key=lambda d: d["price"] - d.get("avg_price", d["price"]))
 
+    # ── Pagination ── deal cards are heavy (carousels, score JSON, market
+    # range); rendering all 400+ at once produced a 5 MB page that hung the
+    # browser. Cap per page and only enrich the page's worth below.
+    PER_PAGE = 60
+    total_count = len(filtered)
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    num_pages = max(1, (total_count + PER_PAGE - 1) // PER_PAGE)
+    page = min(page, num_pages)
+    filtered = filtered[(page - 1) * PER_PAGE: page * PER_PAGE]
+
     # Enrich with price history
     deal_hrefs = [d["href"] for d in filtered]
     price_histories = _db.get_price_history_batch(deal_hrefs) if _db else {}
@@ -251,7 +264,9 @@ def index():
         current_title=title_filter,
         current_seller_type=seller_type_filter,
         current_sort=sort_by,
-        total=len(filtered),
+        total=total_count,
+        page=page,
+        num_pages=num_pages,
         current_search=search_query,
         current_year_min=year_min,
         current_year_max=year_max,
