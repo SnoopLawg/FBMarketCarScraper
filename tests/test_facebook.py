@@ -38,6 +38,84 @@ def _scrape_one(card, seen_ids=None):
     return captured[0] if captured else None
 
 
+# ── Inline enrichment (keep-only-enriched) ───────────────────────
+
+
+class _InlineDriver:
+    """Minimal driver for _visit_and_extract: serves a detail page."""
+    def __init__(self, url, page_source):
+        self.current_url = url
+        self.page_source = page_source
+    def get(self, url): pass
+    def execute_script(self, *a, **k): return 0
+    def find_elements(self, *a, **k): return []
+    def get_cookie(self, name): return None
+
+
+class _InlineDB:
+    def __init__(self):
+        self.details = {}
+        self.enriched = []
+        self.sold = []
+    def update_listing_details(self, href, **kw): self.details[href] = kw
+    def mark_enriched(self, href): self.enriched.append(href)
+    def mark_sold(self, href, sold_price=None): self.sold.append((href, sold_price))
+
+
+def _inline_scraper(driver, captured):
+    s = FacebookScraper(driver, MIN_CONFIG, lambda **kw: captured.append(kw),
+                        car_list=["_"])
+    s.human_delay = lambda *a, **k: None
+    return s
+
+
+def test_visit_and_extract_returns_none_when_blocked():
+    d = _InlineDriver("https://www.facebook.com/login/", "<html>login</html>")
+    s = _inline_scraper(d, [])
+    assert s._visit_and_extract("https://www.facebook.com/marketplace/item/1/") is None
+
+
+def test_parse_card_none_without_item_id():
+    card = BeautifulSoup(
+        '<a href="/marketplace/category/cars"><span>$10,000</span>'
+        '<span>2020 Forester</span></a>', "html.parser").a
+    s = FacebookScraper(None, MIN_CONFIG, lambda **k: None, car_list=["_"])
+    assert s._parse_card(card) is None
+
+
+def test_enrich_and_insert_keeps_solid_listing():
+    """A new listing whose detail page loads is inserted WITH its detail
+    title/drivetrain (keep-only-enriched)."""
+    page = ("<html><body>About this vehicle Driven 90,000 miles "
+            "Drive type: All Wheel Drive Clean title this vehicle has no "
+            "significant damage Seller's description nice</body></html>")
+    d = _InlineDriver("https://www.facebook.com/marketplace/item/55/", page)
+    captured = []
+    s = _inline_scraper(d, captured)
+    db = _InlineDB()
+    card = {"car_query": "Toyota Rav4",
+            "href": "https://www.facebook.com/marketplace/item/55/",
+            "image_url": "x", "price": "20000", "car_name": "2021 RAV4",
+            "location": "Lehi, UT", "mileage_raw": "90K miles",
+            "source": "facebook", "title_type": "", "seller_type": ""}
+    assert s._enrich_and_insert(db, card) is True
+    assert captured and captured[0]["title_type"] == "clean"   # from detail page
+    assert db.details[card["href"]]["drivetrain"] == "awd"
+
+
+def test_enrich_and_insert_skips_blocked_listing():
+    """A blocked detail page → NOT inserted (no placeholder row)."""
+    d = _InlineDriver("https://www.facebook.com/login/", "<html>login</html>")
+    captured = []
+    s = _inline_scraper(d, captured)
+    card = {"car_query": "x", "href": "https://www.facebook.com/marketplace/item/9/",
+            "image_url": "", "price": "1000", "car_name": "c", "location": "l",
+            "mileage_raw": "N/A", "source": "facebook", "title_type": "",
+            "seller_type": ""}
+    assert s._enrich_and_insert(_InlineDB(), card) is False
+    assert captured == []   # nothing inserted
+
+
 # ── Core parsing ──────────────────────────────────────────────────
 
 

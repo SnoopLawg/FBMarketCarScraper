@@ -44,7 +44,24 @@ class FacebookScraper(BaseScraper):
             self.log("Could not log in. Skipping.")
             return
 
-        for i, car_query in enumerate(self.desired_cars):
+        # Inline enrichment mode: when the worker sets self.db, we visit each
+        # NEW listing's detail page and insert ONLY fully-enriched (solid)
+        # rows — never a placeholder with unknown title/condition. Already-
+        # enriched listings just get a cheap price refresh (no detail visit).
+        # A per-run budget caps detail visits (the rate-limit ceiling), so
+        # yield is lower per run; the 4x/day cadence catches the rest up.
+        db = getattr(self, "db", None)
+        inline = db is not None
+        budget = getattr(self, "inline_enrich_budget", 0) if inline else 0
+        enriched_hrefs = db.get_enriched_hrefs("facebook") if inline else set()
+        self._consecutive_blocked = 0
+
+        cars = list(self.desired_cars)
+        if inline:
+            # Spread the per-run budget across cars over successive runs
+            random.shuffle(cars)
+
+        for i, car_query in enumerate(cars):
             self.log(f"Scraping: {car_query}")
             if i > 0:
                 self.delay_between_searches()
@@ -57,13 +74,69 @@ class FacebookScraper(BaseScraper):
 
             soup = BeautifulSoup(self.driver.page_source, "html.parser")
             listings = soup.select("a[href*='/marketplace/item/']")
-
             found_before = self._listing_count
             seen_ids = set()
+
+            if not inline:
+                for item in listings:
+                    self._process_listing(item, car_query, seen_ids)
+                self.log(f"  {car_query}: {len(listings)} cards → "
+                         f"{self._listing_count - found_before} inserted")
+                continue
+
+            # Inline: parse all cards from the in-memory soup first, THEN
+            # navigate to detail pages (navigation doesn't disturb the soup).
+            cards = []
             for item in listings:
-                self._process_listing(item, car_query, seen_ids)
-            self.log(f"  {car_query}: {len(listings)} cards → "
-                     f"{self._listing_count - found_before} inserted")
+                c = self._parse_card(item, seen_ids)
+                if c:
+                    c["car_query"] = car_query
+                    cards.append(c)
+
+            for card in cards:
+                if card["href"] in enriched_hrefs:
+                    self.counted_insert(**card)   # cheap price refresh
+                    continue
+                if budget <= 0 or self._consecutive_blocked >= 5:
+                    continue   # lower yield — leave for a later run
+                budget -= 1
+                if self._enrich_and_insert(db, card):
+                    enriched_hrefs.add(card["href"])
+            self.log(f"  {car_query}: {len(cards)} cards, "
+                     f"{budget} enrich-budget left")
+
+        if inline:
+            self.log(f"Inline enrichment complete ({budget} budget remaining).")
+
+    def _enrich_and_insert(self, db, card):
+        """Visit a new listing's detail page and insert it ONLY if we got
+        solid data (keep-only-enriched). Returns True if inserted."""
+        details = self._visit_and_extract(card["href"])
+        if details is None:
+            self._consecutive_blocked = getattr(self, "_consecutive_blocked", 0) + 1
+            self.human_delay(3, 6)
+            return False
+        self._consecutive_blocked = 0
+
+        sold = details.pop("_sold", False)
+        sold_price = details.pop("_sold_price", None)
+        # Detail-page values override the card's guesses
+        for k in ("title_type", "seller_type", "vin"):
+            if details.get(k):
+                card[k] = details.pop(k)
+
+        self.counted_insert(**card)   # creates the row
+        extra = {k: v for k, v in details.items()
+                 if k in ("condition", "description", "image_urls",
+                          "drivetrain", "accident_history", "deal_rating")}
+        if extra:
+            db.update_listing_details(card["href"], **extra)
+        else:
+            db.mark_enriched(card["href"])   # mark solid even if sparse
+        if sold:
+            db.mark_sold(card["href"], sold_price=sold_price)
+        self.human_delay(1, 3)
+        return True
 
     def _build_url(self, city_id, car_query):
         passive = self.config.get("Passive")
@@ -81,23 +154,23 @@ class FacebookScraper(BaseScraper):
                 f"&maxMileage={max_mileage}&topLevelVehicleType=car_truck&exact=false"
             )
 
-    def _process_listing(self, item, car_query, seen_ids=None):
+    def _parse_card(self, item, seen_ids=None):
         """Parse one search-result card from its /marketplace/item/ anchor.
 
-        Each card anchor contains the listing fields as span text (each
-        rendered several times in nested visual/accessibility copies):
-        price, title, "City, ST", "NNNK miles".  Discounted listings
-        prepend a combined "$new$old" span; dealer listings append
-        " · Dealership" to the mileage span.
+        Each card anchor carries the fields as span text (rendered several
+        times in nested visual/accessibility copies): price, title,
+        "City, ST", "NNNK miles". Discounted listings prepend a combined
+        "$new$old" span; dealer listings append " · Dealership" to mileage.
+        Returns a kwargs dict for counted_insert, or None to skip.
         """
         href = item.get("href") or ""
         id_match = ITEM_ID_RE.search(href)
         if not id_match:
-            return
+            return None
         item_id = id_match.group(1)
         if seen_ids is not None:
             if item_id in seen_ids:
-                return
+                return None
             seen_ids.add(item_id)
         # Canonical URL — strips ?ref=search&… tracking params so the
         # (href, source) upsert key stays stable across scrapes
@@ -122,26 +195,19 @@ class FacebookScraper(BaseScraper):
             elif "$" not in t:
                 rest.append(t)
         if not price_str or not rest:
-            return
+            return None
         title = max(rest, key=len)
 
         price_parts = price_str.split("$")[1:]
         if not price_parts:
-            return
+            return None
         price = price_parts[0]
 
         img_tag = item.find("img", {"src": True})
         image_url = img_tag["src"] if img_tag else ""
 
-        # Title type — Facebook occasionally includes it in listing text
-        title_type = ""
-        full_text = f"{title} {city} {miles}".lower()
-        if "salvage" in full_text:
-            title_type = "salvage"
-        elif "rebuilt" in full_text:
-            title_type = "rebuilt"
-        elif "clean title" in full_text:
-            title_type = "clean"
+        # Title type — only the specific structured phrase on a card
+        title_type = detect_title_type(f"{title} {city} {miles}") or ""
 
         # Dealer listings tag the mileage span: "145K miles · Dealership"
         seller_type = ""
@@ -149,12 +215,65 @@ class FacebookScraper(BaseScraper):
             seller_type = "dealer"
             miles = miles.split("·")[0].strip()
 
-        self.counted_insert(
-            car_query=car_query, href=full_href, image_url=image_url,
-            price=price, car_name=title, location=city,
-            mileage_raw=miles, source=self.SOURCE_NAME,
-            title_type=title_type, seller_type=seller_type,
-        )
+        return {
+            "car_query": None,  # caller fills in
+            "href": full_href, "image_url": image_url, "price": price,
+            "car_name": title, "location": city, "mileage_raw": miles,
+            "source": self.SOURCE_NAME, "title_type": title_type,
+            "seller_type": seller_type,
+        }
+
+    def _process_listing(self, item, car_query, seen_ids=None):
+        """Card-only insert (no detail visit). Used when inline enrichment
+        is off (tests / fallback)."""
+        card = self._parse_card(item, seen_ids)
+        if not card:
+            return
+        card["car_query"] = car_query
+        self.counted_insert(**card)
+
+    def _visit_and_extract(self, href):
+        """Visit a listing detail page and extract all enrichment fields.
+
+        Returns a details dict (title_type, condition, accident_history,
+        deal_rating, seller_type, drivetrain, description, vin, image_urls,
+        plus `_sold`/`_sold_price` markers), or None if the page was blocked
+        / not a real listing (caller treats None as a rate-limit signal).
+        """
+        self.driver.get(href)
+        self.inject_stealth()
+        self.human_delay(2, 5)
+        self._dismiss_login_modal()
+        self._click_see_more()
+        self.human_delay(0.5, 1.5)
+
+        page_source = self.driver.page_source
+        cur_url = self.driver.current_url
+        if "marketplace/item" not in cur_url or "directory" in cur_url:
+            return None
+
+        details = self._extract_detail_info(page_source.lower())
+
+        description = self._extract_description(page_source)
+        if description:
+            details["description"] = description
+            vin = extract_vin(description)
+            if vin:
+                details["vin"] = vin
+            if "title_type" not in details:
+                tt = detect_title_type(
+                    self._scope_listing_text(description.lower()))
+                if tt:
+                    details["title_type"] = tt
+
+        image_urls = self._extract_images(page_source)
+        if image_urls:
+            details["image_urls"] = json.dumps(image_urls)
+
+        details["_sold"] = self._is_sold(page_source)
+        if details["_sold"]:
+            details["_sold_price"] = self._extract_detail_price(page_source)
+        return details
 
     # ── Detail page enrichment ──────────────────────────────────────
 
@@ -187,23 +306,8 @@ class FacebookScraper(BaseScraper):
         for row in rows:
             href = row["href"]
             try:
-                self.driver.get(href)
-                self.inject_stealth()
-                self.human_delay(2, 5)
-
-                # Close login modal if it appears
-                self._dismiss_login_modal()
-
-                # Expand the seller description via "See more"
-                self._click_see_more()
-                self.human_delay(0.5, 1.5)
-
-                page_source = self.driver.page_source
-                page_text = page_source.lower()
-
-                # Validate we landed on a listing page
-                cur_url = self.driver.current_url
-                if "marketplace/item" not in cur_url or "directory" in cur_url:
+                details = self._visit_and_extract(href)
+                if details is None:
                     consecutive_blocked += 1
                     if consecutive_blocked >= 5:
                         self.log(f"  Rate limited by Facebook ({consecutive_blocked} "
@@ -212,45 +316,12 @@ class FacebookScraper(BaseScraper):
                     self.log(f"  Skipped (blocked): {href[:60]}")
                     self.human_delay(3, 6)
                     continue
-
-                # Reset block counter on successful page load
                 consecutive_blocked = 0
 
-                details = self._extract_detail_info(page_text)
-
-                # A listing can sell between scrapes — catch it on this visit,
-                # capturing the actual final price from the detail page.
-                if self._is_sold(page_source):
-                    db.mark_sold(
-                        href,
-                        sold_price=self._extract_detail_price(page_source))
-
-                # Capture visible description text for future re-parsing
-                description = self._extract_description(page_source)
-                if description:
-                    details["description"] = description
-
-                    # Try to extract VIN from the description
-                    vin = extract_vin(description)
-                    if vin:
-                        details["vin"] = vin
-
-                    # If no title_type from HTML patterns, check the
-                    # extracted description text (catches titles mentioned
-                    # in seller descriptions behind "See more")
-                    if "title_type" not in details:
-                        # Scope to the listing's own text, then the shared
-                        # phrase-only detector (catches "REBUILT / BRANDED
-                        # TITLE" etc. without bare-keyword false positives).
-                        tt = detect_title_type(
-                            self._scope_listing_text(description.lower()))
-                        if tt:
-                            details["title_type"] = tt
-
-                # Extract all listing images from detail page
-                image_urls = self._extract_images(page_source)
-                if image_urls:
-                    details["image_urls"] = json.dumps(image_urls)
+                sold = details.pop("_sold", False)
+                sold_price = details.pop("_sold_price", None)
+                if sold:
+                    db.mark_sold(href, sold_price=sold_price)
 
                 if details:
                     db.update_listing_details(href, **details)
@@ -260,7 +331,6 @@ class FacebookScraper(BaseScraper):
                     self.log(f"  Enriched: {row['car_name'][:40]} → title={tt}"
                              f"{' VIN=' + vin_str if vin_str else ''}")
                 else:
-                    # Mark as attempted so we don't re-visit
                     db.mark_enriched(href)
 
             except Exception as e:
@@ -270,7 +340,6 @@ class FacebookScraper(BaseScraper):
                 except Exception:
                     pass
 
-            # Human-like delay between pages
             self.human_delay(1, 3)
 
         self.log(f"Enrichment complete: {enriched}/{len(rows)} listings updated.")

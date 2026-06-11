@@ -251,6 +251,14 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
 
             try:
                 scraper = scraper_cls(driver, config, insert_fn)
+                # Facebook enriches inline during the scrape: each NEW listing
+                # gets its detail page visited and is inserted only when solid
+                # (no placeholder rows). Capped per run by FB_ENRICH_BUDGET so
+                # we don't trip rate limits; the 4x/day cadence catches up.
+                if name == "facebook":
+                    scraper.db = db
+                    scraper.inline_enrich_budget = int(
+                        os.environ.get("FB_ENRICH_BUDGET", "120"))
                 scraper.scrape()
 
                 duration = (datetime.now() - run_start).total_seconds()
@@ -319,29 +327,29 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                             f"vs {src_health['avg_yield']:.0f} avg — "
                             f"below expected yield")
 
-                # Enrich listings using the same driver (if scraper supports it)
-                if hasattr(scraper, 'enrich_listings') and (
-                        enrich_fb or name != "facebook"):
+                # Non-FB sources still use the post-scrape enrichment pass.
+                # FB enriches inline during scrape() (above), so its separate
+                # pass is skipped to avoid double detail-page visits.
+                if name != "facebook" and hasattr(scraper, 'enrich_listings'):
                     _status.update({
                         "message": f"Enriching {name} listings with detail data...",
                     })
                     try:
-                        # FB title/condition lives only on detail pages, and
-                        # coverage was near-zero — enrich more per run (the
-                        # scraper self-throttles and stops on repeated blocks).
-                        enrich_limit = 150 if name == "facebook" else 60
-                        scraper.enrich_listings(db, limit=enrich_limit)
+                        scraper.enrich_listings(db, limit=60)
                     except Exception as e:
                         logging.error(f"{name} enrichment failed: {e}")
 
-                # Re-visit active FB listings to catch ones that have sold —
-                # sold prices are the market-clearing data we weight heavily.
+                # Re-visit some already-enriched active FB listings to catch
+                # sales (inline enrichment only sees NEW listings). Kept small
+                # so total FB detail visits/run (inline budget + this) stay
+                # under the rate-limit ceiling.
                 if name == "facebook" and hasattr(scraper, 'check_sold_listings'):
                     _status.update({
                         "message": "Checking Facebook listings for sold status...",
                     })
                     try:
-                        scraper.check_sold_listings(db, limit=80)
+                        scraper.check_sold_listings(
+                            db, limit=int(os.environ.get("FB_SOLD_CHECK", "40")))
                     except Exception as e:
                         logging.error(f"facebook sold-check failed: {e}")
 

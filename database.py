@@ -872,6 +872,15 @@ class Database:
         except sqlite3.Error as e:
             logging.error(f"DB mark_sold_checked error: {e}")
 
+    def get_enriched_hrefs(self, source):
+        """Set of active hrefs already enriched (detail page visited) — the
+        inline FB scrape skips a detail visit for these and just refreshes
+        their price from the search card."""
+        self.cur.execute(
+            "SELECT href FROM listings WHERE source = ? "
+            "AND enriched_at IS NOT NULL AND deleted_at IS NULL", (source,))
+        return {r["href"] for r in self.cur.fetchall()}
+
     def get_active_listings_for_sold_check(self, source, limit=60):
         """Active listings to re-visit for a sold check, least-recently
         checked first. Sold listings drop out of FB search, so the only way

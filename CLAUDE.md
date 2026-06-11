@@ -98,6 +98,9 @@ Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_e
 - `/api/sell/valuations` endpoint triggers on-demand external valuation refresh
 - Settings page includes "Cars to Sell" panel with multi-field form
 
+### Facebook inline enrichment
+- FB title/condition/drivetrain live only on the detail page (search cards lack them). When the worker sets `scraper.db`, the FB `scrape()` enriches **inline**: for each NEW listing it visits the detail page and inserts the row only once it has solid data (keep-only-enriched — no placeholder rows with unknown title). Already-enriched listings get a cheap price refresh (no detail visit). A per-run budget (`FB_ENRICH_BUDGET`, default 120) caps detail visits to stay under FB's rate limit; the 4×/day cadence covers the rest over ~1–2 days. `_parse_card` (card→fields) and `_visit_and_extract` (detail→fields) are the shared building blocks; the standalone `enrich_listings()` (for the `/api/enrich` route) reuses `_visit_and_extract`.
+
 ### Sold listings (market-clearing comps)
 - FB marks sold items with a standalone `<span>Sold</span>` on the detail page and removes them from search. `FacebookScraper._is_sold()` detects this; `check_sold_listings()` (run after the FB scrape in `scraper_worker`) re-visits active FB listings least-recently-checked-first and flags any now sold via `db.mark_sold()`. Enrichment also detects sold inline.
 - Sold listings are kept permanently (`mark_stale` skips `sold=1`) because their price is the actual sale price. `calculate_averages` weights each sold comp as `SOLD_WEIGHT` (8) asking-price samples — a weighted mean that keeps true listing counts — so averages reflect what cars really sold for, not aspirational asks.
