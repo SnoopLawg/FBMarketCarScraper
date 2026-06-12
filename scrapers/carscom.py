@@ -330,27 +330,73 @@ class CarsComScraper(BaseScraper):
                       flags=re.IGNORECASE).strip()
         return text
 
+    # Structured AutoCheck panel present on every detail page:
+    #   <section id="vehicle_history_report"> ... <li><fuse-svg/>
+    #   <span>Clean title</span> ... <span>Accidents or damage reported</span>
+    _HISTORY_RE = re.compile(
+        r'<section id="vehicle_history_report".*?</section>',
+        re.DOTALL | re.IGNORECASE)
+    _HISTORY_ITEM_RE = re.compile(
+        r'<li>\s*<fuse-svg[^>]*>\s*</fuse-svg>\s*<span>([^<]+)</span>',
+        re.IGNORECASE)
+
+    # Severity order for merging title claims (lower = worse).
+    _TITLE_SEVERITY = {"salvage": 0, "rebuilt": 1, "lemon": 2, "clean": 3}
+
+    @classmethod
+    def _extract_history_fields(cls, html):
+        """Structured title/accident/owner data from the AutoCheck panel."""
+        m = cls._HISTORY_RE.search(html or "")
+        if not m:
+            return {}
+        details = {}
+        for item in cls._HISTORY_ITEM_RE.findall(m.group(0)):
+            low = item.strip().lower()
+            if "title" in low:
+                tt = detect_title_type(low)
+                if tt:
+                    details["title_type"] = tt
+            elif "accident" in low or "damage" in low:
+                details["accident_history"] = (
+                    "No Accidents" if low.startswith("no ")
+                    else "Accident Reported")
+            elif "owner" in low:
+                m2 = re.search(r'\b(\d+|one)[- ]owner', low)
+                if m2:
+                    n = m2.group(1)
+                    details["owner_count"] = "1" if n == "one" else n
+        return details
+
     @classmethod
     def _extract_detail_fields(cls, html):
-        """Title/description/VIN from a Cars.com detail page's seller notes.
+        """Title/accident/owner/description from a Cars.com detail page.
 
-        Title detection is SCOPED to the seller's notes (not the whole page) so
-        boilerplate like 'cars with rebuilt titles' links can't false-positive.
+        Sources, merged: the structured AutoCheck history panel (covers every
+        listing) + the seller's notes (scoped, so page boilerplate like 'cars
+        with rebuilt titles' can't false-positive). When both state a title,
+        the WORSE one wins — AutoCheck can lag a retitle, and sellers don't
+        falsely confess to rebuilt/salvage (e.g. AutoSavvy notes said rebuilt
+        while the panel still showed clean).
         """
+        details = cls._extract_history_fields(html)
         notes = cls._extract_seller_notes(html)
-        details = {}
         if notes:
-            tt = detect_title_type(notes.lower())
-            if tt:
-                details["title_type"] = tt
+            notes_tt = detect_title_type(notes.lower())
+            panel_tt = details.get("title_type")
+            if notes_tt and (not panel_tt
+                             or cls._TITLE_SEVERITY[notes_tt]
+                             < cls._TITLE_SEVERITY[panel_tt]):
+                details["title_type"] = notes_tt
             details["description"] = notes[:2000]
             vin = extract_vin(notes)
             if vin:
                 details["vin"] = vin
-            low = notes.lower()
-            if "rebuilt title" in low or "salvage" in low or "rear-end" in low \
-                    or "accident" in low or "damage" in low:
-                details["accident_history"] = "Accident Reported"
+            if "accident_history" not in details:
+                low = notes.lower()
+                if "rebuilt title" in low or "salvage" in low \
+                        or "rear-end" in low or "accident" in low \
+                        or "damage" in low:
+                    details["accident_history"] = "Accident Reported"
         return details
 
     def enrich_listings(self, db, limit=60, max_total=300):

@@ -996,7 +996,8 @@ class Database:
         """Update multiple detail fields for a listing."""
         allowed = {"title_type", "trim", "seller", "condition",
                    "deal_rating", "accident_history", "description", "vin",
-                   "image_urls", "seller_type", "sold", "drivetrain"}
+                   "image_urls", "seller_type", "sold", "drivetrain",
+                   "owner_count"}
         sets = []
         vals = []
         for k, v in kwargs.items():

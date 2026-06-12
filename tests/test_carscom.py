@@ -165,3 +165,62 @@ def test_title_detection_scoped_to_notes_not_page_boilerplate():
 def test_no_sellers_notes_section_yields_no_fields():
     assert CarsComScraper._extract_detail_fields("<div>no notes here</div>") == {}
     assert CarsComScraper._extract_detail_fields("") == {}
+
+
+# ── Structured AutoCheck history panel ──
+
+_PANEL = '''
+<section id="vehicle_history_report" trv="">
+  <h2>Vehicle history report</h2>
+  <img class="provider-logo" alt="AutoCheck by Experian">
+  <fuse-list plain=""><ul>
+    <li><fuse-svg name="check"></fuse-svg><span>{title}</span></li>
+    <li><fuse-svg name="alert-outline"></fuse-svg><span>{accident}</span></li>
+    <li><fuse-svg name="check"></fuse-svg><span>{owner}</span></li>
+  </ul></fuse-list>
+</section>
+'''
+
+
+def test_history_panel_clean_title_and_accident_extracted():
+    html = _PANEL.format(title="Clean title",
+                         accident="Accidents or damage reported",
+                         owner="1 owner")
+    f = CarsComScraper._extract_detail_fields(html)
+    assert f["title_type"] == "clean"
+    assert f["accident_history"] == "Accident Reported"
+    assert f["owner_count"] == "1"
+
+
+def test_history_panel_no_accidents_variant():
+    html = _PANEL.format(title="Salvage title",
+                         accident="No accidents or damage reported",
+                         owner="Multiple owners")
+    f = CarsComScraper._extract_detail_fields(html)
+    assert f["title_type"] == "salvage"
+    assert f["accident_history"] == "No Accidents"
+    assert "owner_count" not in f  # "multiple" is not a count — don't invent
+
+
+def test_notes_rebuilt_overrides_panel_clean():
+    # AutoCheck lags retitles: seller confesses rebuilt while panel says
+    # clean (the AutoSavvy case). Worse title must win.
+    html = _PANEL.format(title="Clean title",
+                         accident="No accidents or damage reported",
+                         owner="1 owner") + (
+        '<section id="sellers-notes"><h2>Seller\'s notes</h2>'
+        '<cars-line-clamp>This SUV has a rebuilt title, repaired '
+        'professionally.</cars-line-clamp></section>')
+    f = CarsComScraper._extract_detail_fields(html)
+    assert f["title_type"] == "rebuilt"
+
+
+def test_panel_clean_not_overridden_by_silent_notes():
+    html = _PANEL.format(title="Clean title",
+                         accident="No accidents or damage reported",
+                         owner="1 owner") + (
+        '<section id="sellers-notes"><h2>Seller\'s notes</h2>'
+        '<cars-line-clamp>Great family SUV, runs perfectly.'
+        '</cars-line-clamp></section>')
+    f = CarsComScraper._extract_detail_fields(html)
+    assert f["title_type"] == "clean"
