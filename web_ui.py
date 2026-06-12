@@ -14,8 +14,8 @@ from threading import Timer
 
 from flask import Flask, render_template, request, jsonify, Response
 
-from analysis import (title_group, compute_market_range, find_sell_data,
-                      compute_buyer_guidance)
+from analysis import (title_group, comp_group, compute_market_range,
+                      find_sell_data, compute_buyer_guidance)
 from config import (load_config, save_config, load_discovery_cars,
                     get_discovery_category_map, DISCOVERY_CATEGORIES)
 from database import Database, DB_PATH
@@ -93,7 +93,7 @@ def _enrich_deals_for_render(deals):
         if not d.get("car_query") or not d.get("year"):
             d["market_range"] = None
             continue
-        grp = title_group(d.get("title_type"))
+        grp = comp_group(d.get("title_type"), d.get("powertrain"))
         key = (d["car_query"], d["year"], grp)
         if key not in market_cache:
             prices = _db.get_market_prices(*key) if _db else []
@@ -104,7 +104,7 @@ def _enrich_deals_for_render(deals):
     trend_cache = _db.get_price_trends_batch(trend_keys) if _db and trend_keys else {}
     for d in deals:
         if d.get("car_query") and d.get("year"):
-            grp = title_group(d.get("title_type"))
+            grp = comp_group(d.get("title_type"), d.get("powertrain"))
             d["price_trend"] = trend_cache.get((d["car_query"], d["year"], grp))
         else:
             d["price_trend"] = None
@@ -279,7 +279,7 @@ def favorites_page():
             avg_price = 0
             if d.get("car_query") and d.get("year"):
                 avgs = _db.get_averages(d["car_query"])
-                grp = title_group(d.get("title_type"))
+                grp = comp_group(d.get("title_type"), d.get("powertrain"))
                 avg_key = (d["year"], grp)
                 if avg_key not in avgs:
                     avg_key = (d["year"], "all")
@@ -327,7 +327,7 @@ def favorites_page():
         if not d.get("car_query") or not d.get("year"):
             d["market_range"] = None
             continue
-        grp = title_group(d.get("title_type"))
+        grp = comp_group(d.get("title_type"), d.get("powertrain"))
         cache_key = (d["car_query"], d["year"], grp)
         if cache_key not in _market_cache:
             prices = _db.get_market_prices(d["car_query"], d["year"], grp) if _db else []
@@ -463,7 +463,7 @@ def compare_page():
         d["vin_data"] = vin_data.get((d.get("vin") or "").upper())
         # Market range
         if d.get("car_query") and d.get("year") and _db:
-            grp = title_group(d.get("title_type"))
+            grp = comp_group(d.get("title_type"), d.get("powertrain"))
             prices = _db.get_market_prices(d["car_query"], d["year"], grp)
             d["market_range"] = compute_market_range(prices)
         else:
@@ -670,7 +670,7 @@ def discover_page():
         if not d.get("car_query") or not d.get("year"):
             d["market_range"] = None
             continue
-        grp = title_group(d.get("title_type"))
+        grp = comp_group(d.get("title_type"), d.get("powertrain"))
         cache_key = (d["car_query"], d["year"], grp)
         if cache_key not in _market_cache:
             prices = _db.get_market_prices(d["car_query"], d["year"], grp) if _db else []
@@ -682,7 +682,7 @@ def discover_page():
     _trend_cache = _db.get_price_trends_batch(trend_keys) if _db and trend_keys else {}
     for d in filtered:
         if d.get("car_query") and d.get("year"):
-            grp = title_group(d.get("title_type"))
+            grp = comp_group(d.get("title_type"), d.get("powertrain"))
             d["price_trend"] = _trend_cache.get((d["car_query"], d["year"], grp))
         else:
             d["price_trend"] = None

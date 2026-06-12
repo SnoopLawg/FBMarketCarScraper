@@ -780,3 +780,10 @@ a.comps-row:hover { background: rgba(255,255,255,0.02); }
 }
 .playbook-item::before { content: "·"; position: absolute; left: 0; color: var(--text-muted); }
 .playbook-item-warn { color: var(--grade-d); }
+
+/* Powertrain badge — hybrids/EVs price on their own curve */
+.badge-powertrain {
+    background: rgba(52, 211, 153, 0.12); color: var(--grade-a);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    font-size: 10px; letter-spacing: 0.5px;
+}

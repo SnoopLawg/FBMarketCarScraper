@@ -83,6 +83,9 @@
             {% if deal.drivetrain %}
             <span class="badge badge-drivetrain{% if deal.drivetrain in ['AWD', '4WD'] %} badge-drivetrain-awd{% endif %}">{{ deal.drivetrain }}{% if deal.drivetrain_source == 'default' %}*{% endif %}</span>
             {% endif %}
+            {% if deal.powertrain %}
+            <span class="badge badge-powertrain">{{ {'hybrid':'HYBRID','phev':'PLUG-IN','ev':'EV'}.get(deal.powertrain, deal.powertrain|upper) }}</span>
+            {% endif %}
             {% if deal.seller_type == 'dealer' %}
             <span class="badge badge-seller-dealer">Dealer</span>
             {% elif deal.seller_type == 'private' %}

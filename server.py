@@ -26,6 +26,7 @@ def main():
         db.backfill_owner_counts()
         db.backfill_seller_types()
         db.backfill_vins()
+        db.backfill_powertrains()
         db.backfill_listed_at()
 
         all_cars = get_all_search_queries(config)

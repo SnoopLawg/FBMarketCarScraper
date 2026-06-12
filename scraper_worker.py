@@ -138,6 +138,7 @@ def _run_enrich(on_complete, limit):
         db.backfill_owner_counts()
         db.backfill_seller_types()
         db.backfill_vins()
+        db.backfill_powertrains()
         db.backfill_listed_at()
 
         # Re-run analysis so scores update
@@ -544,6 +545,7 @@ def _run_scrape(on_complete):
         db.backfill_owner_counts()
         db.backfill_seller_types()
         db.backfill_vins()
+        db.backfill_powertrains()
         db.backfill_listed_at()
 
         _status.update({"message": "Cleaning listings..."})

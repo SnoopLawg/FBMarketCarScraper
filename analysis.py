@@ -32,6 +32,20 @@ def title_group(title_type):
     return "clean"  # clean + unknown/null → same group
 
 
+def comp_group(title_type, powertrain=""):
+    """Full comparison-group key: title group + powertrain dimension.
+
+    Hybrids/PHEVs/EVs price on a different curve than the gas version of
+    the same model/year, so they get their own comp pools — encoded as a
+    suffix on the title group ("clean#hybrid") so the averages schema and
+    every (year, group)-keyed lookup work unchanged. Gas stays the plain
+    title group, fully backward compatible.
+    """
+    grp = title_group(title_type)
+    pt = (powertrain or "").lower()
+    return f"{grp}#{pt}" if pt else grp
+
+
 def clean_listings(db, desired_cars):
     """Remove listings whose title doesn't match the car query they were filed under."""
     logging.info("Cleaning mismatched listings...")
@@ -69,6 +83,7 @@ def calculate_averages(db, desired_cars, mileage_threshold):
             tt = row[3] if len(row) > 3 else None
             vin = row[4] if len(row) > 4 else None
             sold = row[5] if len(row) > 5 else 0
+            pt = row[6] if len(row) > 6 else ""
             # Skip duplicate listings of the same physical car (same VIN posted
             # to multiple sources) so one car isn't counted several times in the
             # market average that deal scoring compares against.
@@ -76,7 +91,7 @@ def calculate_averages(db, desired_cars, mileage_threshold):
                 if vin in seen_vins:
                     continue
                 seen_vins.add(vin)
-            group = title_group(tt)
+            group = comp_group(tt, pt)
 
             # Sold listings are actual market-clearing prices, not asking
             # prices — weight them heavily so the average reflects what cars
@@ -84,6 +99,11 @@ def calculate_averages(db, desired_cars, mileage_threshold):
             weight = SOLD_WEIGHT if sold else 1
             entry = (price, mileage or 0, weight)
             year_title_data.setdefault((year, group), []).append(entry)
+            # Per-powertrain "all" fallback ("all#hybrid") plus the plain
+            # "all" catch-all so thin powertrain pools stay scoreable.
+            if pt:
+                year_title_data.setdefault(
+                    (year, f"all#{(pt or '').lower()}"), []).append(entry)
             year_all_data.setdefault(year, []).append(entry)
 
         def _wavg(entries):
@@ -791,11 +811,16 @@ def find_deals(db, desired_cars, config, is_discovery=False):
 
             mileage = mileage or 0
 
-            # ── Title-group-aware average lookup ─────────────────
+            # ── Title-group + powertrain aware average lookup ─────
             # Compare this listing against others with the same title
-            # status.  Falls back to "all" if not enough data.
-            grp = title_group(row["title_type"])
+            # status AND powertrain (a RAV4 Hybrid must not be priced
+            # against gas RAV4s). Fallback: same-powertrain "all", then
+            # the plain catch-all.
+            powertrain = (row.get("powertrain") or "").lower()
+            grp = comp_group(row["title_type"], powertrain)
             avg_key = (year, grp)
+            if avg_key not in avg_table and powertrain:
+                avg_key = (year, f"all#{powertrain}")
             if avg_key not in avg_table:
                 avg_key = (year, "all")
             if avg_key not in avg_table:
@@ -950,6 +975,7 @@ def find_deals(db, desired_cars, config, is_discovery=False):
                     "trim_label": trim_label,
                     "drivetrain": drivetrain_label(dt),
                     "drivetrain_source": dt_source,
+                    "powertrain": powertrain,
                     "days_listed": days_listed,
                     "deal_score": score,
                     "deal_grade": score_to_grade(score),

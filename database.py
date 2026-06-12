@@ -7,7 +7,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from parsing import parse_price, parse_mileage, extract_year
+from parsing import (parse_price, parse_mileage, extract_year,
+                     detect_powertrain)
 
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
@@ -123,7 +124,8 @@ class Database:
                 sold INTEGER DEFAULT 0,
                 sold_at TEXT,
                 sold_checked_at TEXT,
-                drivetrain TEXT
+                drivetrain TEXT,
+                powertrain TEXT
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_href_source ON listings(href, source);
             CREATE INDEX IF NOT EXISTS idx_listings_car_query ON listings(car_query);
@@ -405,6 +407,18 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        # Powertrain (''/hybrid/phev/ev) — splits comp pools so hybrids/EVs
+        # aren't priced against the gas version of the same model/year.
+        if "powertrain" not in columns:
+            logging.info("Migrating DB: adding powertrain column...")
+            try:
+                self.cur.execute(
+                    "ALTER TABLE listings ADD COLUMN powertrain TEXT")
+                self.conn.commit()
+                logging.info("powertrain migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Sold tracking: a listing detected as "Sold" on its FB detail page.
         # Its price is the actual market-clearing price — weighted heavily in
         # averages — so sold listings are kept (never stale-deleted).
@@ -480,6 +494,9 @@ class Database:
         price_val = parse_price(price)
         mileage_val = parse_mileage(mileage_raw)
         year_val = extract_year(car_name)
+        # Powertrain from name+trim ('' for gas) — keeps hybrid/EV comps
+        # out of the gas pools at scoring time.
+        powertrain = detect_powertrain(car_name, trim) or None
 
         # Track price changes before upsert
         if price_val is not None:
@@ -506,9 +523,9 @@ class Database:
                      mileage, year, source, updated_at,
                      trim, seller, condition, deal_rating, accident_history,
                      distance, title_type, owner_count, carfax_url,
-                     is_discovery, seller_type, vin)
+                     is_discovery, seller_type, vin, powertrain)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(href, source) DO UPDATE SET
                     price = excluded.price,
                     image_url = COALESCE(excluded.image_url, image_url),
@@ -523,13 +540,15 @@ class Database:
                     carfax_url = COALESCE(excluded.carfax_url, carfax_url),
                     is_discovery = MIN(is_discovery, excluded.is_discovery),
                     seller_type = COALESCE(excluded.seller_type, seller_type),
-                    vin = COALESCE(excluded.vin, vin)
+                    vin = COALESCE(excluded.vin, vin),
+                    powertrain = COALESCE(excluded.powertrain, powertrain)
             """, (href, image_url, price_val, car_name, car_query, location,
                   mileage_val, year_val, source,
                   trim or None, seller or None, condition or None,
                   deal_rating or None, accident_history or None, distance or None,
                   title_type or None, owner_count or None, carfax_url or None,
-                  1 if is_discovery else 0, seller_type or None, vin or None))
+                  1 if is_discovery else 0, seller_type or None, vin or None,
+                  powertrain))
             self.conn.commit()
         except sqlite3.Error as e:
             logging.error(f"DB insert error: {e}")
@@ -544,7 +563,8 @@ class Database:
 
     def get_priced_listings(self, car_query):
         self.cur.execute(
-            "SELECT price, mileage, year, title_type, vin, sold FROM listings "
+            "SELECT price, mileage, year, title_type, vin, sold, powertrain "
+            "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND year IS NOT NULL "
             "AND deleted_at IS NULL",
             (car_query,)
@@ -557,7 +577,7 @@ class Database:
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
             "title_type, vin, description, owner_count, carfax_url, listed_at, "
-            "image_urls, seller_type, sold, sold_at, drivetrain "
+            "image_urls, seller_type, sold, sold_at, drivetrain, powertrain "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -754,6 +774,27 @@ class Database:
             """, (car_query, year, title_group, avg_price, listing_count))
         except Exception:
             pass  # Don't break averages if snapshot fails
+
+    def backfill_powertrains(self):
+        """Classify powertrain for rows that don't have it yet."""
+        rows = self.cur.execute(
+            "SELECT id, car_name, trim FROM listings "
+            "WHERE powertrain IS NULL AND deleted_at IS NULL"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            pt = detect_powertrain(row["car_name"], row["trim"] or "")
+            self.cur.execute(
+                "UPDATE listings SET powertrain = ? WHERE id = ?",
+                (pt, row["id"]))
+            if pt:
+                updated += 1
+        self.conn.commit()
+        if rows:
+            logging.info(
+                f"Powertrain backfill: classified {len(rows)} rows "
+                f"({updated} hybrid/phev/ev).")
+        return updated
 
     def get_seller_title_stats(self, sellers):
         """Per-seller branded-title mix from OUR OWN scraped inventory.
@@ -1257,12 +1298,20 @@ class Database:
         return result
 
     def get_market_prices(self, car_query, year, title_grp="clean"):
-        """Get all active listing prices for a car/year/title combo.
+        """Active listing prices for a car/year/title(+powertrain) combo.
 
-        Used to compute percentile-based market value ranges.
-        Returns a sorted list of prices.
+        title_grp may carry a powertrain suffix ("clean#hybrid") so hybrid/
+        EV ranges only include same-powertrain comps; the plain group means
+        gas/unspecified. Returns a sorted list of prices.
         """
-        if title_grp == "clean":
+        grp, _, powertrain = title_grp.partition("#")
+        if powertrain:
+            pt_clause = "AND LOWER(COALESCE(powertrain, '')) = ? "
+            pt_params = [powertrain]
+        else:
+            pt_clause = "AND (powertrain IS NULL OR powertrain = '') "
+            pt_params = []
+        if grp == "clean":
             # Clean group includes NULL/unknown
             self.cur.execute(
                 "SELECT price FROM listings "
@@ -1270,15 +1319,15 @@ class Database:
                 "AND deleted_at IS NULL "
                 "AND (title_type IS NULL OR title_type = '' "
                 "     OR title_type = 'clean' OR title_type = 'unknown') "
-                "ORDER BY price",
-                (car_query, year))
+                + pt_clause + "ORDER BY price",
+                (car_query, year, *pt_params))
         else:
             self.cur.execute(
                 "SELECT price FROM listings "
                 "WHERE car_query = ? AND year = ? AND price IS NOT NULL "
                 "AND deleted_at IS NULL AND LOWER(title_type) = ? "
-                "ORDER BY price",
-                (car_query, year, title_grp))
+                + pt_clause + "ORDER BY price",
+                (car_query, year, grp, *pt_params))
         return [row["price"] for row in self.cur.fetchall()]
 
     def backfill_vins(self):

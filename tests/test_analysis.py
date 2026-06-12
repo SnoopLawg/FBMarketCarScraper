@@ -256,3 +256,33 @@ def test_guidance_no_specialist_flag_for_clean_dealers():
     g = compute_buyer_guidance(_guidance_deal(
         title_type=None, seller_stats={"known": 20, "branded": 1}))
     assert not any("assume branded" in f for f in g["red_flags"])
+
+
+# ── Powertrain-split averages (hybrids must not price against gas) ──
+
+def test_hybrid_rows_average_separately_from_gas():
+    rows = [
+        # 3 gas RAV4s at ~20k
+        (20000, 30000, 2021, "clean", None, 0, ""),
+        (21000, 30000, 2021, "clean", None, 0, ""),
+        (19000, 30000, 2021, "clean", None, 0, ""),
+        # 3 hybrid RAV4s at ~27k — must form their own pool
+        (27000, 30000, 2021, "clean", None, 0, "hybrid"),
+        (28000, 30000, 2021, "clean", None, 0, "hybrid"),
+        (26000, 30000, 2021, "clean", None, 0, "hybrid"),
+    ]
+    db = _FakeDB(rows)
+    calculate_averages(db, ["Toyota RAV4"], mileage_threshold=100000)
+    gas_avg, _ = db.averages[(2021, "clean")]
+    hyb_avg, _ = db.averages[(2021, "clean#hybrid")]
+    assert gas_avg == 20000
+    assert hyb_avg == 27000
+    # per-powertrain fallback group also recorded
+    assert (2021, "all#hybrid") in db.averages
+
+
+def test_comp_group_encoding():
+    from analysis import comp_group
+    assert comp_group("clean", "") == "clean"
+    assert comp_group(None, "hybrid") == "clean#hybrid"
+    assert comp_group("rebuilt", "ev") == "rebuilt#ev"

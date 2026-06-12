@@ -227,3 +227,30 @@ def test_title_group_clean_and_unknown_collapse_together():
 def test_title_group_case_insensitive():
     assert title_group("SALVAGE") == "salvage"
     assert title_group("Rebuilt") == "rebuilt"
+
+
+# ── Powertrain detection (hybrid/EV comps must not mix with gas) ──
+
+from parsing import detect_powertrain
+
+
+def test_powertrain_hybrid_from_name():
+    assert detect_powertrain("2021 Toyota RAV4 Hybrid XLE") == "hybrid"
+    assert detect_powertrain("2020 Honda CR-V", trim="Hybrid Touring") == "hybrid"
+
+
+def test_powertrain_phev_variants():
+    assert detect_powertrain("2022 Toyota RAV4 Prime XSE") == "phev"
+    assert detect_powertrain("2021 Ford Escape Plug-In Hybrid") == "phev"
+    assert detect_powertrain("2023 Jeep Wrangler 4xe") == "phev"
+
+
+def test_powertrain_ev_from_vin_fuel_and_models():
+    assert detect_powertrain("2022 Ford Mustang Mach-E") == "ev"
+    assert detect_powertrain("2021 Chevy Bolt EV") == "ev"
+    assert detect_powertrain("2023 Hyundai Kona", vin_fuel="Electric") == "ev"
+
+
+def test_powertrain_gas_default_and_no_false_positives():
+    assert detect_powertrain("2019 Toyota RAV4 XLE AWD") == ""
+    assert detect_powertrain("2020 Honda CR-V EX-L") == ""

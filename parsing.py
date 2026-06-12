@@ -62,6 +62,40 @@ def detect_title_type(text):
     return None
 
 
+# ── Powertrain detection ─────────────────────────────────────────
+# Hybrids/PHEVs/EVs price on a different curve than the gas version of the
+# same model/year (often $3-8k higher), so comps must not mix powertrains.
+
+_EV_MODELS = re.compile(
+    r"\b(model [3sxy]|leaf|bolt|ioniq ?5|ioniq ?6|mach-?e|id\.?4|ariya|"
+    r"ev6|ev9|lightning|rivian|r1[ts]|lucid|polestar|i[34x]|e-?tron|"
+    r"taycan|kona electric|niro ev)\b")
+_HYBRID_MODELS = re.compile(r"\b(prius|insight|ioniq blue|niro(?! ev))\b")
+_PHEV_RE = re.compile(r"\b(plug-?in|phev|prime|4xe)\b")
+_HYBRID_RE = re.compile(r"\b(hybrid|hev)\b")
+_EV_RE = re.compile(r"\b(electric|bev|ev)\b")
+
+
+def detect_powertrain(name, trim="", vin_fuel=""):
+    """Classify powertrain: 'phev' | 'hybrid' | 'ev' | '' (gas/unknown).
+
+    Checks name+trim text and model knowledge; a VIN-decoded fuel type of
+    Electric is authoritative for EVs. Conservative: bare 'electric' is only
+    trusted in the name/trim (where it means the drivetrain), never in
+    descriptions ('electric blue paint' would false-positive).
+    """
+    text = f"{name or ''} {trim or ''}".lower()
+    if (vin_fuel or "").strip().lower() == "electric":
+        return "ev"
+    if _PHEV_RE.search(text):
+        return "phev"
+    if _HYBRID_RE.search(text) or _HYBRID_MODELS.search(text):
+        return "hybrid"
+    if _EV_MODELS.search(text) or _EV_RE.search(text):
+        return "ev"
+    return ""
+
+
 # ── Seller type classification ───────────────────────────────────
 
 _DEALER_KEYWORDS = re.compile(
