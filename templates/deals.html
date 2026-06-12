@@ -12,6 +12,7 @@
 {% set filter_params = 'source=' ~ current_source ~ '&car=' ~ current_car
     ~ ('&title=' ~ current_title if current_title else '')
     ~ ('&seller_type=' ~ current_seller_type if current_seller_type else '')
+    ~ ('&powertrain=' ~ current_powertrain if current_powertrain else '')
     ~ ('&q=' ~ current_search if current_search else '')
     ~ ('&year_min=' ~ current_year_min if current_year_min else '')
     ~ ('&year_max=' ~ current_year_max if current_year_max else '')
@@ -38,6 +39,14 @@
         {% for tid, tlabel in [['', 'All'], ['clean','Clean'], ['rebuilt','Rebuilt'], ['salvage','Salvage'], ['unknown','Unknown']] %}
         <a class="filter-chip {{ 'on' if current_title == tid else '' }}"
            onclick="applyFilter('title', '{{ tid }}')">{{ tlabel }}</a>
+        {% endfor %}
+    </div>
+
+    <div class="filter-section-label">POWERTRAIN</div>
+    <div class="filter-chips">
+        {% for pid, plabel in [['', 'All'], ['gas','Gas'], ['hybrid','Hybrid'], ['phev','Plug-in'], ['ev','EV']] %}
+        <a class="filter-chip {{ 'on' if current_powertrain == pid else '' }}"
+           onclick="applyFilter('powertrain', '{{ pid }}')">{{ plabel }}</a>
         {% endfor %}
     </div>
 
@@ -95,7 +104,7 @@
         </div>
     </details>
 
-    {% if current_source or current_title or current_search or current_car or current_seller_type or current_price_min or current_price_max or current_year_min or current_year_max or current_mileage_min or current_mileage_max %}
+    {% if current_source or current_title or current_powertrain or current_search or current_car or current_seller_type or current_price_min or current_price_max or current_year_min or current_year_max or current_mileage_min or current_mileage_max %}
     <div class="filter-reset"><a onclick="clearFilters()">Reset filters</a></div>
     {% endif %}
 {% endblock %}

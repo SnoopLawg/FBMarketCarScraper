@@ -127,6 +127,7 @@ def index():
     car_filter = request.args.get("car", "")
     title_filter = request.args.get("title", "")
     seller_type_filter = request.args.get("seller_type", "")
+    powertrain_filter = request.args.get("powertrain", "")
     sort_by = request.args.get("sort", "score")
     search_query = request.args.get("q", "").strip().lower()
     year_min = request.args.get("year_min", "")
@@ -177,6 +178,12 @@ def index():
             if seller_type_filter == "unknown" and st:
                 continue
             elif seller_type_filter != "unknown" and st != seller_type_filter:
+                continue
+        if powertrain_filter:
+            pt = (d.get("powertrain") or "").lower()
+            if powertrain_filter == "gas" and pt:
+                continue   # gas = rows with no hybrid/phev/ev classification
+            elif powertrain_filter != "gas" and pt != powertrain_filter:
                 continue
         if search_query:
             searchable = " ".join([
@@ -240,6 +247,7 @@ def index():
         current_car=car_filter,
         current_title=title_filter,
         current_seller_type=seller_type_filter,
+        current_powertrain=powertrain_filter,
         current_sort=sort_by,
         total=total_count,
         page=page,
