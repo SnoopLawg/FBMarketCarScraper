@@ -692,9 +692,12 @@ class Database:
             "AND started_at > datetime('now','-30 days')", (source,)).fetchone()[0]
         if not avg:
             return False
+        # Latest TERMINAL run (ignore in-progress 'running' rows, and stale
+        # ones orphaned when a container restarts mid-scrape).
         latest = self.cur.execute(
             "SELECT status, listings_found FROM scrape_runs "
-            "WHERE source=? ORDER BY started_at DESC LIMIT 1", (source,)).fetchone()
+            "WHERE source=? AND status IN ('completed','failed') "
+            "ORDER BY started_at DESC LIMIT 1", (source,)).fetchone()
         if not latest:
             return False
         return (latest["status"] == "completed"
