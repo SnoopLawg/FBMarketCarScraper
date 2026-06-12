@@ -25,9 +25,17 @@ git add <files> && git commit -m "<msg>"          # branch first if on main is d
 git push origin main
 ```
 
-### 2. Wait for CI to build the image
+### 2. Wait for CI to build the image — match the run to YOUR commit's SHA
+`gh run list` right after a push often hasn't registered the new run yet, so
+`--limit 1` grabs the PREVIOUS commit's (already-green) run → you watch the
+wrong run and deploy a stale image. Poll for the run whose headSha matches:
 ```bash
-RUN=$(gh run list --limit 1 --json databaseId -q '.[0].databaseId')
+HEAD=$(git rev-parse --short HEAD)
+for i in $(seq 1 30); do
+  RUN=$(gh run list --limit 5 --json databaseId,headSha \
+        -q "[.[] | select(.headSha|startswith(\"$HEAD\"))][0].databaseId")
+  [ -n "$RUN" ] && break; sleep 4
+done
 gh run watch $RUN --exit-status; gh run view $RUN --json conclusion -q .conclusion
 ```
 Must be `success` before deploying — otherwise GHCR still has the old image.
