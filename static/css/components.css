@@ -530,10 +530,20 @@ select.input {
     background: var(--border); border-radius: 4px; overflow: visible;
 }
 .market-range-dot {
+    position: absolute;
     width: 14px; height: 14px; border-radius: 50%;
     border: 2px solid var(--bg-card);
-    box-shadow: 0 0 0 2px rgba(0,0,0,0.3); z-index: 1;
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.3); z-index: 2;
 }
+/* Our fair-value estimate, marked on the comp range as a vertical tick
+   (named in the label line below: "· est $X ·"). */
+.market-range-est {
+    position: absolute; top: -3px; bottom: -3px; width: 2px;
+    transform: translateX(-50%);
+    background: var(--text-secondary); border-radius: 1px; z-index: 1;
+}
+.deal-over { font-size: 12px; font-weight: 600; color: var(--text-muted);
+    font-variant-numeric: tabular-nums; }
 
 /* ── Deal Details ── */
 .deal-details { margin: var(--space-3) 0 0 0; }

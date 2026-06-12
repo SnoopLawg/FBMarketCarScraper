@@ -115,43 +115,44 @@
             {% if deal.accident_history %}<span class="badge badge-info">{{ deal.accident_history }}</span>{% endif %}
         </div>
 
+        {# One price reference everywhere: `est` = our mileage/trim/transaction-
+           adjusted estimate (the value the score is based on). Headline delta,
+           the bar marker, and the verdict word all key off it — so there's a
+           single story, not a trim-avg headline fighting a percentile bar. #}
+        {% set est = deal.avg_price %}
         <div class="deal-price-row">
             <span class="deal-price">${{ '{:,.0f}'.format(deal.price) }}</span>
-            {% set eff_avg = deal.trim_avg_price if deal.trim_avg_price and deal.trim_avg_price > 0 else deal.avg_price %}
-            {% if eff_avg and eff_avg > 0 and eff_avg > deal.price %}
-            <span class="deal-savings">&minus;${{ '{:,.0f}'.format(eff_avg - deal.price) }} below {{ deal.trim_tier_name ~ ' ' if deal.trim_avg_price and deal.trim_avg_price > 0 else '' }}avg</span>
+            {% if est and est > 0 %}
+                {% if deal.price < est %}
+                <span class="deal-savings">&minus;${{ '{:,.0f}'.format(est - deal.price) }} ({{ ((1 - deal.price / est) * 100)|round }}%) below est.</span>
+                {% elif deal.price > est %}
+                <span class="deal-over">+${{ '{:,.0f}'.format(deal.price - est) }} ({{ ((deal.price / est - 1) * 100)|round }}%) above est.</span>
+                {% endif %}
             {% endif %}
         </div>
 
-        {% if deal.market_range %}
+        {% if est and est > 0 %}
+        {% set mr = deal.market_range %}
+        {% set bar_lo = mr.low if mr and mr.low and mr.low > 0 else (est * 0.8) %}
+        {% set bar_hi = mr.premium if mr and mr.premium and mr.premium > bar_lo else (est * 1.2) %}
+        {% set span = bar_hi - bar_lo %}
+        {% set r = deal.price / est %}
         <div class="market-range">
             <div class="market-range-bar">
-                {% set bar_range = deal.market_range.premium - deal.market_range.low %}
-                {% if bar_range > 0 %}
-                <div style="position:absolute;left:{{ ((deal.market_range.fair - deal.market_range.low) / bar_range * 100)|round }}%;right:{{ (100 - (deal.market_range.high - deal.market_range.low) / bar_range * 100)|round }}%;height:100%;background:rgba(96,165,250,0.35);border-radius:3px"></div>
-                {% set pos = ((deal.price - deal.market_range.low) / bar_range * 100) %}
-                {% set pos_clamped = [0, [pos, 100]|min]|max %}
-                <div class="market-range-dot" style="position:absolute;left:{{ pos_clamped|round }}%;top:50%;transform:translate(-50%,-50%);background:{{ _grade_color }}"></div>
+                {% if span > 0 %}
+                {# our fair-value estimate, marked on the comp range #}
+                <div class="market-range-est" style="left:{{ ([0, [((est - bar_lo) / span * 100), 100]|min]|max)|round }}%"></div>
+                {# this car's price #}
+                <div class="market-range-dot" style="position:absolute;left:{{ ([0, [((deal.price - bar_lo) / span * 100), 100]|min]|max)|round }}%;top:50%;transform:translate(-50%,-50%);background:{{ _grade_color }}"></div>
                 {% endif %}
             </div>
             <div class="market-range-labels">
-                <span>${{ '{:,.0f}'.format(deal.market_range.low) }}</span>
+                <span>${{ '{:,.0f}'.format(bar_lo) }}</span>
                 <span>
-                    {% if deal.price <= deal.market_range.low %}great price
-                    {% elif deal.price <= deal.market_range.fair %}below market
-                    {% elif deal.price <= deal.market_range.avg %}fair price
-                    {% elif deal.price <= deal.market_range.high %}above avg
-                    {% else %}high price{% endif %}
-                    &middot; {{ deal.market_range.count }} comps</span>
-                <span>${{ '{:,.0f}'.format(deal.market_range.premium) }}</span>
+                    {% if r <= 0.85 %}great price{% elif r <= 0.95 %}below market{% elif r <= 1.05 %}fair price{% elif r <= 1.15 %}above market{% else %}high price{% endif %}
+                    &middot; est ${{ '{:,.0f}'.format(est) }}{% if mr and mr.count %} &middot; {{ mr.count }} comps{% endif %}</span>
+                <span>${{ '{:,.0f}'.format(bar_hi) }}</span>
             </div>
-            {% if deal.market_range.target_price and deal.price > deal.market_range.target_price %}
-            <div class="market-range-offer">
-                <span class="market-range-offer-label">Offer:</span>
-                <span class="market-range-offer-price">${{ '{:,.0f}'.format(deal.market_range.target_price) }}</span>
-                <span class="market-range-offer-save">(save ${{ '{:,.0f}'.format(deal.price - deal.market_range.target_price) }})</span>
-            </div>
-            {% endif %}
         </div>
         {% endif %}
 
