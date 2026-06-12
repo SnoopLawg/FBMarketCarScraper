@@ -674,13 +674,17 @@ class Database:
         self.conn.commit()
         return count
 
-    def source_healthy(self, source, days=2):
-        """Did this source have a healthy scrape recently? (bot-block guard)
+    def source_healthy(self, source):
+        """Is this source healthy RIGHT NOW? (bot-block guard)
 
         A presumed-sale only makes sense if the listing's ABSENCE is real —
-        not because the scraper was blocked (KSL PerimeterX) and everything
-        'disappeared'. Healthy = a completed run whose yield was a non-trivial
-        fraction of the source's historical average.
+        not because the scraper is blocked (KSL PerimeterX) and everything
+        'disappeared'. Keys off the LATEST run, not a max over a window: KSL
+        could have a healthy run yesterday and be failing today (it was), and
+        we must NOT presume-sell during the block. The worker records the
+        run immediately before calling this, so 'latest' = the just-finished
+        scrape. Healthy = latest run completed with yield >= 60% of the
+        source's historical average.
         """
         avg = self.cur.execute(
             "SELECT AVG(listings_found) FROM scrape_runs "
@@ -688,12 +692,13 @@ class Database:
             "AND started_at > datetime('now','-30 days')", (source,)).fetchone()[0]
         if not avg:
             return False
-        recent = self.cur.execute(
-            "SELECT MAX(listings_found) FROM scrape_runs "
-            "WHERE source=? AND status='completed' "
-            "AND started_at > datetime('now', ?)",
-            (source, f'-{days} days')).fetchone()[0]
-        return bool(recent and recent >= 0.6 * avg)
+        latest = self.cur.execute(
+            "SELECT status, listings_found FROM scrape_runs "
+            "WHERE source=? ORDER BY started_at DESC LIMIT 1", (source,)).fetchone()
+        if not latest:
+            return False
+        return (latest["status"] == "completed"
+                and (latest["listings_found"] or 0) >= 0.6 * avg)
 
     def mark_presumed_sold(self, source, min_active_days=4, gone_days=1,
                            grace_days=14):
