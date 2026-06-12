@@ -564,6 +564,11 @@ select.input {
     font-variant-numeric: tabular-nums;
 }
 .deal-gauge-verdict { font-weight: 600; }
+.deal-msrp {
+    margin-top: 4px; font-size: 11px; color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.deal-msrp-pct { color: var(--text-secondary); font-weight: 600; }
 
 /* ── Deal Details ── */
 .deal-details { margin: var(--space-3) 0 0 0; }

@@ -60,6 +60,19 @@ def extract_vin(text):
     return None
 
 
+def _parse_msrp(v):
+    """Parse vPIC 'BasePrice' ($, base-trim) into a float, or None.
+
+    This is the ORIGINAL base MSRP — a free, all-makes depreciation anchor
+    ('% of MSRP retained') straight from the NHTSA decode we already run.
+    """
+    try:
+        f = float(str(v).replace(",", "").replace("$", "").strip()) if v else None
+    except (ValueError, TypeError):
+        return None
+    return f if f and f > 1000 else None
+
+
 def decode_vin(vin):
     """Decode a VIN using the NHTSA vPIC API.
 
@@ -126,6 +139,7 @@ def decode_vin(vin):
         "cylinders": val("EngineCylinders"),
         "plant_city": val("PlantCity"),
         "plant_country": val("PlantCountry"),
+        "base_msrp": _parse_msrp(val("BasePrice")),
         "error_code": error_code,
     }
 
@@ -213,6 +227,7 @@ def _parse_vin_result(r):
         "cylinders": val("EngineCylinders"),
         "plant_city": val("PlantCity"),
         "plant_country": val("PlantCountry"),
+        "base_msrp": _parse_msrp(val("BasePrice")),
         "error_code": error_code,
     }
 

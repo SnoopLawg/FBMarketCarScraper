@@ -854,6 +854,12 @@ def find_deals(db, desired_cars, config, is_discovery=False):
             # (dealer vs private) so a dealer-heavy comp pool doesn't inflate
             # a private listing's estimate.
             is_dealer = 1 if (row.get("seller_type") or "") == "dealer" else 0
+
+            # Original base MSRP from the NHTSA decode (free, all-makes) →
+            # "% of MSRP retained", a depreciation/residual-value anchor.
+            base_msrp = row.get("base_msrp")
+            msrp_retained = (round(price / base_msrp * 100)
+                             if base_msrp and base_msrp > 0 and price else None)
             exp_price, n_comps, price_method = price_models.expected(
                 year, mileage, grp, trim_tier, is_dealer)
             if exp_price and exp_price > 0:
@@ -1017,6 +1023,8 @@ def find_deals(db, desired_cars, config, is_discovery=False):
                     "powertrain": powertrain,
                     "comp_count": n_comps,
                     "price_method": price_method,
+                    "base_msrp": base_msrp,
+                    "msrp_retained": msrp_retained,
                     "days_listed": days_listed,
                     "deal_score": score,
                     "deal_grade": score_to_grade(score),

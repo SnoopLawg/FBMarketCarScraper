@@ -60,7 +60,7 @@ Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_e
 - Listings are keyed by `(href, source)` with upsert-on-conflict logic
 
 ### Enrichment Layer (all use free public APIs, no keys needed)
-- `vin.py` — VIN regex extraction from listing text + NHTSA vPIC batch decoding
+- `vin.py` — VIN regex extraction from listing text + NHTSA vPIC batch decoding (incl. `base_msrp` from vPIC `BasePrice` — free original base MSRP for all makes, cached on `vin_cache`; surfaced as a '% of MSRP retained' depreciation anchor on deals via `db.backfill_base_msrp` + the `get_deal_candidates` join)
 - `vin_validate.py` — cross-validates VIN decode data against listing claims (year, make, drivetrain), scores mismatches as major/minor
 - `nhtsa.py` — safety ratings, complaint counts, recall data; cached in `vehicle_ratings`/`vehicle_recalls` tables for 30 days
 - `epa.py` — fuel economy (MPG) from fueleconomy.gov; cached alongside NHTSA data

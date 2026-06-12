@@ -154,6 +154,12 @@
                     {% if r <= 0.85 %}great price{% elif r <= 0.95 %}below market{% elif r <= 1.05 %}fair price{% elif r <= 1.15 %}above market{% else %}high price{% endif %}</span>
                 &middot; est ${{ '{:,.0f}'.format(est) }}{% if mr and mr.count %} &middot; {{ mr.count }} comps{% endif %}
             </div>
+            {% if deal.base_msrp and deal.msrp_retained %}
+            <div class="deal-msrp">
+                Originally ${{ '{:,.0f}'.format(deal.base_msrp) }} &middot;
+                <span class="deal-msrp-pct">retains {{ deal.msrp_retained }}%</span> of MSRP
+            </div>
+            {% endif %}
         </div>
         {% endif %}
 

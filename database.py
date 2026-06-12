@@ -169,6 +169,7 @@ class Database:
                 cylinders TEXT,
                 plant_city TEXT,
                 plant_country TEXT,
+                base_msrp REAL,
                 error_code TEXT,
                 fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -432,6 +433,20 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        # base_msrp on vin_cache: original base MSRP from the NHTSA decode
+        # (free '% of MSRP retained' depreciation anchor).
+        vin_cols = [r[1] for r in self.cur.execute(
+            "PRAGMA table_info(vin_cache)").fetchall()]
+        if vin_cols and "base_msrp" not in vin_cols:
+            logging.info("Migrating DB: adding vin_cache.base_msrp column...")
+            try:
+                self.cur.execute(
+                    "ALTER TABLE vin_cache ADD COLUMN base_msrp REAL")
+                self.conn.commit()
+                logging.info("base_msrp migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Sold tracking: a listing detected as "Sold" on its FB detail page.
         # Its price is the actual market-clearing price — weighted heavily in
         # averages — so sold listings are kept (never stale-deleted).
@@ -587,14 +602,17 @@ class Database:
 
     def get_deal_candidates(self, car_query):
         self.cur.execute(
-            "SELECT href, price, mileage, year, location, source, "
-            "image_url, car_name, created_at, updated_at, "
-            "trim, seller, condition, deal_rating, accident_history, distance, "
-            "title_type, vin, description, owner_count, carfax_url, listed_at, "
-            "image_urls, seller_type, sold, sold_at, drivetrain, powertrain, "
-            "sold_presumed "
-            "FROM listings "
-            "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
+            "SELECT l.href, l.price, l.mileage, l.year, l.location, l.source, "
+            "l.image_url, l.car_name, l.created_at, l.updated_at, "
+            "l.trim, l.seller, l.condition, l.deal_rating, l.accident_history, "
+            "l.distance, l.title_type, l.vin, l.description, l.owner_count, "
+            "l.carfax_url, l.listed_at, l.image_urls, l.seller_type, l.sold, "
+            "l.sold_at, l.drivetrain, l.powertrain, l.sold_presumed, "
+            "vc.base_msrp "
+            "FROM listings l "
+            "LEFT JOIN vin_cache vc ON vc.vin = l.vin "
+            "WHERE l.car_query = ? AND l.price IS NOT NULL "
+            "AND l.deleted_at IS NULL",
             (car_query,)
         )
         return [dict(row) for row in self.cur.fetchall()]
@@ -1351,8 +1369,8 @@ class Database:
                 INSERT INTO vin_cache
                     (vin, make, model, year, trim, body_class, drive_type,
                      fuel_type, engine, displacement, cylinders, plant_city,
-                     plant_country, error_code, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                     plant_country, base_msrp, error_code, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         CURRENT_TIMESTAMP)
                 ON CONFLICT(vin) DO UPDATE SET
                     make = excluded.make, model = excluded.model,
@@ -1365,6 +1383,7 @@ class Database:
                     cylinders = excluded.cylinders,
                     plant_city = excluded.plant_city,
                     plant_country = excluded.plant_country,
+                    base_msrp = excluded.base_msrp,
                     error_code = excluded.error_code,
                     fetched_at = CURRENT_TIMESTAMP
             """, (vin.upper(), data.get("make"), data.get("model"),
@@ -1372,10 +1391,39 @@ class Database:
                   data.get("drive_type"), data.get("fuel_type"),
                   data.get("engine"), data.get("displacement"),
                   data.get("cylinders"), data.get("plant_city"),
-                  data.get("plant_country"), data.get("error_code")))
+                  data.get("plant_country"), data.get("base_msrp"),
+                  data.get("error_code")))
             self.conn.commit()
         except sqlite3.Error as e:
             logging.error(f"DB VIN upsert error: {e}")
+
+    def backfill_base_msrp(self, limit=300):
+        """Populate vin_cache.base_msrp for cached VINs missing it.
+
+        New decodes capture base_msrp automatically; this re-decodes already-
+        cached VINs (batched, free NHTSA) so historical rows get the MSRP
+        anchor too. Skips known-bad VINs. Returns the count populated.
+        """
+        from vin import decode_vins_batch
+        rows = self.cur.execute(
+            "SELECT vin FROM vin_cache WHERE base_msrp IS NULL "
+            "AND (error_code IS NULL OR error_code LIKE '0%' "
+            "OR error_code LIKE '1%') LIMIT ?", (limit,)).fetchall()
+        vins = [r["vin"] for r in rows]
+        if not vins:
+            return 0
+        decoded = decode_vins_batch(vins)
+        n = 0
+        for vin, data in decoded.items():
+            if data and data.get("base_msrp"):
+                self.cur.execute(
+                    "UPDATE vin_cache SET base_msrp = ? WHERE vin = ?",
+                    (data["base_msrp"], vin))
+                n += 1
+        self.conn.commit()
+        if n:
+            logging.info(f"[base_msrp] backfilled {n}/{len(vins)} VINs")
+        return n
 
     def update_listing_vin(self, href, vin):
         """Set the VIN for a listing."""
