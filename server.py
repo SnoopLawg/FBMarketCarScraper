@@ -28,6 +28,7 @@ def main():
         db.backfill_vins()
         db.backfill_powertrains()
         db.backfill_listed_at()
+        db.propagate_titles_by_vin()
 
         all_cars = get_all_search_queries(config)
         mileage_threshold = config.get("MileageMax") or 150000

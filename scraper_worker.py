@@ -140,6 +140,7 @@ def _run_enrich(on_complete, limit):
         db.backfill_vins()
         db.backfill_powertrains()
         db.backfill_listed_at()
+        db.propagate_titles_by_vin()
 
         # Re-run analysis so scores update
         _status.update({

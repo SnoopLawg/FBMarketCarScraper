@@ -89,11 +89,12 @@ def test_open_close_manual_pattern_still_works(tmp_path):
 
 # ── Sold marking + price capture ─────────────────────────────────
 
-def _insert(db, href, price):
+def _insert(db, href, price, source="facebook", vin="", title_type=""):
     db.insert_listing(
         car_query="Ford Escape", href=href, image_url="x", price=str(price),
         car_name="2017 Ford Escape Titanium", location="Bluffdale, UT",
-        mileage_raw="107000 miles", source="facebook")
+        mileage_raw="107000 miles", source=source, vin=vin,
+        title_type=title_type)
 
 
 def test_mark_sold_sets_flag_and_keeps_price_when_no_price_given(tmp_path):
@@ -131,3 +132,32 @@ def test_mark_sold_idempotent_keeps_first_sold_at(tmp_path):
         again = db.cur.execute(
             "SELECT sold_at FROM listings WHERE href='h3'").fetchone()["sold_at"]
         assert first == again  # sold_at preserved on re-mark
+
+
+def test_propagate_titles_by_vin_copies_known_to_unknown(tmp_path):
+    with Database(db_path=tmp_path / "p.db") as db:
+        # Same VIN, two sources: Cars.com knows rebuilt, Autotrader unknown
+        _insert(db, "https://carscom/1", 20000, source="carscom",
+                vin="1FMCU9GN5PUB20446", title_type="rebuilt")
+        _insert(db, "https://autotrader/1", 20000, source="autotrader",
+                vin="1FMCU9GN5PUB20446")
+        n = db.propagate_titles_by_vin()
+        assert n == 1
+        row = db.cur.execute(
+            "SELECT title_type FROM listings WHERE href='https://autotrader/1'"
+        ).fetchone()
+        assert row["title_type"] == "rebuilt"
+
+
+def test_propagate_titles_worst_severity_wins(tmp_path):
+    with Database(db_path=tmp_path / "p2.db") as db:
+        _insert(db, "https://a/1", 20000, source="carscom",
+                vin="VINSHARED0000001", title_type="clean")
+        _insert(db, "https://a/2", 20000, source="ksl",
+                vin="VINSHARED0000001", title_type="salvage")
+        _insert(db, "https://a/3", 20000, source="autotrader",
+                vin="VINSHARED0000001")
+        db.propagate_titles_by_vin()
+        row = db.cur.execute(
+            "SELECT title_type FROM listings WHERE href='https://a/3'").fetchone()
+        assert row["title_type"] == "salvage"  # worst wins

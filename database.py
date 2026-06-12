@@ -796,6 +796,49 @@ class Database:
                 f"({updated} hybrid/phev/ev).")
         return updated
 
+    def propagate_titles_by_vin(self):
+        """Copy known titles to unknown listings of the SAME physical car.
+
+        Cross-posted cars (same VIN on Autotrader + Cars.com etc.) often have
+        the title disclosed on one source and not the other — e.g. Autotrader
+        never states titles inline, but the Cars.com twin's AutoCheck panel
+        does. The VIN identifies the physical car, so the known title applies.
+        Worst-severity wins when sources disagree (consistent with the
+        notes-vs-panel merge rule).
+        """
+        severity = {"salvage": 0, "rebuilt": 1, "lemon": 2, "clean": 3}
+        rows = self.cur.execute("""
+            SELECT upper(vin) v, title_type FROM listings
+            WHERE deleted_at IS NULL AND vin IS NOT NULL AND vin != ''
+              AND title_type IS NOT NULL AND title_type != ''
+        """).fetchall()
+        best = {}
+        for r in rows:
+            tt = (r["title_type"] or "").lower()
+            if tt not in severity:
+                continue
+            v = r["v"]
+            if v not in best or severity[tt] < severity[best[v]]:
+                best[v] = tt
+        updated = 0
+        unknowns = self.cur.execute("""
+            SELECT id, upper(vin) v FROM listings
+            WHERE deleted_at IS NULL AND vin IS NOT NULL AND vin != ''
+              AND (title_type IS NULL OR title_type = '')
+        """).fetchall()
+        for r in unknowns:
+            tt = best.get(r["v"])
+            if tt:
+                self.cur.execute(
+                    "UPDATE listings SET title_type = ? WHERE id = ?",
+                    (tt, r["id"]))
+                updated += 1
+        self.conn.commit()
+        if updated:
+            logging.info(f"VIN title propagation: {updated} unknowns resolved "
+                         f"from cross-posted twins.")
+        return updated
+
     def get_seller_title_stats(self, sellers):
         """Per-seller branded-title mix from OUR OWN scraped inventory.
 
