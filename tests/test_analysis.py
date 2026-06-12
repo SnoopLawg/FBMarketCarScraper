@@ -191,6 +191,25 @@ def test_vin_confirmed_awd_reason_labels_source():
     assert "VIN-confirmed" in reasons["drivetrain"]
 
 
+# ── Mileage factor: unknown mileage must not zero the score ──
+
+def test_unknown_mileage_scored_as_average_not_zero():
+    """FB/Autotrader cards omit mileage. A missing value must score as
+    average-for-age (minus an uncertainty haircut), NOT 0/15 — otherwise we
+    punish a listing for missing DATA, not for being a worse car."""
+    known = compute_deal_score(
+        price=20000, avg_price=20000, mileage=72000, year=2020,
+        deal_rating="", accident_history=None, title_type="clean",
+        nhtsa_rating=None, drivetrain="awd", dt_source="explicit")
+    unknown = compute_deal_score(
+        price=20000, avg_price=20000, mileage=None, year=2020,
+        deal_rating="", accident_history=None, title_type="clean",
+        nhtsa_rating=None, drivetrain="awd", dt_source="explicit")
+    assert unknown["mileage_score"] > 5.0           # not zeroed
+    assert unknown["mileage_score"] < known["mileage_score"]  # haircut applied
+    assert "not listed" in unknown["reasons"]["mileage"]
+
+
 # ── Buyer guidance (the "how to handle this deal" panel) ──
 
 from analysis import compute_buyer_guidance

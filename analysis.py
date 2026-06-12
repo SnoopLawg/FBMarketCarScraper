@@ -387,12 +387,24 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
     #   2) Lifespan: how much of this make's expected life is used up?
     # A Tacoma at 200k (67% of 300k lifespan) should score better than
     # a Nissan at 200k (111% of 180k lifespan).
-    if mileage is not None and mileage > 0 and year:
+    # When mileage isn't listed (FB & Autotrader cards omit it), don't zero
+    # the factor — that punishes a listing for missing DATA, not for being a
+    # worse car. Assume average mileage for its age, then haircut for the
+    # uncertainty below.
+    mileage_estimated = False
+    mi_eff = mileage
+    if (mileage is None or mileage <= 0) and year:
+        from datetime import date as _date
+        _months = max(1, (_date.today().year - year) * 12 + _date.today().month)
+        mi_eff = _months * 1000                          # 12k/yr → avg for age
+        mileage_estimated = True
+
+    if mi_eff is not None and mi_eff > 0 and year:
         from datetime import date
         car_age_months = max(1, (date.today().year - year) * 12
                             + date.today().month)
         expected_miles = car_age_months * 1000          # 12k/yr baseline
-        age_ratio = mileage / expected_miles            # <1 = low mi, >1 = high
+        age_ratio = mi_eff / expected_miles             # <1 = low mi, >1 = high
 
         # Age-relative base score (0-15)
         if age_ratio <= 0.50:
@@ -414,7 +426,7 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
         # A Toyota at 60% life = bonus; a VW at 95% life = penalty.
         make = car_query.split()[0].lower() if car_query else ""
         lifespan = _EXPECTED_LIFESPAN.get(make, _DEFAULT_LIFESPAN)
-        life_used = mileage / lifespan
+        life_used = mi_eff / lifespan
         if life_used <= 0.40:
             mileage_score += 2.0            # plenty of life left
         elif life_used <= 0.60:
@@ -426,19 +438,26 @@ def compute_deal_score(price, avg_price, mileage, year, deal_rating,
         else:
             mileage_score -= 3.0            # past expected lifespan
 
+        if mileage_estimated:
+            # Average-for-age assumption is uncertain — haircut and flag it.
+            mileage_score = round(mileage_score * 0.7, 1)
         mileage_score = round(max(0.0, min(15.0, mileage_score)), 1)
 
-        # Build mileage reasoning
-        pct_of_expected = round(age_ratio * 100)
-        pct_life = round(life_used * 100)
-        if age_ratio <= 1.0:
-            direction = f"{100 - pct_of_expected}% below"
+        if mileage_estimated:
+            reasons["mileage"] = ("mileage not listed — scored as average for "
+                                  "age (−30% for uncertainty; verify with seller)")
         else:
-            direction = f"{pct_of_expected - 100}% above"
-        reasons["mileage"] = (f"{mileage:,.0f} mi is {direction} the "
-                              f"{expected_miles:,.0f} mi expected for a {year} "
-                              f"({pct_life}% of {make.title() or 'avg'} "
-                              f"{lifespan:,} mi lifespan)")
+            # Build mileage reasoning
+            pct_of_expected = round(age_ratio * 100)
+            pct_life = round(life_used * 100)
+            if age_ratio <= 1.0:
+                direction = f"{100 - pct_of_expected}% below"
+            else:
+                direction = f"{pct_of_expected - 100}% above"
+            reasons["mileage"] = (f"{mileage:,.0f} mi is {direction} the "
+                                  f"{expected_miles:,.0f} mi expected for a {year} "
+                                  f"({pct_life}% of {make.title() or 'avg'} "
+                                  f"{lifespan:,} mi lifespan)")
 
     # ── Reliability factor (10 points max) — NHTSA data ───────────
     if nhtsa_rating:

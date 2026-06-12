@@ -124,8 +124,11 @@ class FacebookScraper(BaseScraper):
 
         sold = details.pop("_sold", False)
         sold_price = details.pop("_sold_price", None)
-        # Detail-page values override the card's guesses
-        for k in ("title_type", "seller_type", "vin"):
+        # Detail-page values override the card's guesses. mileage_raw matters
+        # most: FB search cards no longer carry mileage, so without this every
+        # FB listing inserts with no miles and scores 0/15 on the mileage
+        # factor (it lives only on the detail page now).
+        for k in ("title_type", "seller_type", "vin", "mileage_raw"):
             if details.get(k):
                 card[k] = details.pop(k)
 
@@ -236,6 +239,21 @@ class FacebookScraper(BaseScraper):
         card["car_query"] = car_query
         self.counted_insert(**card)
 
+    def _extract_mileage(self, page_source):
+        """Pull mileage from a FB detail page (cards no longer show it).
+
+        FB renders it as 'Driven 75,000 miles' in the vehicle details, or a
+        bare 'NN,NNN miles' / 'NNK miles'. Returns a mileage_raw string
+        (parse_mileage handles K/comma forms) or None.
+        """
+        m = re.search(r"Driven\s+([\d,]+)\s*miles", page_source, re.I)
+        if not m:
+            m = re.search(r"\b(\d{1,3}(?:,\d{3})+)\s*miles\b", page_source, re.I)
+        if m:
+            return f"{m.group(1)} miles"
+        m = re.search(r"\b(\d{1,3})\s*[kK]\s*miles\b", page_source)
+        return f"{m.group(1)}K miles" if m else None
+
     def _visit_and_extract(self, href):
         """Visit a listing detail page and extract all enrichment fields.
 
@@ -269,6 +287,10 @@ class FacebookScraper(BaseScraper):
                     self._scope_listing_text(description.lower()))
                 if tt:
                     details["title_type"] = tt
+
+        miles = self._extract_mileage(page_source)
+        if miles:
+            details["mileage_raw"] = miles
 
         image_urls = self._extract_images(page_source)
         if image_urls:
