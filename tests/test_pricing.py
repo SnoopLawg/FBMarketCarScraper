@@ -83,3 +83,22 @@ def test_quality_returns_cv_mae():
     pm = PriceModels(cands, "Toyota RAV4")
     q = pm.quality()
     assert q and all(mae >= 0 and n >= 10 for mae, n in q.values())
+
+
+def test_dealer_priced_higher_than_private_at_equal_specs():
+    # Synthetic truth: dealers ask +$2000 at the same age/mileage/trim.
+    import datetime
+    now = datetime.datetime.utcnow().year
+    cands = []
+    for age in range(0, 6):
+        for mi in (20000, 60000):
+            for dealer in (0, 1):
+                cands.append({"year": now - age, "mileage": mi,
+                    "price": 24000 - 1500 * age - 0.04 * mi + (2000 if dealer else 0),
+                    "title_type": "clean", "powertrain": "",
+                    "car_name": f"{now-age} Toyota RAV4 LE", "trim": "LE",
+                    "seller_type": "dealer" if dealer else "private"})
+    pm = PriceModels(cands, "Toyota RAV4")
+    priv, _, _ = pm.expected(now - 3, 40000, "clean", 1, is_dealer=0)
+    deal, _, _ = pm.expected(now - 3, 40000, "clean", 1, is_dealer=1)
+    assert deal > priv + 1000   # dealer channel estimate is meaningfully higher

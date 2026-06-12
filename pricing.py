@@ -139,12 +139,23 @@ def _robust_fit(rows):
     return beta
 
 
+def _features(kind, age, mi, tier, dl):
+    """Feature row for a fit `kind` (which optional columns it includes)."""
+    if kind == "dealer":
+        return (1, age, mi, tier, dl)
+    if kind == "trim":
+        return (1, age, mi, tier)
+    if kind == "dealeronly":
+        return (1, age, mi, dl)
+    return (1, age, mi)   # notrim
+
+
 class PriceModels:
     """Per-(comp_group, generation) robust price models for one car_query."""
 
     def __init__(self, candidates, car_query):
         self.car_query = car_query
-        # (grp, gen) -> [(age, mileage, trim_tier, price, weight)]
+        # (grp, gen) -> [(age, mileage, trim_tier, is_dealer, price, weight)]
         self._pools = {}
         self._fits = {}
         from analysis import comp_group, SOLD_WEIGHT, PRESUMED_SOLD_WEIGHT
@@ -157,37 +168,49 @@ class PriceModels:
             grp = comp_group(row["title_type"], (row.get("powertrain") or ""))
             gen = generation_of(car_query, year)
             tier, _ = get_trim_tier(row["car_name"], car_query, row.get("trim") or "")
+            is_dealer = 1 if (row.get("seller_type") or "") == "dealer" else 0
             if row.get("sold"):
                 w = PRESUMED_SOLD_WEIGHT if row.get("sold_presumed") else SOLD_WEIGHT
             else:
                 w = 1
             self._pools.setdefault((grp, gen), []).append(
-                (now - year, row["mileage"] or 0, tier, price, w))
+                (now - year, row["mileage"] or 0, tier, is_dealer, price, w))
 
     def _clean_pool(self, key):
         pool = self._pools.get(key, [])
         if len(pool) < 3:
             return pool, 0
-        med = _median([p[3] for p in pool])
-        clean = [pt for pt in pool if 0.25 * med <= pt[3] <= 4 * med]
+        med = _median([p[4] for p in pool])
+        clean = [pt for pt in pool if 0.25 * med <= pt[4] <= 4 * med]
         return (clean if len(clean) >= 3 else pool), med
 
     def _fit_pool(self, clean):
-        """Weighted robust fit with trim when supported, else age+mileage.
+        """Weighted robust fit with only the optional features that VARY.
 
-        Returns (kind, beta). Falls back to the 3-feature fit when the trim
-        column has no variance (constant → singular design).
+        Including a constant column (all same trim, or all dealer) makes the
+        design singular, so trim/is_dealer are added only when they actually
+        vary (and the pool is big enough to spend the degree of freedom).
+        Returns (kind, beta); kind names which features are in beta.
         """
         n = len(clean)
-        b = None
-        if n >= 10:
-            b = _robust_fit([((1, a, m, t), p, w) for a, m, t, p, w in clean])
+        if n < 6:
+            return "none", None
+        has_trim = n >= 10 and len({t for _, _, t, _, _, _ in clean}) > 1
+        has_dealer = n >= 14 and len({dl for _, _, _, dl, _, _ in clean}) > 1
+        if has_trim and has_dealer:
+            order = ["dealer", "trim", "notrim"]
+        elif has_dealer:
+            order = ["dealeronly", "notrim"]
+        elif has_trim:
+            order = ["trim", "notrim"]
+        else:
+            order = ["notrim"]
+        for kind in order:
+            rows = [(_features(kind, a, m, t, dl), p, w)
+                    for a, m, t, dl, p, w in clean]
+            b = _robust_fit(rows)
             if b is not None:
-                return "trim", b
-        if n >= 6:
-            b = _robust_fit([((1, a, m), p, w) for a, m, _, p, w in clean])
-            if b is not None:
-                return "notrim", b
+                return kind, b
         return "none", None
 
     def _prior(self, clean, age, mi, tier):
@@ -198,14 +221,17 @@ class PriceModels:
         """
         DEP, MILE = 0.09, 0.05
         adj = []
-        for c_age, c_mi, c_tier, c_pr, c_w in clean:
+        for c_age, c_mi, c_tier, c_dl, c_pr, c_w in clean:
             f = (1 - DEP * (age - c_age)) * (1 - MILE * ((mi - c_mi) / 10000.0))
             f = max(0.4, min(2.2, f))
             adj.extend([c_pr * f + _TRIM_PER_TIER * (tier - c_tier)] * int(c_w))
         return _median(adj)
 
-    def expected(self, year, mileage, comp_grp, trim_tier=1):
-        """Expected price. Returns (price|None, n_comps, method)."""
+    def expected(self, year, mileage, comp_grp, trim_tier=1, is_dealer=0):
+        """Expected price for THIS listing's channel. Returns
+        (price|None, n_comps, method). is_dealer lets a private listing be
+        priced against the private-adjusted curve (and vice versa) so the
+        estimate isn't biased by a dealer-heavy comp pool."""
         if not year:
             return None, 0, "none"
         gen = generation_of(self.car_query, year)
@@ -218,12 +244,12 @@ class PriceModels:
         mi = mileage or 0
         prior = self._prior(clean, age, mi, trim_tier)
 
-        # Robust fit with trim when the pool can support 4 features, else 3.
+        # Richest fit the pool supports (age/mileage/trim/is_dealer), cached.
         if (comp_grp, gen) not in self._fits:
             self._fits[(comp_grp, gen)] = self._fit_pool(clean)
         kind, b = self._fits[(comp_grp, gen)]
         if b is not None:
-            feat = (1, age, mi, trim_tier) if kind == "trim" else (1, age, mi)
+            feat = _features(kind, age, mi, trim_tier, is_dealer)
             pred = sum(c * f for c, f in zip(b, feat))
             if 0.4 * med <= pred <= 2.2 * med:
                 # Shrink toward the stable prior for thin pools.
@@ -246,8 +272,8 @@ class PriceModels:
                 kind, b = self._fit_pool(train)
                 if not b:
                     continue
-                for a, m, t, p, _w in test:
-                    feat = (1, a, m, t) if kind == "trim" else (1, a, m)
+                for a, m, t, dl, p, _w in test:
+                    feat = _features(kind, a, m, t, dl)
                     errs.append(abs(p - sum(c * f for c, f in zip(b, feat))))
             if errs:
                 out[key] = (round(sum(errs) / len(errs)), len(pool))

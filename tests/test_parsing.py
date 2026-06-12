@@ -180,10 +180,16 @@ def test_classify_seller_type_dealer_keywords_match():
         seller_name="Murdock Automotive", source="autotrader") == "dealer"
 
 
-def test_classify_seller_type_non_dealer_name_is_private():
-    """Names without dealer keywords classify as 'private' on cars.com."""
-    assert classify_seller_type(
-        seller_name="John Smith", source="carscom") == "private"
+def test_classify_seller_type_source_priors():
+    """Cars.com/Autotrader are dealer marketplaces → dealer by default (even
+    a non-keyword name); Facebook defaults to private unless a dealer signal."""
+    assert classify_seller_type(seller_name="John Smith", source="carscom") == "dealer"
+    assert classify_seller_type(seller_name="Bob Jones", source="autotrader") == "dealer"
+    assert classify_seller_type(seller_name="Jane Doe", source="facebook") == "private"
+    # FB dealer signal still wins
+    assert classify_seller_type(seller_name="ABC Auto Sales", source="facebook") == "dealer"
+    assert classify_seller_type(source="facebook",
+                                description="Professional seller, financing available") == "dealer"
 
 
 def test_classify_seller_type_unknown_source_returns_none():

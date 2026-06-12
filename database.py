@@ -1293,7 +1293,8 @@ class Database:
         updated = 0
         rows = self.cur.execute(
             "SELECT id, seller, href, source, description FROM listings "
-            "WHERE seller_type IS NULL AND deleted_at IS NULL"
+            "WHERE (seller_type IS NULL OR seller_type = '') "
+            "AND deleted_at IS NULL"
         ).fetchall()
         for row in rows:
             st = classify_seller_type(

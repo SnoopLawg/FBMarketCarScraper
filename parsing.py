@@ -114,18 +114,29 @@ def classify_seller_type(seller_name=None, href=None, source=None,
     """
     src = (source or "").lower()
 
-    # Cars.com / Autotrader: seller name keyword heuristics
-    if src in ("carscom", "autotrader") and seller_name:
-        if _DEALER_KEYWORDS.search(seller_name):
+    # Cars.com is a dealer-inventory marketplace — effectively 100% dealers
+    # (private sellers can't list there). Default dealer.
+    if src == "carscom":
+        return "dealer"
+
+    # Autotrader is dealer-dominated; its dealer names often lack obvious
+    # keywords ("Ken Garff Hyundai"), so a name-keyword miss shouldn't demote
+    # to private. Default dealer.
+    if src == "autotrader":
+        return "dealer"
+
+    # Facebook Marketplace is predominantly PRIVATE sellers; flag dealer only
+    # on an explicit signal (keyword in name or a dealer phrase in the post).
+    if src == "facebook":
+        if seller_name and _DEALER_KEYWORDS.search(seller_name):
             return "dealer"
+        if description:
+            d = description.lower()
+            if "professional seller" in d or "dealership" in d:
+                return "dealer"
         return "private"
 
-    # Facebook: description-based (low confidence, only positive signals)
-    if src == "facebook" and description:
-        desc_lower = description.lower()
-        if "professional seller" in desc_lower or "dealership" in desc_lower:
-            return "dealer"
-
+    # KSL sets seller_type explicitly from its sellerType field (in ksl.py).
     return None
 
 

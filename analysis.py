@@ -849,9 +849,13 @@ def find_deals(db, desired_cars, config, is_discovery=False):
             trim_tier, trim_label = get_trim_tier(
                 row["car_name"], car_query, row["trim"] or "")
 
-            # Preferred: generation-aware, mileage- & trim-adjusted expected.
+            # Preferred: generation-aware, mileage/trim/channel-adjusted
+            # expected. Priced against THIS listing's own seller channel
+            # (dealer vs private) so a dealer-heavy comp pool doesn't inflate
+            # a private listing's estimate.
+            is_dealer = 1 if (row.get("seller_type") or "") == "dealer" else 0
             exp_price, n_comps, price_method = price_models.expected(
-                year, mileage, grp, trim_tier)
+                year, mileage, grp, trim_tier, is_dealer)
             if exp_price and exp_price > 0:
                 avg_price = exp_price
             else:
