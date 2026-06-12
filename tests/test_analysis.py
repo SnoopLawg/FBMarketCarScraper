@@ -242,3 +242,17 @@ def test_guidance_too_good_flags_scam_check():
 def test_guidance_sold_or_priceless_returns_none():
     assert compute_buyer_guidance(_guidance_deal(price=0)) is None
     assert compute_buyer_guidance(_guidance_deal(sold=True)) is None
+
+
+def test_guidance_flags_rebuilt_specialist_on_unknown_title():
+    # Seller with mostly-branded known inventory + unknown title on this car
+    # → presume-branded red flag (the AutoSavvy "title is unknown" case).
+    g = compute_buyer_guidance(_guidance_deal(
+        title_type=None, seller_stats={"known": 10, "branded": 7}))
+    assert any("assume branded" in f for f in g["red_flags"])
+
+
+def test_guidance_no_specialist_flag_for_clean_dealers():
+    g = compute_buyer_guidance(_guidance_deal(
+        title_type=None, seller_stats={"known": 20, "branded": 1}))
+    assert not any("assume branded" in f for f in g["red_flags"])

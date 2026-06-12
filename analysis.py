@@ -1054,6 +1054,18 @@ def compute_buyer_guidance(deal):
     elif not tt or tt == "unknown":
         questions.append("Confirm the title is clean and in-hand — ask to "
                          "see it before any deposit")
+        # Seller reputation from our own inventory data: if this dealer's
+        # known titles are mostly branded (an AutoSavvy-style rebuilt
+        # specialist), an "unknown" title here should be presumed branded.
+        ss = deal.get("seller_stats") or {}
+        if (ss.get("known") or 0) >= 5 and \
+                ss["branded"] / ss["known"] >= 0.4:
+            pct = round(ss["branded"] / ss["known"] * 100)
+            flags.append(
+                f"{pct}% of this seller's known titles are "
+                f"rebuilt/salvage ({ss['branded']} of {ss['known']}) — "
+                f"assume branded until you see the title")
+            room += 0.03
 
     accident = (deal.get("accident_history") or "").lower()
     if accident and "no" not in accident:

@@ -755,6 +755,32 @@ class Database:
         except Exception:
             pass  # Don't break averages if snapshot fails
 
+    def get_seller_title_stats(self, sellers):
+        """Per-seller branded-title mix from OUR OWN scraped inventory.
+
+        Returns {seller: {known, branded}} where known = listings with a
+        resolved title and branded = rebuilt/salvage/lemon among them. Lets
+        the buyer playbook flag rebuilt-title specialists (e.g. AutoSavvy)
+        when a listing's own title is unknown — data-derived, not a
+        hardcoded dealer list.
+        """
+        sellers = [s for s in set(sellers or []) if s]
+        if not sellers:
+            return {}
+        placeholders = ",".join("?" * len(sellers))
+        self.cur.execute(f"""
+            SELECT seller,
+                   SUM(CASE WHEN title_type IN ('rebuilt','salvage','lemon')
+                       THEN 1 ELSE 0 END) AS branded,
+                   SUM(CASE WHEN title_type IS NOT NULL AND title_type != ''
+                       THEN 1 ELSE 0 END) AS known
+            FROM listings
+            WHERE seller IN ({placeholders}) AND deleted_at IS NULL
+            GROUP BY seller
+        """, sellers)
+        return {r["seller"]: {"known": r["known"], "branded": r["branded"]}
+                for r in self.cur.fetchall()}
+
     def get_top_car_query(self):
         """The desired-car model with the most active listings."""
         row = self.cur.execute(

@@ -110,7 +110,11 @@ def _enrich_deals_for_render(deals):
             d["price_trend"] = None
 
     # Buyer playbook — needs price_history + market_range, so compute last.
+    # Seller stats let it flag rebuilt-title specialists on unknown titles.
+    seller_stats = _db.get_seller_title_stats(
+        [d.get("seller") for d in deals]) if _db else {}
     for d in deals:
+        d["seller_stats"] = seller_stats.get(d.get("seller") or "")
         d["guidance"] = compute_buyer_guidance(d)
     return deals
 
