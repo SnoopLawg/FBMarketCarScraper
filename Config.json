@@ -19,10 +19,6 @@
       "enabled": true,
       "CityID": "107584845937516"
     },
-    "craigslist": {
-      "enabled": true,
-      "region": "saltlakecity"
-    },
     "carscom": {
       "enabled": true,
       "zip": "84101",

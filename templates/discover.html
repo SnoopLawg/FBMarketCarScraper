@@ -3,7 +3,7 @@
 {% block nav_discover %}active{% endblock %}
 {% block nav_m_discover %}active{% endblock %}
 
-{% set src_labels = {'facebook':'Facebook','craigslist':'Craigslist','carscom':'Cars.com','autotrader':'Autotrader','ksl':'KSL'} %}
+{% set src_labels = {'facebook':'Facebook','carscom':'Cars.com','autotrader':'Autotrader','ksl':'KSL'} %}
 {% set filter_params = 'category=' ~ current_category ~ '&source=' ~ current_source
     ~ ('&title=' ~ current_title if current_title else '')
     ~ ('&seller_type=' ~ current_seller_type if current_seller_type else '')

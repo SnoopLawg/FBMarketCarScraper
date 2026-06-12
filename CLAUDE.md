@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A multi-source used car deal finder. It scrapes listings from Facebook Marketplace, Craigslist, Cars.com, and Autotrader, enriches them with VIN decoding, NHTSA safety/recall data, and EPA fuel economy data, scores deals, and presents results in a Flask web UI.
+A multi-source used car deal finder. It scrapes listings from Facebook Marketplace, KSL, Cars.com, and Autotrader, enriches them with VIN decoding, NHTSA safety/recall data, and EPA fuel economy data, scores deals, and presents results in a Flask web UI.
 
 ## Running
 
@@ -23,7 +23,7 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 
 ## Configuration
 
-`Config.json` — defines desired cars, price range, location, and which sources to enable. Required keys: `DesiredCar`, `MinPrice`, `MaxPrice`, `PriceThreshold`. The `Sources` block controls which scrapers run and their source-specific settings (CityID, region, zip, etc.). Optional `Proxy` key configures proxy rotation: `{"url": "socks5://host:port"}` for a single proxy or `{"urls": ["socks5://a:1080", "http://b:8080"]}` for random rotation (supports HTTP, SOCKS4, SOCKS5). Optional `Notifications` key configures Discord alerts: `{"discord_webhook_url": "https://discord.com/api/webhooks/...", "app_url": "https://cars.single10.app"}`.
+`Config.json` — defines desired cars, price range, location, and which sources to enable. Required keys: `DesiredCar`, `MinPrice`, `MaxPrice`, `PriceThreshold`. The `Sources` block controls which scrapers run and their source-specific settings (CityID, zip, etc.). Optional `Proxy` key configures proxy rotation: `{"url": "socks5://host:port"}` for a single proxy or `{"urls": ["socks5://a:1080", "http://b:8080"]}` for random rotation (supports HTTP, SOCKS4, SOCKS5). Optional `Notifications` key configures Discord alerts: `{"discord_webhook_url": "https://discord.com/api/webhooks/...", "app_url": "https://cars.single10.app"}`.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ The web UI launches at `http://127.0.0.1:5000` and auto-opens in a browser.
 
 ### Scraping Layer
 - `scrapers/base.py` — `BaseScraper` ABC with shared Selenium helpers (scrolling, anti-detection delays, stealth JS injection, screenshot-on-error, yield counting via `counted_insert()`)
-- `scrapers/facebook.py`, `craigslist.py`, `carscom.py`, `autotrader.py` — each implements `scrape()`, iterates over `DesiredCar` list, calls `counted_insert()` for each listing found. Cars.com and Autotrader scrapers also extract vehicle history data (owner count, accident history, deal ratings, Carfax report URLs) from listing cards
+- `scrapers/facebook.py`, `ksl.py`, `carscom.py`, `autotrader.py` — each implements `scrape()`, iterates over `DesiredCar` list, calls `counted_insert()` for each listing found. Cars.com and Autotrader scrapers also extract vehicle history data (owner count, accident history, deal ratings, Carfax report URLs) from listing cards
 - `scrapers/__init__.py` — `ALL_SCRAPERS` registry dict mapping source name → scraper class
 - `driver.py` — Firefox WebDriver factory with anti-detection settings; supports HTTP/SOCKS proxy configuration with random rotation. Two profile modes: `options.profile` (copy-per-run, dedicated `6kmbn0d4.fbscraper`) or `persistent_profile=<dir>` (in-place, survives across runs — used for Facebook so the device identity + session cookies persist). The persistent path sets `browser.startup.page=3` so FB's session-scoped `c_user`/`xs` cookies survive a clean shutdown. Does NOT override the user agent (a UA-vs-engine mismatch is what bot managers cross-check)
 - `scraper_worker.py` — background threading wrapper that exposes status tracking for the web UI to poll; records per-source run metrics to `scrape_runs` table and logs yield health warnings. A source that finishes with 0 listings but a non-trivial historical average is recorded as `failed` (with a screenshot), not `completed` — so silent selector rot / bot walls surface in `/api/health` instead of looking healthy

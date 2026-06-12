@@ -186,22 +186,6 @@ def test_classify_seller_type_non_dealer_name_is_private():
         seller_name="John Smith", source="carscom") == "private"
 
 
-def test_classify_seller_type_craigslist_cto_means_private():
-    """Craigslist URLs with /cto/ (cars-trucks-by-owner) classify as 'private'."""
-    result = classify_seller_type(
-        href="https://saltlakecity.craigslist.org/cto/d/x/123.html",
-        source="craigslist")
-    assert result == "private"
-
-
-def test_classify_seller_type_craigslist_ctd_means_dealer():
-    """Craigslist URLs with /ctd/ (cars-trucks-by-dealer) classify as 'dealer'."""
-    result = classify_seller_type(
-        href="https://saltlakecity.craigslist.org/ctd/d/x/123.html",
-        source="craigslist")
-    assert result == "dealer"
-
-
 def test_classify_seller_type_unknown_source_returns_none():
     assert classify_seller_type(seller_name="anything", source="unknown") is None
 

@@ -109,17 +109,10 @@ def classify_seller_type(seller_name=None, href=None, source=None,
                          description=None):
     """Classify a listing as 'dealer', 'private', or None (unknown).
 
-    Uses source-specific signals: Craigslist URL path, seller name keywords
+    Uses source-specific signals: seller name keywords
     for Cars.com/Autotrader, and description text for Facebook.
     """
     src = (source or "").lower()
-
-    # Craigslist: URL-based, 100% reliable
-    if src == "craigslist" and href:
-        if "/ctd/" in href:
-            return "dealer"
-        if "/cto/" in href:
-            return "private"
 
     # Cars.com / Autotrader: seller name keyword heuristics
     if src in ("carscom", "autotrader") and seller_name:
