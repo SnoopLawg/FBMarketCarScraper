@@ -77,6 +77,7 @@ Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_e
   - **Drivetrain (10pts):** AWD/4WD bonus (explicit=10, inferred=6)
   - **Trim Value (5pts):** Higher trim at a discount
   - **Freshness (5pts):** Days since first scraped
+- **Expected price (pricing.py):** scoring compares each listing to a robust, mileage-adjusted price curve fit over its SAME-GENERATION pool (generation-aware redesign-year table), not a thin per-year bucket average — fixes false deals from starved pools (54% had <5 comps; a 2014 RAV4 was priced $20k vs a real ~$13k). Year stays dominant (selects generation + is a regression feature); pure-Python robust OLS with outlier rejection; falls back to a normalized-median, then the legacy bucket average, when a pool is thin. `comp_count`/`price_method` exposed per deal for confidence.
 - Hard score caps: rebuilt≤45, salvage≤30, lemon≤25
 - VIN cross-validation penalty (up to -15) applied before caps; a VIN-decoded drivetrain *overrides* the text/default guess (source `vin` counts as confirmed)
 - Grades are market-relative, anchored to the empirical distribution (median listing ≈ 43): A≥75 (~top 1%), B≥62, C≥48 (above median), D≥35, F<35

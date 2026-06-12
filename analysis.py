@@ -12,6 +12,7 @@ from drivetrain import detect_drivetrain, drivetrain_label, is_awd_or_4wd
 from vin_validate import (
     validate_vin_against_listing, compute_vin_penalty, _normalize_drivetrain)
 from parsing import parse_owner_count, parse_service_history, parse_listed_date
+from pricing import PriceModels
 
 # How many asking-price samples one sold (market-clearing) comp is worth in
 # the average. Sold prices are what cars actually went for, so they should
@@ -788,6 +789,12 @@ def find_deals(db, desired_cars, config, is_discovery=False):
         avg_table = db.get_averages(car_query)  # (year, title_grp) → (lo, hi)
         candidates = all_candidates[car_query]
 
+        # Generation-aware, mileage-adjusted expected-price model. Scores each
+        # listing against a robust curve over its same-generation pool instead
+        # of a thin per-year bucket (see pricing.py). Falls back to the bucket
+        # average below when a pool is too thin to model.
+        price_models = PriceModels(candidates, car_query)
+
         # Pre-compute trim averages per title group (avoids recomputing
         # inside the per-listing loop)
         trim_avgs_by_group = {}
@@ -818,16 +825,25 @@ def find_deals(db, desired_cars, config, is_discovery=False):
             # the plain catch-all.
             powertrain = (row.get("powertrain") or "").lower()
             grp = comp_group(row["title_type"], powertrain)
-            avg_key = (year, grp)
-            if avg_key not in avg_table and powertrain:
-                avg_key = (year, f"all#{powertrain}")
-            if avg_key not in avg_table:
-                avg_key = (year, "all")
-            if avg_key not in avg_table:
-                continue
 
-            avg_lower, avg_higher = avg_table[avg_key]
-            avg_price = avg_lower if mileage <= mileage_threshold else avg_higher
+            # Preferred: generation-aware, mileage-adjusted expected price.
+            exp_price, n_comps, price_method = price_models.expected(
+                year, mileage, grp)
+            if exp_price and exp_price > 0:
+                avg_price = exp_price
+            else:
+                # Fallback: legacy per-year bucket average.
+                avg_key = (year, grp)
+                if avg_key not in avg_table and powertrain:
+                    avg_key = (year, f"all#{powertrain}")
+                if avg_key not in avg_table:
+                    avg_key = (year, "all")
+                if avg_key not in avg_table:
+                    continue
+                avg_lower, avg_higher = avg_table[avg_key]
+                avg_price = (avg_lower if mileage <= mileage_threshold
+                             else avg_higher)
+                n_comps, price_method = 0, "bucket"
 
             if avg_price <= 0:
                 continue
@@ -976,6 +992,8 @@ def find_deals(db, desired_cars, config, is_discovery=False):
                     "drivetrain": drivetrain_label(dt),
                     "drivetrain_source": dt_source,
                     "powertrain": powertrain,
+                    "comp_count": n_comps,
+                    "price_method": price_method,
                     "days_listed": days_listed,
                     "deal_score": score,
                     "deal_grade": score_to_grade(score),
