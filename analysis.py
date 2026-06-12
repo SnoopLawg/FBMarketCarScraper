@@ -789,11 +789,23 @@ def find_deals(db, desired_cars, config, is_discovery=False):
         avg_table = db.get_averages(car_query)  # (year, title_grp) → (lo, hi)
         candidates = all_candidates[car_query]
 
-        # Generation-aware, mileage-adjusted expected-price model. Scores each
-        # listing against a robust curve over its same-generation pool instead
-        # of a thin per-year bucket (see pricing.py). Falls back to the bucket
-        # average below when a pool is too thin to model.
+        # Generation-aware, mileage- & trim-adjusted expected-price model.
+        # Scores each listing against a robust curve over its same-generation
+        # pool instead of a thin per-year bucket (see pricing.py). Falls back
+        # to the bucket average below when a pool is too thin to model.
         price_models = PriceModels(candidates, car_query)
+
+        # Track model accuracy (5-fold-CV MAE) so changes are measurable, not
+        # guessed. Buy-cars only — keeps it out of the discovery log flood.
+        if not is_discovery:
+            q = price_models.quality()
+            if q:
+                maes = [m for m, _ in q.values()]
+                tot = sum(n for _, n in q.values())
+                logging.info(
+                    f"[price-model] {car_query}: MAE ${round(sum(maes)/len(maes))} "
+                    f"(median ${round(sorted(maes)[len(maes)//2])}) over "
+                    f"{len(q)} pools / {tot} comps [5-fold CV]")
 
         # Pre-compute trim averages per title group (avoids recomputing
         # inside the per-listing loop)
@@ -826,9 +838,14 @@ def find_deals(db, desired_cars, config, is_discovery=False):
             powertrain = (row.get("powertrain") or "").lower()
             grp = comp_group(row["title_type"], powertrain)
 
-            # Preferred: generation-aware, mileage-adjusted expected price.
+            # Trim tier for this listing (also a feature in the price model —
+            # premium trims are worth more at the same age/mileage).
+            trim_tier, trim_label = get_trim_tier(
+                row["car_name"], car_query, row["trim"] or "")
+
+            # Preferred: generation-aware, mileage- & trim-adjusted expected.
             exp_price, n_comps, price_method = price_models.expected(
-                year, mileage, grp)
+                year, mileage, grp, trim_tier)
             if exp_price and exp_price > 0:
                 avg_price = exp_price
             else:
@@ -847,10 +864,6 @@ def find_deals(db, desired_cars, config, is_discovery=False):
 
             if avg_price <= 0:
                 continue
-
-            # Trim tier for this listing
-            trim_tier, trim_label = get_trim_tier(
-                row["car_name"], car_query, row["trim"] or "")
 
             # Trim-specific average from same title group
             trim_avgs = trim_avgs_by_group.get(grp, {})
