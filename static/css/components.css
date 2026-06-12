@@ -535,15 +535,35 @@ select.input {
     border: 2px solid var(--bg-card);
     box-shadow: 0 0 0 2px rgba(0,0,0,0.3); z-index: 2;
 }
-/* Our fair-value estimate, marked on the comp range as a vertical tick
-   (named in the label line below: "· est $X ·"). */
-.market-range-est {
-    position: absolute; top: -3px; bottom: -3px; width: 2px;
-    transform: translateX(-50%);
-    background: var(--text-secondary); border-radius: 1px; z-index: 1;
-}
 .deal-over { font-size: 12px; font-weight: 600; color: var(--text-muted);
     font-variant-numeric: tabular-nums; }
+
+/* ── Deal gauge (price vs our estimate) ── */
+/* Estimate is the fixed center; a grade-colored fill runs out to the car's
+   price so "how far below/above fair" pops at a glance. */
+.deal-gauge {
+    position: relative; height: 6px; border-radius: 3px;
+    background: var(--border); margin: 2px 0 7px; overflow: visible;
+}
+.deal-gauge-fill {
+    position: absolute; top: 0; bottom: 0; border-radius: 3px; opacity: 0.85;
+}
+.deal-gauge-center {
+    position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px;
+    transform: translateX(-50%); border-radius: 1px;
+    background: var(--text-muted); z-index: 1;
+}
+.deal-gauge-dot {
+    position: absolute; top: 50%; width: 13px; height: 13px;
+    border-radius: 50%; transform: translate(-50%, -50%);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 0 0 3px rgba(0,0,0,0.35), 0 0 10px 1px currentColor; z-index: 2;
+}
+.deal-gauge-label {
+    font-size: 11px; color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.deal-gauge-verdict { font-weight: 600; }
 
 /* ── Deal Details ── */
 .deal-details { margin: var(--space-3) 0 0 0; }

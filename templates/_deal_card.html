@@ -133,25 +133,26 @@
 
         {% if est and est > 0 %}
         {% set mr = deal.market_range %}
-        {% set bar_lo = mr.low if mr and mr.low and mr.low > 0 else (est * 0.8) %}
-        {% set bar_hi = mr.premium if mr and mr.premium and mr.premium > bar_lo else (est * 1.2) %}
-        {% set span = bar_hi - bar_lo %}
         {% set r = deal.price / est %}
+        {# Diverging gauge: estimate is the CENTER (always visible); a grade-
+           colored fill runs from center to this car's price, so "how far from
+           fair" reads at a glance regardless of where comps fall. #}
+        {% set lo = est * 0.70 %}{% set hi = est * 1.30 %}
+        {% set price_pos = [2, [((deal.price - lo) / (hi - lo) * 100), 98]|min]|max %}
         <div class="market-range">
-            <div class="market-range-bar">
-                {% if span > 0 %}
-                {# our fair-value estimate, marked on the comp range #}
-                <div class="market-range-est" style="left:{{ ([0, [((est - bar_lo) / span * 100), 100]|min]|max)|round }}%"></div>
-                {# this car's price #}
-                <div class="market-range-dot" style="position:absolute;left:{{ ([0, [((deal.price - bar_lo) / span * 100), 100]|min]|max)|round }}%;top:50%;transform:translate(-50%,-50%);background:{{ _grade_color }}"></div>
+            <div class="deal-gauge">
+                {% if deal.price < est %}
+                <div class="deal-gauge-fill" style="left:{{ price_pos|round }}%;right:50%;background:{{ _grade_color }}"></div>
+                {% else %}
+                <div class="deal-gauge-fill" style="left:50%;right:{{ (100 - price_pos)|round }}%;background:var(--grade-d)"></div>
                 {% endif %}
+                <div class="deal-gauge-center"></div>
+                <div class="deal-gauge-dot" style="left:{{ price_pos|round }}%;background:{{ _grade_color }};color:{{ _grade_color }}"></div>
             </div>
-            <div class="market-range-labels">
-                <span>${{ '{:,.0f}'.format(bar_lo) }}</span>
-                <span>
-                    {% if r <= 0.85 %}great price{% elif r <= 0.95 %}below market{% elif r <= 1.05 %}fair price{% elif r <= 1.15 %}above market{% else %}high price{% endif %}
-                    &middot; est ${{ '{:,.0f}'.format(est) }}{% if mr and mr.count %} &middot; {{ mr.count }} comps{% endif %}</span>
-                <span>${{ '{:,.0f}'.format(bar_hi) }}</span>
+            <div class="deal-gauge-label">
+                <span class="deal-gauge-verdict" style="color:{{ _grade_color if deal.price < est else 'var(--text-secondary)' }}">
+                    {% if r <= 0.85 %}great price{% elif r <= 0.95 %}below market{% elif r <= 1.05 %}fair price{% elif r <= 1.15 %}above market{% else %}high price{% endif %}</span>
+                &middot; est ${{ '{:,.0f}'.format(est) }}{% if mr and mr.count %} &middot; {{ mr.count }} comps{% endif %}
             </div>
         </div>
         {% endif %}
