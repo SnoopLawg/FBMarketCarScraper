@@ -114,7 +114,8 @@ Facebook is the only source needing a login. The flow (`scrapers/facebook.py::_e
 
 ### Sold listings (market-clearing comps)
 - FB marks sold items with a standalone `<span>Sold</span>` on the detail page and removes them from search. `FacebookScraper._is_sold()` detects this; `check_sold_listings()` (run after the FB scrape in `scraper_worker`) re-visits active FB listings least-recently-checked-first and flags any now sold via `db.mark_sold()`. Enrichment also detects sold inline.
-- Sold listings are kept permanently (`mark_stale` skips `sold=1`) because their price is the actual sale price. `calculate_averages` weights each sold comp as `SOLD_WEIGHT` (8) asking-price samples — a weighted mean that keeps true listing counts — so averages reflect what cars really sold for, not aspirational asks.
+- Sold listings are kept permanently (`mark_stale` skips `sold=1`) because their price is the actual sale price. Both `calculate_averages` AND the price model (`pricing.py`, weighted OLS) weight sold comps so expected prices lean toward what cars really sold for, not aspirational asks.
+- **Presumed-sold (Marketcheck-style, dealer sources only):** `db.mark_presumed_sold(source)` infers a sale when a non-FB listing vanishes while the source scraped *healthily* — recording it sold at last asking price, weighted `PRESUMED_SOLD_WEIGHT` (3) vs confirmed `SOLD_WEIGHT` (8). Guards: `source_healthy()` (don't presume during a bot-block — the KSL lesson, where everything "disappears"), active ≥4 days (skip quick pulls), VIN didn't reappear (skip relists), and FB excluded entirely (relisting noise — use its explicit Sold flag). Run per non-FB source post-scrape in `scraper_worker`.
 - Sold cars are excluded from the buyable Deals/Discover lists and CSV export; they get their own `/sold` tab (`sold.html`) as comps. New Grade-A *sold* listings don't trigger Discord alerts.
 
 ### Web UI

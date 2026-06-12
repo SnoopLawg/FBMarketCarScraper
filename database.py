@@ -125,7 +125,8 @@ class Database:
                 sold_at TEXT,
                 sold_checked_at TEXT,
                 drivetrain TEXT,
-                powertrain TEXT
+                powertrain TEXT,
+                sold_presumed INTEGER DEFAULT 0
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_href_source ON listings(href, source);
             CREATE INDEX IF NOT EXISTS idx_listings_car_query ON listings(car_query);
@@ -419,6 +420,18 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        # sold_presumed: 1 = inferred-sold from disappearance (weaker comp,
+        # weight 3) vs an explicit/confirmed sale (sold=1, presumed=0, weight 8).
+        if "sold_presumed" not in columns:
+            logging.info("Migrating DB: adding sold_presumed column...")
+            try:
+                self.cur.execute(
+                    "ALTER TABLE listings ADD COLUMN sold_presumed INTEGER DEFAULT 0")
+                self.conn.commit()
+                logging.info("sold_presumed migration complete.")
+            except sqlite3.OperationalError:
+                pass
+
         # Sold tracking: a listing detected as "Sold" on its FB detail page.
         # Its price is the actual market-clearing price — weighted heavily in
         # averages — so sold listings are kept (never stale-deleted).
@@ -563,7 +576,8 @@ class Database:
 
     def get_priced_listings(self, car_query):
         self.cur.execute(
-            "SELECT price, mileage, year, title_type, vin, sold, powertrain "
+            "SELECT price, mileage, year, title_type, vin, sold, powertrain, "
+            "sold_presumed "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND year IS NOT NULL "
             "AND deleted_at IS NULL",
@@ -577,7 +591,8 @@ class Database:
             "image_url, car_name, created_at, updated_at, "
             "trim, seller, condition, deal_rating, accident_history, distance, "
             "title_type, vin, description, owner_count, carfax_url, listed_at, "
-            "image_urls, seller_type, sold, sold_at, drivetrain, powertrain "
+            "image_urls, seller_type, sold, sold_at, drivetrain, powertrain, "
+            "sold_presumed "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND deleted_at IS NULL",
             (car_query,)
@@ -658,6 +673,71 @@ class Database:
         count = self.cur.rowcount
         self.conn.commit()
         return count
+
+    def source_healthy(self, source, days=2):
+        """Did this source have a healthy scrape recently? (bot-block guard)
+
+        A presumed-sale only makes sense if the listing's ABSENCE is real —
+        not because the scraper was blocked (KSL PerimeterX) and everything
+        'disappeared'. Healthy = a completed run whose yield was a non-trivial
+        fraction of the source's historical average.
+        """
+        avg = self.cur.execute(
+            "SELECT AVG(listings_found) FROM scrape_runs "
+            "WHERE source=? AND status='completed' AND listings_found>0 "
+            "AND started_at > datetime('now','-30 days')", (source,)).fetchone()[0]
+        if not avg:
+            return False
+        recent = self.cur.execute(
+            "SELECT MAX(listings_found) FROM scrape_runs "
+            "WHERE source=? AND status='completed' "
+            "AND started_at > datetime('now', ?)",
+            (source, f'-{days} days')).fetchone()[0]
+        return bool(recent and recent >= 0.6 * avg)
+
+    def mark_presumed_sold(self, source, min_active_days=4, gone_days=1,
+                           grace_days=14):
+        """Infer sold-at-last-price for dealer listings that vanished while the
+        source was being scraped successfully (Marketcheck-style).
+
+        NOT for Facebook (relisting noise — use its explicit Sold flag). Guards:
+          • source_healthy() — absence is real, not a scraper block
+          • active >= min_active_days before vanishing (skip quick pulls/blips)
+          • not seen for >= gone_days but within grace_days (recent, with context)
+          • VIN did NOT reappear as another active listing (skip relists)
+        Returns the count marked.
+        """
+        if source == "facebook" or not self.source_healthy(source):
+            return 0
+        rows = self.cur.execute(
+            """SELECT id, href, vin, price FROM listings
+               WHERE source=? AND deleted_at IS NULL AND sold=0
+                 AND price IS NOT NULL
+                 AND updated_at < datetime('now', ?)
+                 AND updated_at > datetime('now', ?)
+                 AND julianday(updated_at) - julianday(created_at) >= ?""",
+            (source, f'-{gone_days} days', f'-{grace_days} days',
+             min_active_days)).fetchall()
+        marked = 0
+        for r in rows:
+            vin = (r["vin"] or "").strip()
+            if vin:
+                relisted = self.cur.execute(
+                    "SELECT 1 FROM listings WHERE upper(vin)=upper(?) "
+                    "AND id!=? AND deleted_at IS NULL AND sold=0 LIMIT 1",
+                    (vin, r["id"])).fetchone()
+                if relisted:
+                    continue   # same car still active elsewhere → relisted
+            self.cur.execute(
+                "UPDATE listings SET sold=1, sold_presumed=1, "
+                "sold_at=COALESCE(sold_at, CURRENT_TIMESTAMP) WHERE id=?",
+                (r["id"],))
+            marked += 1
+        self.conn.commit()
+        if marked:
+            logging.info(f"[{source}] presumed-sold {marked} vanished listings "
+                         f"(weighted comps at last asking price).")
+        return marked
 
     def get_analytics_data(self):
         """Return active listings from last 30 days for analytics."""

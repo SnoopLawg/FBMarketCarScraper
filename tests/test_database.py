@@ -161,3 +161,68 @@ def test_propagate_titles_worst_severity_wins(tmp_path):
         row = db.cur.execute(
             "SELECT title_type FROM listings WHERE href='https://a/3'").fetchone()
         assert row["title_type"] == "salvage"  # worst wins
+
+
+def _seed_run(db, source, found, status="completed", days_ago=0):
+    db.cur.execute(
+        "INSERT INTO scrape_runs (source, started_at, status, listings_found) "
+        "VALUES (?, datetime('now', ?), ?, ?)",
+        (source, f"-{days_ago} days", status, found))
+    db.conn.commit()
+
+
+def _seed_listing(db, href, source, vin, created_days, updated_days, price=15000):
+    db.insert_listing(car_query="Toyota RAV4", href=href, image_url="x",
+                      price=str(price), car_name="2019 Toyota RAV4 LE",
+                      location="UT", mileage_raw="60000 miles", source=source,
+                      vin=vin)
+    db.cur.execute(
+        "UPDATE listings SET created_at=datetime('now', ?), "
+        "updated_at=datetime('now', ?) WHERE href=?",
+        (f"-{created_days} days", f"-{updated_days} days", href))
+    db.conn.commit()
+
+
+def test_presumed_sold_marks_vanished_dealer_listing(tmp_path):
+    with Database(db_path=tmp_path / "ps.db") as db:
+        _seed_run(db, "carscom", 400)                     # healthy
+        # active 9 days, last seen 2 days ago → vanished during healthy scrape
+        _seed_listing(db, "https://cars.com/a", "carscom", "VIN0000000000001", 9, 2)
+        n = db.mark_presumed_sold("carscom")
+        assert n == 1
+        row = db.cur.execute("SELECT sold, sold_presumed FROM listings "
+                             "WHERE href='https://cars.com/a'").fetchone()
+        assert row["sold"] == 1 and row["sold_presumed"] == 1
+
+
+def test_presumed_sold_skips_when_source_blocked(tmp_path):
+    # The KSL lesson: a blocked source has 0/failed runs → don't presume sold.
+    with Database(db_path=tmp_path / "ps2.db") as db:
+        _seed_run(db, "ksl", 200, days_ago=20)            # healthy long ago
+        _seed_run(db, "ksl", 0, status="failed")          # blocked now
+        _seed_listing(db, "https://ksl/a", "ksl", "VIN0000000000002", 9, 2)
+        assert db.mark_presumed_sold("ksl") == 0
+
+
+def test_presumed_sold_skips_facebook(tmp_path):
+    with Database(db_path=tmp_path / "ps3.db") as db:
+        _seed_run(db, "facebook", 300)
+        _seed_listing(db, "https://fb/a", "facebook", "VIN0000000000003", 9, 2)
+        assert db.mark_presumed_sold("facebook") == 0
+
+
+def test_presumed_sold_skips_relisted_vin(tmp_path):
+    with Database(db_path=tmp_path / "ps4.db") as db:
+        _seed_run(db, "carscom", 400)
+        _seed_listing(db, "https://cars.com/old", "carscom", "VINRELIST0000001", 9, 2)
+        # same VIN reappeared as a fresh active listing → relisted, not sold
+        _seed_listing(db, "https://cars.com/new", "carscom", "VINRELIST0000001", 1, 0)
+        assert db.mark_presumed_sold("carscom") == 0
+
+
+def test_presumed_sold_skips_freshly_listed(tmp_path):
+    with Database(db_path=tmp_path / "ps5.db") as db:
+        _seed_run(db, "carscom", 400)
+        # only active 1 day before vanishing → too quick, likely a pull/blip
+        _seed_listing(db, "https://cars.com/fresh", "carscom", "VIN0000000000005", 1.2, 2)
+        assert db.mark_presumed_sold("carscom") == 0

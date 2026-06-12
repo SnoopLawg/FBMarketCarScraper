@@ -95,25 +95,31 @@ def _solve(M, b):
 
 
 def _ols(rows):
-    """OLS over feature rows [(feat_tuple, y), ...]. feat includes the 1.
+    """Weighted OLS over [(feat_tuple, y, weight), ...]. feat includes the 1.
 
-    Returns coefficient vector or None.
+    Weights let sold comps (real transactions) pull the curve toward what
+    cars actually went for, not just asking prices. Returns coef or None.
     """
     if not rows:
         return None
     k = len(rows[0][0])
     XtX = [[0.0] * k for _ in range(k)]
     Xty = [0.0] * k
-    for feat, y in rows:
+    for feat, y, w in rows:
         for i in range(k):
-            Xty[i] += feat[i] * y
+            Xty[i] += w * feat[i] * y
             for j in range(k):
-                XtX[i][j] += feat[i] * feat[j]
+                XtX[i][j] += w * feat[i] * feat[j]
     return _solve(XtX, Xty)
 
 
 def _robust_fit(rows):
-    """Trimmed OLS: fit, drop worst ~15% residuals, refit. None if too small."""
+    """Weighted trimmed OLS: fit, drop worst ~15% by residual, refit.
+
+    The weighted fit already sits near the heavily-weighted sold comps, so
+    they show small residuals and survive trimming; only genuine outliers go.
+    None if too small.
+    """
     cur = rows
     beta = None
     for _ in range(2):
@@ -123,8 +129,8 @@ def _robust_fit(rows):
         if beta is None:
             return None
         resid = sorted(
-            ((abs(y - sum(b * f for b, f in zip(beta, feat))), (feat, y))
-             for feat, y in cur), key=lambda x: x[0])
+            ((abs(y - sum(b * f for b, f in zip(beta, feat))), (feat, y, w))
+             for feat, y, w in cur), key=lambda x: x[0])
         keep = max(len(rows[0][0]) + 2, int(len(resid) * 0.85))
         trimmed = [r for _, r in resid[:keep]]
         if len(trimmed) == len(cur):
@@ -138,9 +144,10 @@ class PriceModels:
 
     def __init__(self, candidates, car_query):
         self.car_query = car_query
-        self._pools = {}   # (grp, gen) -> [(age, mileage, trim_tier, price)]
+        # (grp, gen) -> [(age, mileage, trim_tier, price, weight)]
+        self._pools = {}
         self._fits = {}
-        from analysis import comp_group  # local import to break cycle
+        from analysis import comp_group, SOLD_WEIGHT, PRESUMED_SOLD_WEIGHT
         from trim_tiers import get_trim_tier
         now = datetime.utcnow().year
         for row in candidates:
@@ -150,8 +157,12 @@ class PriceModels:
             grp = comp_group(row["title_type"], (row.get("powertrain") or ""))
             gen = generation_of(car_query, year)
             tier, _ = get_trim_tier(row["car_name"], car_query, row.get("trim") or "")
+            if row.get("sold"):
+                w = PRESUMED_SOLD_WEIGHT if row.get("sold_presumed") else SOLD_WEIGHT
+            else:
+                w = 1
             self._pools.setdefault((grp, gen), []).append(
-                (now - year, row["mileage"] or 0, tier, price))
+                (now - year, row["mileage"] or 0, tier, price, w))
 
     def _clean_pool(self, key):
         pool = self._pools.get(key, [])
@@ -162,7 +173,7 @@ class PriceModels:
         return (clean if len(clean) >= 3 else pool), med
 
     def _fit_pool(self, clean):
-        """Robust fit with trim when supported, else age+mileage, else none.
+        """Weighted robust fit with trim when supported, else age+mileage.
 
         Returns (kind, beta). Falls back to the 3-feature fit when the trim
         column has no variance (constant → singular design).
@@ -170,23 +181,27 @@ class PriceModels:
         n = len(clean)
         b = None
         if n >= 10:
-            b = _robust_fit([((1, a, m, t), p) for a, m, t, p in clean])
+            b = _robust_fit([((1, a, m, t), p, w) for a, m, t, p, w in clean])
             if b is not None:
                 return "trim", b
         if n >= 6:
-            b = _robust_fit([((1, a, m), p) for a, m, _, p in clean])
+            b = _robust_fit([((1, a, m), p, w) for a, m, _, p, w in clean])
             if b is not None:
                 return "notrim", b
         return "none", None
 
     def _prior(self, clean, age, mi, tier):
-        """Stable normalized-median baseline (age+mileage+trim adjusted)."""
+        """Weighted normalized-median baseline (age+mileage+trim adjusted).
+
+        Sold comps count by their weight so the prior also leans toward
+        real transaction prices.
+        """
         DEP, MILE = 0.09, 0.05
         adj = []
-        for c_age, c_mi, c_tier, c_pr in clean:
+        for c_age, c_mi, c_tier, c_pr, c_w in clean:
             f = (1 - DEP * (age - c_age)) * (1 - MILE * ((mi - c_mi) / 10000.0))
             f = max(0.4, min(2.2, f))
-            adj.append(c_pr * f + _TRIM_PER_TIER * (tier - c_tier))
+            adj.extend([c_pr * f + _TRIM_PER_TIER * (tier - c_tier)] * int(c_w))
         return _median(adj)
 
     def expected(self, year, mileage, comp_grp, trim_tier=1):
@@ -231,7 +246,7 @@ class PriceModels:
                 kind, b = self._fit_pool(train)
                 if not b:
                     continue
-                for a, m, t, p in test:
+                for a, m, t, p, _w in test:
                     feat = (1, a, m, t) if kind == "trim" else (1, a, m)
                     errs.append(abs(p - sum(c * f for c, f in zip(b, feat))))
             if errs:

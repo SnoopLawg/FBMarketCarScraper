@@ -355,6 +355,16 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                     except Exception as e:
                         logging.error(f"facebook sold-check failed: {e}")
 
+                # Dealer sources (not FB — relisting noise): infer sold-at-last-
+                # price for listings that vanished while the source scraped
+                # healthily, with VIN-relist + bot-block guards. Real-transaction
+                # comps the price model weights toward (Marketcheck-style).
+                if name != "facebook":
+                    try:
+                        db.mark_presumed_sold(name)
+                    except Exception as e:
+                        logging.error(f"{name} presumed-sold failed: {e}")
+
             except Exception as e:
                 logging.error(f"{name} scraper failed: {e}")
                 result["errors"].append(name)

@@ -17,7 +17,9 @@ from pricing import PriceModels
 # How many asking-price samples one sold (market-clearing) comp is worth in
 # the average. Sold prices are what cars actually went for, so they should
 # dominate over aspirational list prices.
-SOLD_WEIGHT = 8
+SOLD_WEIGHT = 8            # confirmed sale (FB "Sold" flag) — strongest comp
+PRESUMED_SOLD_WEIGHT = 3   # inferred-sold from disappearance — noisier, at
+                           # last ASKING price, so weighted well below confirmed
 
 
 def title_group(title_type):
@@ -85,6 +87,7 @@ def calculate_averages(db, desired_cars, mileage_threshold):
             vin = row[4] if len(row) > 4 else None
             sold = row[5] if len(row) > 5 else 0
             pt = row[6] if len(row) > 6 else ""
+            presumed = row[7] if len(row) > 7 else 0
             # Skip duplicate listings of the same physical car (same VIN posted
             # to multiple sources) so one car isn't counted several times in the
             # market average that deal scoring compares against.
@@ -97,7 +100,10 @@ def calculate_averages(db, desired_cars, mileage_threshold):
             # Sold listings are actual market-clearing prices, not asking
             # prices — weight them heavily so the average reflects what cars
             # really go for.
-            weight = SOLD_WEIGHT if sold else 1
+            if sold:
+                weight = PRESUMED_SOLD_WEIGHT if presumed else SOLD_WEIGHT
+            else:
+                weight = 1
             entry = (price, mileage or 0, weight)
             year_title_data.setdefault((year, group), []).append(entry)
             # Per-powertrain "all" fallback ("all#hybrid") plus the plain
