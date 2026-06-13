@@ -355,6 +355,15 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                     except Exception as e:
                         logging.error(f"facebook sold-check failed: {e}")
 
+                    # Drain the pre-fix FB mileage backlog (cards lost mileage).
+                    # A hidden odometer mints false deals, so this doubles as a
+                    # false-deal sweep. Bounded; clears over a few cycles.
+                    try:
+                        scraper.backfill_mileage(
+                            db, limit=int(os.environ.get("FB_MILEAGE_BACKFILL", "40")))
+                    except Exception as e:
+                        logging.error(f"facebook mileage backfill failed: {e}")
+
                 # Dealer sources (not FB — relisting noise): infer sold-at-last-
                 # price for listings that vanished while the source scraped
                 # healthily, with VIN-relist + bot-block guards. Real-transaction

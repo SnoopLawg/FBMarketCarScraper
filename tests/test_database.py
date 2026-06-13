@@ -226,3 +226,23 @@ def test_presumed_sold_skips_freshly_listed(tmp_path):
         # only active 1 day before vanishing → too quick, likely a pull/blip
         _seed_listing(db, "https://cars.com/fresh", "carscom", "VIN0000000000005", 1.2, 2)
         assert db.mark_presumed_sold("carscom") == 0
+
+
+def test_fb_mileage_backfill_query_and_update(tmp_path):
+    with Database(db_path=tmp_path / "fbm.db") as db:
+        # FB listing with no mileage → should be picked up
+        db.insert_listing(car_query="Honda CR-V", href="https://fb/m1",
+                          image_url="x", price="28000", car_name="2024 Honda CR-V",
+                          location="UT", mileage_raw="N/A", source="facebook")
+        # FB listing WITH mileage → should NOT be picked up
+        db.insert_listing(car_query="Honda CR-V", href="https://fb/m2",
+                          image_url="x", price="25000", car_name="2023 Honda CR-V",
+                          location="UT", mileage_raw="40,000 miles", source="facebook")
+        rows = db.get_fb_listings_missing_mileage(limit=40)
+        hrefs = [r["href"] for r in rows]
+        assert "https://fb/m1" in hrefs and "https://fb/m2" not in hrefs
+        db.update_listing_mileage("https://fb/m1", 71226)
+        assert db.cur.execute("SELECT mileage FROM listings WHERE href='https://fb/m1'"
+                              ).fetchone()["mileage"] == 71226
+        # now filled → no longer in the backlog
+        assert "https://fb/m1" not in [r["href"] for r in db.get_fb_listings_missing_mileage()]

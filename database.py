@@ -1428,6 +1428,28 @@ class Database:
             logging.info(f"[base_msrp] backfilled {n}/{len(vins)} active VINs")
         return n
 
+    def get_fb_listings_missing_mileage(self, limit=40):
+        """Active FB listings with no mileage — the pre-fix backlog (FB cards
+        stopped showing mileage). A hidden odometer can mint a false deal
+        (inflated estimate + flattered mileage factor), so these get a one-time
+        detail-page mileage backfill. Newest first (likeliest still active)."""
+        self.cur.execute(
+            "SELECT id, href FROM listings WHERE source = 'facebook' "
+            "AND deleted_at IS NULL AND sold = 0 "
+            "AND (mileage IS NULL OR mileage = 0) "
+            "ORDER BY created_at DESC LIMIT ?", (limit,))
+        return self.cur.fetchall()
+
+    def update_listing_mileage(self, href, mileage):
+        """Set a listing's mileage (used by the FB mileage backfill)."""
+        try:
+            self.cur.execute(
+                "UPDATE listings SET mileage = ? WHERE href = ?",
+                (mileage, href))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"DB update mileage error: {e}")
+
     def update_listing_vin(self, href, vin):
         """Set the VIN for a listing."""
         try:

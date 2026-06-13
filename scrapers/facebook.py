@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from vin import extract_vin
-from parsing import parse_price, detect_title_type
+from parsing import parse_price, detect_title_type, parse_mileage
 
 SCRIPT_DIR = Path(__file__).parent.parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", SCRIPT_DIR))
@@ -602,6 +602,51 @@ class FacebookScraper(BaseScraper):
         self.log(f"Sold check complete: {sold_count} newly sold "
                  f"of {len(rows)} checked.")
         return sold_count
+
+    def backfill_mileage(self, db, limit=40):
+        """Re-visit already-enriched FB listings that have NO mileage and fill
+        it from the detail page.
+
+        FB search cards stopped showing mileage, and the cheap price-refresh
+        path doesn't re-visit detail pages — so the pre-fix backlog sits with
+        null mileage. That's dangerous: a hidden high odometer inflates BOTH
+        the price estimate and the mileage factor, minting false deals (a 71k-
+        mile 2024 scored an A). Bounded per run; drains over a few cycles.
+        """
+        rows = db.get_fb_listings_missing_mileage(limit=limit)
+        if not rows:
+            return 0
+        self.log(f"Backfilling mileage on {len(rows)} FB listings...")
+        filled = 0
+        consecutive_blocked = 0
+        for row in rows:
+            href = row["href"]
+            try:
+                self.driver.get(href)
+                self.inject_stealth()
+                self.human_delay(2, 4)
+                self._dismiss_login_modal()
+
+                cur_url = self.driver.current_url
+                if "marketplace/item" not in cur_url or "directory" in cur_url:
+                    consecutive_blocked += 1
+                    if consecutive_blocked >= 5:
+                        self.log("  Rate limited — stopping mileage backfill.")
+                        break
+                    continue
+                consecutive_blocked = 0
+
+                miles = self._extract_mileage(self.driver.page_source)
+                mv = parse_mileage(miles) if miles else None
+                if mv:
+                    db.update_listing_mileage(href, mv)
+                    filled += 1
+            except Exception as e:
+                logging.warning(f"[Facebook] Mileage backfill error "
+                                f"{href[:60]}: {e}")
+            self.human_delay(1, 3)
+        self.log(f"Mileage backfill complete: {filled} filled of {len(rows)}.")
+        return filled
 
     # Markers that begin FB's "related listings" / footer regions. Anything
     # at or after these belongs to OTHER listings or chrome, not this car —
