@@ -1397,22 +1397,25 @@ class Database:
         except sqlite3.Error as e:
             logging.error(f"DB VIN upsert error: {e}")
 
-    def backfill_base_msrp(self, limit=300):
-        """Populate vin_cache.base_msrp for cached VINs missing it.
+    def backfill_base_msrp(self, limit=5000):
+        """Populate vin_cache.base_msrp for ACTIVE listings' VINs missing it.
 
-        New decodes capture base_msrp automatically; this re-decodes already-
-        cached VINs (batched, free NHTSA) so historical rows get the MSRP
-        anchor too. Skips known-bad VINs. Returns the count populated.
+        Targets VINs on live listings (not the 30k+ historical vin_cache rows,
+        most of which are old/undecodable) so coverage actually moves. New
+        decodes capture base_msrp automatically; this re-decodes the active
+        backlog (batched, free NHTSA). Returns the count populated.
         """
         from vin import decode_vins_batch
         rows = self.cur.execute(
-            "SELECT vin FROM vin_cache WHERE base_msrp IS NULL "
-            "AND (error_code IS NULL OR error_code LIKE '0%' "
-            "OR error_code LIKE '1%') LIMIT ?", (limit,)).fetchall()
+            "SELECT DISTINCT v.vin FROM vin_cache v "
+            "JOIN listings l ON l.vin = v.vin AND l.deleted_at IS NULL "
+            "WHERE v.base_msrp IS NULL "
+            "AND (v.error_code IS NULL OR v.error_code LIKE '0%' "
+            "OR v.error_code LIKE '1%') LIMIT ?", (limit,)).fetchall()
         vins = [r["vin"] for r in rows]
         if not vins:
             return 0
-        decoded = decode_vins_batch(vins)
+        decoded = decode_vins_batch(vins)   # chunks 50/call internally
         n = 0
         for vin, data in decoded.items():
             if data and data.get("base_msrp"):
@@ -1422,7 +1425,7 @@ class Database:
                 n += 1
         self.conn.commit()
         if n:
-            logging.info(f"[base_msrp] backfilled {n}/{len(vins)} VINs")
+            logging.info(f"[base_msrp] backfilled {n}/{len(vins)} active VINs")
         return n
 
     def update_listing_vin(self, href, vin):
