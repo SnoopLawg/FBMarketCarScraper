@@ -7,9 +7,11 @@ so we can extract structured data with a simple HTTP GET + parse.
 
 import json
 import logging
+import os
 import re
 import time
 import random
+from urllib.parse import urlparse
 
 import requests
 
@@ -24,6 +26,7 @@ class KSLScraper(BaseScraper):
     def __init__(self, driver, config, insert_fn, car_list=None):
         super().__init__(driver, config, insert_fn, car_list)
         self._session = requests.Session()
+        self._apply_proxy(config)
         self._session.headers.update({
             "User-Agent": (
                 "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
@@ -32,6 +35,26 @@ class KSLScraper(BaseScraper):
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         })
+
+    def _apply_proxy(self, config):
+        """Route KSL's HTTP through a proxy when configured.
+
+        KSL is blocked by PerimeterX on datacenter IPs (the home/server IP),
+        and FlareSolverr can't beat its press-and-hold captcha. A residential
+        or mobile (4G/5G) IP is the durable fix. Resolution order:
+          1. KSL_PROXY env var (easiest server override)
+          2. Config Proxy.ksl  (a KSL-specific entry)
+          3. Config Proxy.url / .urls (the general proxy)
+        Accepts http(s)://, socks5:// (PySocks installed). No-op if unset, so
+        this is safe until a proxy endpoint exists.
+        """
+        pc = (config or {}).get("Proxy") or {}
+        url = (os.environ.get("KSL_PROXY") or pc.get("ksl") or pc.get("url")
+               or (random.choice(pc["urls"]) if pc.get("urls") else ""))
+        if url:
+            self._session.proxies = {"http": url, "https": url}
+            logging.info(f"[KSL] HTTP routed via proxy "
+                         f"{urlparse(url).hostname or url}")
 
     def scrape(self):
         ksl_config = self.config["Sources"].get("ksl", {})
