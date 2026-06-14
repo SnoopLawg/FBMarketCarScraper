@@ -32,6 +32,13 @@ _DT_NORMALIZE = {
     "rwd": "rwd",
     "2wd": "fwd",
     "4x2": "fwd",  # NHTSA VIN decode uses "4x2" for 2WD/FWD
+    # Scraper drive-type strings (Autotrader driveType.name / description,
+    # Cars.com data-vehicle-details.drivetrain):
+    "awd4wd": "awd",            # Autotrader's combined AWD-or-4WD category
+    "four-wheel drive": "4wd",
+    "4 wheel drive": "4wd",
+    "2 wheel drive - front": "fwd",
+    "2 wheel drive - rear": "rwd",
 }
 
 # AWD/4WD are considered equivalent for validation purposes

@@ -512,7 +512,7 @@ class Database:
                        trim="", seller="", condition="", deal_rating="",
                        accident_history="", distance="", title_type="",
                        owner_count="", carfax_url="", is_discovery=False,
-                       seller_type="", vin=""):
+                       seller_type="", vin="", drivetrain=""):
         """Insert or update a listing, parsing raw price/mileage/year."""
         href = self._normalize_href(href)
 
@@ -551,9 +551,9 @@ class Database:
                      mileage, year, source, updated_at,
                      trim, seller, condition, deal_rating, accident_history,
                      distance, title_type, owner_count, carfax_url,
-                     is_discovery, seller_type, vin, powertrain)
+                     is_discovery, seller_type, vin, powertrain, drivetrain)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(href, source) DO UPDATE SET
                     price = excluded.price,
                     image_url = COALESCE(excluded.image_url, image_url),
@@ -569,14 +569,15 @@ class Database:
                     is_discovery = MIN(is_discovery, excluded.is_discovery),
                     seller_type = COALESCE(excluded.seller_type, seller_type),
                     vin = COALESCE(excluded.vin, vin),
-                    powertrain = COALESCE(excluded.powertrain, powertrain)
+                    powertrain = COALESCE(excluded.powertrain, powertrain),
+                    drivetrain = COALESCE(excluded.drivetrain, drivetrain)
             """, (href, image_url, price_val, car_name, car_query, location,
                   mileage_val, year_val, source,
                   trim or None, seller or None, condition or None,
                   deal_rating or None, accident_history or None, distance or None,
                   title_type or None, owner_count or None, carfax_url or None,
                   1 if is_discovery else 0, seller_type or None, vin or None,
-                  powertrain))
+                  powertrain, drivetrain or None))
             self.conn.commit()
         except sqlite3.Error as e:
             logging.error(f"DB insert error: {e}")

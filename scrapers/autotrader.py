@@ -22,6 +22,10 @@ from bs4 import BeautifulSoup
 import netfetch
 from scrapers.base import BaseScraper
 from parsing import classify_seller_type
+from vin_validate import _normalize_drivetrain
+
+# Drivetrain values the scorer understands (anything else is stored as "").
+_KNOWN_DRIVETRAINS = {"awd", "4wd", "fwd", "rwd", "2wd"}
 
 
 class AutotraderScraper(BaseScraper):
@@ -170,6 +174,7 @@ class AutotraderScraper(BaseScraper):
             carfax_url = self._history_url(rec)
             seller_type = classify_seller_type(
                 seller_name=seller, source="autotrader") or ""
+            drivetrain = self._drivetrain(rec)
 
             self.counted_insert(
                 car_query=car_query, href=href, image_url=image_url,
@@ -177,12 +182,21 @@ class AutotraderScraper(BaseScraper):
                 mileage_raw=str(mileage_raw), source=self.SOURCE_NAME,
                 seller=seller, distance=distance, trim=trim,
                 carfax_url=carfax_url, seller_type=seller_type, vin=vin,
+                drivetrain=drivetrain,
             )
             return True
         except Exception as e:
             self.count_parse_error()
             logging.warning(f"[Autotrader] JSON record parse error: {e}")
             return False
+
+    @staticmethod
+    def _drivetrain(rec):
+        """Normalized drivetrain from the JSON `driveType.name`
+        (AWD4WD/FWD/RWD); '' if unknown/unrecognized."""
+        name = (rec.get("driveType") or {}).get("name", "")
+        norm = _normalize_drivetrain(name) if name else ""
+        return norm if norm in _KNOWN_DRIVETRAINS else ""
 
     @staticmethod
     def _first_image(rec):

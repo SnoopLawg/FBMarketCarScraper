@@ -14,6 +14,10 @@ import netfetch
 from scrapers.base import BaseScraper
 from parsing import classify_seller_type, parse_price, detect_title_type
 from vin import extract_vin
+from vin_validate import _normalize_drivetrain
+
+# Drivetrain values the scorer understands (anything else is stored as "").
+_KNOWN_DRIVETRAINS = {"awd", "4wd", "fwd", "rwd", "2wd"}
 
 
 def _is_adjustment_amount(el):
@@ -202,6 +206,11 @@ class CarsComScraper(BaseScraper):
             vin = (vd.get("vin") or "").strip()
             trim = (vd.get("trim") or "").strip()
 
+            # Drivetrain — the JSON carries it explicitly (e.g. "All-wheel
+            # Drive"); normalize to the scorer's vocab, else "".
+            dt_norm = _normalize_drivetrain(vd.get("drivetrain") or "")
+            drivetrain = dt_norm if dt_norm in _KNOWN_DRIVETRAINS else ""
+
             # Get full card text for pattern matching
             card_text = card.get_text(" ", strip=True)
             card_text_lower = card_text.lower()
@@ -269,7 +278,7 @@ class CarsComScraper(BaseScraper):
                 trim=trim, deal_rating=deal_rating,
                 accident_history=accident_history,
                 owner_count=owner_count, carfax_url=carfax_url,
-                seller_type=seller_type, vin=vin,
+                seller_type=seller_type, vin=vin, drivetrain=drivetrain,
             )
             return True
         except Exception as e:
