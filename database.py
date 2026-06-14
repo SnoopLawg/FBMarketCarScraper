@@ -1176,16 +1176,36 @@ class Database:
             "AND enriched_at IS NOT NULL AND deleted_at IS NULL", (source,))
         return {r["href"] for r in self.cur.fetchall()}
 
-    def get_active_listings_for_sold_check(self, source, limit=60):
-        """Active listings to re-visit for a sold check, least-recently
-        checked first. Sold listings drop out of FB search, so the only way
-        to catch a sale is to re-visit known-active detail pages."""
-        self.cur.execute(
-            "SELECT id, href, car_name FROM listings "
-            "WHERE source = ? AND deleted_at IS NULL AND sold = 0 "
-            "ORDER BY sold_checked_at IS NOT NULL, sold_checked_at ASC, "
-            "updated_at DESC LIMIT ?",
-            (source, limit))
+    def get_active_listings_for_sold_check(self, source, limit=60,
+                                           priority_hrefs=None):
+        """Active listings to re-visit for a sold check.
+
+        Ordering: `priority_hrefs` (favorites) FIRST — re-checked every run
+        regardless of recency, so a saved listing's sale is caught within one
+        scrape cycle instead of waiting its turn behind the never-checked
+        backlog (the lesson from a favorited car that sold un-noticed for
+        days). Then never-checked, then least-recently checked.
+
+        Sold listings drop out of FB search, so re-visiting known-active detail
+        pages is the only way to catch a sale.
+        """
+        priority = [self._normalize_href(h) for h in (priority_hrefs or []) if h]
+        if priority:
+            ph = ",".join("?" * len(priority))
+            self.cur.execute(
+                f"SELECT id, href, car_name FROM listings "
+                f"WHERE source = ? AND deleted_at IS NULL AND sold = 0 "
+                f"ORDER BY (href IN ({ph})) DESC, "
+                f"sold_checked_at IS NOT NULL, sold_checked_at ASC, "
+                f"updated_at DESC LIMIT ?",
+                (source, *priority, limit))
+        else:
+            self.cur.execute(
+                "SELECT id, href, car_name FROM listings "
+                "WHERE source = ? AND deleted_at IS NULL AND sold = 0 "
+                "ORDER BY sold_checked_at IS NOT NULL, sold_checked_at ASC, "
+                "updated_at DESC LIMIT ?",
+                (source, limit))
         return self.cur.fetchall()
 
     def mark_enriched(self, href):

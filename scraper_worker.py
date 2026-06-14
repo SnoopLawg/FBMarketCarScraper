@@ -17,6 +17,20 @@ from notifications import notify_scrape_complete
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parent))
 
+
+def _load_favorite_hrefs():
+    """Favorited listing hrefs (line-delimited file shared with the web UI).
+    Empty set if the file is missing/unreadable."""
+    try:
+        fav_file = DATA_DIR / "favorite_listings.txt"
+        if fav_file.exists():
+            return {ln.strip() for ln in
+                    fav_file.read_text().splitlines() if ln.strip()}
+    except OSError as e:
+        logging.warning(f"Could not read favorites file: {e}")
+    return set()
+
+
 _lock = threading.Lock()
 _status = {
     "running": False,
@@ -350,8 +364,14 @@ def _scrape_source_group(group_name, source_names, config, deleted_set,
                         "message": "Checking Facebook listings for sold status...",
                     })
                     try:
+                        # Favorites jump the sold-check queue (checked every
+                        # run) so a saved listing's sale is caught fast, not
+                        # stuck behind the never-checked backlog.
+                        fb_favs = [h for h in _load_favorite_hrefs()
+                                   if "facebook.com" in h]
                         scraper.check_sold_listings(
-                            db, limit=int(os.environ.get("FB_SOLD_CHECK", "40")))
+                            db, limit=int(os.environ.get("FB_SOLD_CHECK", "40")),
+                            priority_hrefs=fb_favs)
                     except Exception as e:
                         logging.error(f"facebook sold-check failed: {e}")
 

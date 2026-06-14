@@ -553,16 +553,17 @@ class FacebookScraper(BaseScraper):
             pass
         return None
 
-    def check_sold_listings(self, db, limit=60):
+    def check_sold_listings(self, db, limit=60, priority_hrefs=None):
         """Re-visit active FB listings to catch ones that have sold.
 
         Sold listings vanish from search, so the main scrape never sees the
-        sale — we re-visit known-active detail pages, least-recently-checked
-        first, and flag any now marked "Sold". Their last price is the
-        market-clearing price, weighted heavily in averages.
+        sale — we re-visit known-active detail pages and flag any now marked
+        "Sold". Their last price is the market-clearing price, weighted heavily
+        in averages. `priority_hrefs` (favorites) are checked first, every run,
+        so a saved listing's sale surfaces within one cycle.
         """
         rows = db.get_active_listings_for_sold_check(
-            source="facebook", limit=limit)
+            source="facebook", limit=limit, priority_hrefs=priority_hrefs)
         if not rows:
             return 0
         self.log(f"Checking {len(rows)} listings for sold status...")
