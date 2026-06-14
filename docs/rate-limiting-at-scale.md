@@ -227,23 +227,40 @@ visible (the system already learned this lesson with silent FB selector rot):
 
 ---
 
-## 6. Rollout (all $0, each step shippable on its own)
+## 6. Rollout — status (all $0, each step shipped on its own)
 
-1. **`netfetch.py`** — token bucket + backoff/jitter + `Retry-After` +
-   back-off-and-resume + breaker. Migrate **one** source as PoC. *(Foundation.)*
-2. **curl_cffi + Autotrader internal JSON** — proves the endpoint pattern,
-   retires FlareSolverr for one source, no browser.
-3. **Volume reduction** — change-detection hashing + VIN dedup + tiered queue
-   (also fixes favorite/sold-check prioritization).
-4. **Re-enable KSL** via curl_cffi (+ phone exit node only if PerimeterX bites).
-5. **Trickle scheduler** — replace burst cron with the governed drainer.
-6. **FB → Camoufox** — when we want FB's block rate down.
-7. **Concurrency** across the HTTP/JSON sources.
+**Shipped & deployed (2026-06-13):**
+1. ✅ **`netfetch.py`** — token bucket + backoff/jitter + `Retry-After` +
+   back-off-and-resume + breaker + curl_cffi transport. *(`972627b`)*
+2. ✅ **Autotrader → curl_cffi + `__NEXT_DATA__` JSON** — FlareSolverr retired
+   for Autotrader, no browser. *(`972627b`)*
+3. ✅ **Cars.com search → curl_cffi** + netfetch default headers (Cloudflare
+   needs them); Selenium retired for search. Detail enrichment KEEPS FlareSolverr
+   (curl_cffi 403s on the `/vehicledetail` managed challenge). *(`8e6a27a`)*
+4. ✅ **KSL → curl_cffi** — passes PerimeterX from the server IP, no proxy. Was
+   `enabled:true` but failing every run; now self-heals. *(`c7f2213`)*
+5. ✅ **Drivetrain capture** — Autotrader/Cars.com JSON `driveType` → the 10-pt
+   scoring factor (confirmed, not inferred). *(`b761252`)*
+6. ✅ **Sold-check favorites-first** — saved listings re-checked every run, first;
+   fixes the originating backlog bug. *(`a3021a6`)*
+7. ✅ **VIN dedup in the comp pool** — same car cross-listed on 2-4 sources (22%
+   of comp rows!) counted once, sold rep preferred. *(`555da4d`)*
 
-**Recommended first PR: steps 1 + 2 together** — the shared adaptive fetcher,
-proven by pointing Autotrader at its internal JSON via curl_cffi. Self-contained,
-kills FlareSolverr maintenance for a source, and hands every later source a
-reusable rate-limit core.
+**Remaining:**
+- ⏭️ (marginal) Autotrader `kbbFppDelta` → deal_rating — deferred, redundant with
+  the price-vs-expected model.
+- ⏭️ **More volume reduction (efficiency only):** change-detection hashing to skip
+  unchanged FB detail visits; combine the FB sold-check + mileage-backfill into a
+  single detail visit (108/555 FB active still miss mileage). No scoring risk.
+- ⏭️ **Trickle scheduler** (§4.5) — replaces the 4-burst cron; touches the homelab
+  cron/compose, a production-behavior change.
+- ⏭️ **FB → Camoufox** (§4.6) — biggest stealth upgrade but real risk to the
+  fragile FB persistent-profile login.
+- ⏭️ **Concurrency** across the HTTP/JSON sources (§4.7).
+
+The high-value core (all source migrations off proxies/FlareSolverr/browser
+except FB, plus the two data-quality scoring fixes) is **done**. What remains is
+efficiency polish or higher-risk/ops-level changes.
 
 ---
 
