@@ -596,7 +596,11 @@ class Database:
             "sold_presumed "
             "FROM listings "
             "WHERE car_query = ? AND price IS NOT NULL AND year IS NOT NULL "
-            "AND deleted_at IS NULL",
+            "AND deleted_at IS NULL "
+            # Sold-first so the VIN dedup in calculate_averages keeps the
+            # market-clearing representative (confirmed sale > presumed > ask)
+            # when the same car is cross-listed on multiple sources.
+            "ORDER BY sold DESC, sold_presumed ASC",
             (car_query,)
         )
         return self.cur.fetchall()

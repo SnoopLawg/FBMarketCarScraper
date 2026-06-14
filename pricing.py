@@ -161,7 +161,26 @@ class PriceModels:
         from analysis import comp_group, SOLD_WEIGHT, PRESUMED_SOLD_WEIGHT
         from trim_tiers import get_trim_tier
         now = datetime.utcnow().year
+        # Dedup the same physical car cross-listed on several sources (~500 such
+        # VINs in the live data) so one car isn't counted multiple times in the
+        # regression. Keep the best representative per VIN: a confirmed sale (the
+        # market-clearing price) beats a presumed sale beats an active ask. Rows
+        # without a VIN can't be deduped, so they're all kept.
+        def _rank(r):
+            if r.get("sold"):
+                return 1 if r.get("sold_presumed") else 2
+            return 0
+        best_by_vin, candidates = {}, list(candidates)
+        deduped = []
         for row in candidates:
+            vin = (row.get("vin") or "").strip().upper()
+            if not vin:
+                deduped.append(row)
+                continue
+            if vin not in best_by_vin or _rank(row) > _rank(best_by_vin[vin]):
+                best_by_vin[vin] = row
+        deduped.extend(best_by_vin.values())
+        for row in deduped:
             price = row["price"]; year = row["year"]
             if not price or not year or price < 800:
                 continue
