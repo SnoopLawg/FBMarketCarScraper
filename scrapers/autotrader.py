@@ -1,57 +1,33 @@
-"""Autotrader scraper — per-car keyword search for targeted results."""
+"""Autotrader scraper — per-car keyword search for targeted results.
+
+Autotrader's Akamai Bot Manager hard-blocks vanilla Selenium/`requests`. The
+durable, free bypass is **curl_cffi with browser TLS impersonation**: it carries
+a real Chrome JA3 handshake, which passes Akamai (verified live — full search
+page, 200, no block), so we fetch the search HTML over plain HTTP through the
+shared adaptive fetcher (`netfetch`) and skip the browser AND FlareSolverr.
+
+The search page embeds the full inventory as structured JSON in `__NEXT_DATA__`
+(`props.pageProps.__eggsState.inventory`) — richer and far more stable than the
+CSS cards (it carries drive type, exact mileage, VIN, distance, days-on-site).
+We parse that JSON directly; the legacy CSS card parser (`_process_page`) is
+kept only as a fallback when the embedded JSON is absent.
+"""
 
 import json
 import re
 import logging
-import random
-import time
 
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
+import netfetch
 from scrapers.base import BaseScraper
 from parsing import classify_seller_type
-from flaresolverr import is_enabled as _flaresolverr_enabled
 
 
 class AutotraderScraper(BaseScraper):
     SOURCE_NAME = "autotrader"
-    # Autotrader's Akamai Bot Manager hard-blocks our headless Selenium
-    # (every run since June fails with 0 listings after ~10 wasted minutes).
-    # A FlareSolverr fetch — a real Chromium — passes it (verified live:
-    # full search page, 24 cards, __NEXT_DATA__ intact). When FlareSolverr
-    # is configured we fetch pages through it and skip Selenium entirely;
-    # without it we fall back to the old Selenium flow (likely blocked).
-    NEEDS_DRIVER = not _flaresolverr_enabled()
-
-    def _is_bot_blocked(self):
-        """Detect Autotrader's Akamai Bot Manager block page.
-
-        The block page is ~4 KB with assets under /akamai-block/ and the
-        title "Autotrader - page unavailable" — confirmed by capturing it
-        live (June 2026). It was previously read as "no results" and the
-        run completed silently with 0 listings.
-        """
-        try:
-            if "akamai-block" in self.driver.page_source:
-                return True
-            return "page unavailable" in (self.driver.title or "").lower()
-        except Exception:
-            return False
-
-    def _warm_up(self):
-        """Visit the homepage first so Akamai's JS sensor sets its cookies
-        (_abck / bm_sz) before we hit the protected search routes."""
-        try:
-            self.log("Warming up session on homepage...")
-            self.driver.get("https://www.autotrader.com/")
-            self.inject_stealth()
-            self.human_delay(4, 8)
-            self.scroll_page(count=2)
-        except Exception as e:
-            self.log(f"Warm-up failed (continuing): {e}")
+    # Pure HTTP via curl_cffi — no Selenium, no FlareSolverr.
+    NEEDS_DRIVER = False
 
     def _build_search_url(self, car_query, zip_code, radius):
         """Autotrader keyword-search URL for a car query.
@@ -90,140 +66,162 @@ class AutotraderScraper(BaseScraper):
         return len(cards), matched
 
     def scrape(self):
-        if _flaresolverr_enabled():
-            return self._scrape_via_flaresolverr()
-        return self._scrape_via_selenium()
-
-    def _scrape_via_flaresolverr(self):
-        """Fetch search pages through FlareSolverr (real Chromium beats
-        Akamai); parsing is shared with the Selenium path."""
-        from flaresolverr import FlareSolverrClient
-
+        """Fetch each car's search pages over curl_cffi (Akamai-passing TLS),
+        parsing the embedded `__NEXT_DATA__` inventory JSON."""
         at_config = self.config["Sources"].get("autotrader", {})
         zip_code = at_config.get("zip", "84101")
         radius = at_config.get("search_radius", 100)
         max_pages = at_config.get("max_pages", 3)
 
+        fetcher = netfetch.default_fetcher()
         total_found = 0
         total_matched = 0
         blocked_pages = 0
 
-        with FlareSolverrClient(session_name="autotrader") as fs:
-            for i, car_query in enumerate(self.desired_cars):
-                self.log(f"Scraping: {car_query}")
-                if i > 0:
-                    time.sleep(random.uniform(2, 5))
-
-                base_url = self._build_search_url(car_query, zip_code, radius)
-                for page in range(max_pages):
-                    url = (base_url if page == 0
-                           else f"{base_url}&firstRecord={page * 25}")
-                    self.log(f"  Page {page + 1}...")
-                    html = fs.get(url, max_timeout_ms=90000)
-                    if html is None or self._is_blocked_html(html):
-                        blocked_pages += 1
-                        self.count_parse_error()
-                        logging.warning(
-                            f"[autotrader] page fetch failed/blocked for "
-                            f"{car_query} page {page + 1} — skipping query")
-                        break
-
-                    found, matched = self._process_page(html, car_query)
-                    if not found:
-                        self.log(f"  No results on page {page + 1}")
-                        break
-                    total_found += found
-                    total_matched += matched
-                    self.log(f"  Page {page + 1}: {found} listings")
-                    time.sleep(random.uniform(2, 5))
-
-        if blocked_pages:
-            logging.warning(
-                f"[autotrader] {blocked_pages} pages failed/blocked via "
-                f"FlareSolverr this run")
-        self.log(f"Done: {total_found} total listings, "
-                 f"{total_matched} inserted")
-
-    def _scrape_via_selenium(self):
-        """Legacy Selenium flow — Akamai blocks this; kept as the fallback
-        for machines without FlareSolverr."""
-        at_config = self.config["Sources"].get("autotrader", {})
-        zip_code = at_config.get("zip", "84101")
-        radius = at_config.get("search_radius", 100)
-        max_pages = at_config.get("max_pages", 3)
-
-        total_found = 0
-        total_matched = 0
-        blocked_pages = 0
-        block_screenshot_taken = False
-
-        self._warm_up()
-
-        for i, car_query in enumerate(self.desired_cars):
+        for car_query in self.desired_cars:
             self.log(f"Scraping: {car_query}")
-            if i > 0:
-                self.delay_between_searches()
-
             base_url = self._build_search_url(car_query, zip_code, radius)
 
             for page in range(max_pages):
-                url = base_url if page == 0 else f"{base_url}&firstRecord={page * 25}"
+                url = (base_url if page == 0
+                       else f"{base_url}&firstRecord={page * 25}")
                 self.log(f"  Page {page + 1}...")
 
-                if page > 0:
-                    self.human_delay(8, 18)
-
-                try:
-                    self.driver.get(url)
-                except Exception as e:
-                    self.log(f"  Failed to load page {page + 1}: {e}")
-                    break
-
-                self.human_delay(5, 10)
-
-                # Akamai block page? Back off once and retry before giving up.
-                if self._is_bot_blocked():
-                    self.log("  Akamai bot block detected — backing off to retry...")
-                    self.human_delay(20, 40)
-                    self.driver.get(url)
-                    self.human_delay(5, 10)
-                if self._is_bot_blocked():
+                res = fetcher.get(
+                    url, domain="www.autotrader.com",
+                    blocked_predicate=lambda r: self._is_blocked_html(r.text))
+                if res.blocked or not res.ok:
                     blocked_pages += 1
                     self.count_parse_error()
-                    if not block_screenshot_taken:
-                        self.capture_screenshot("akamai_block")
-                        block_screenshot_taken = True
                     logging.warning(
-                        f"[autotrader] BLOCKED by Akamai on {car_query} "
-                        f"page {page + 1} — skipping query")
+                        f"[autotrader] fetch failed/blocked (status "
+                        f"{res.status}) for {car_query} page {page + 1} "
+                        f"— skipping query")
                     break
 
-                try:
-                    WebDriverWait(self.driver, 15).until(
-                        EC.presence_of_element_located(
-                            (By.CSS_SELECTOR,
-                             "[data-cmp='inventoryListing'], .inventory-listing")
-                        )
-                    )
-                except Exception:
-                    self.log(f"  No results on page {page + 1}")
-                    break
-
-                self.scroll_page(count=4)
-
-                found, matched = self._process_page(
-                    self.driver.page_source, car_query)
+                found, matched = self._process_search_html(res.text, car_query)
                 if not found:
+                    self.log(f"  No results on page {page + 1}")
                     break
                 total_found += found
                 total_matched += matched
-                self.log(f"  Page {page + 1}: {found} listings")
+                self.log(f"  Page {page + 1}: {found} listings, "
+                         f"{matched} inserted")
 
         if blocked_pages:
             logging.warning(
-                f"[autotrader] {blocked_pages} queries hit the Akamai bot "
-                f"wall this run — yield will be low or zero")
-        self.log(f"Done: {total_found} total listings, {total_matched} inserted")
+                f"[autotrader] {blocked_pages} pages failed/blocked this run")
+        self.log(f"Done: {total_found} total listings, "
+                 f"{total_matched} inserted")
+
+    def _process_search_html(self, html, car_query):
+        """Parse one search page: prefer the embedded inventory JSON, fall
+        back to the legacy CSS card parser. Returns (found, inserted)."""
+        inv = self._extract_inventory(html)
+        if inv:
+            matched = 0
+            for rec in inv.values():
+                if self._insert_record(rec, car_query):
+                    matched += 1
+            return len(inv), matched
+        # No JSON (page shape changed?) — fall back to CSS cards.
+        return self._process_page(html, car_query)
+
+    @staticmethod
+    def _extract_inventory(html):
+        """Return the `__eggsState.inventory` {id: record} dict, or {}."""
+        soup = BeautifulSoup(html, "html.parser")
+        script = soup.select_one("script#__NEXT_DATA__")
+        if not script:
+            return {}
+        try:
+            data = json.loads(script.string or "")
+            inv = (data.get("props", {})
+                       .get("pageProps", {})
+                       .get("__eggsState", {})
+                       .get("inventory", {}))
+            return inv if isinstance(inv, dict) else {}
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            return {}
+
+    def _insert_record(self, rec, car_query):
+        """Map one inventory JSON record to a listing insert. Returns True
+        if inserted."""
+        try:
+            if not isinstance(rec, dict) or not rec.get("id"):
+                return False
+            lid = rec["id"]
+            href = f"https://www.autotrader.com/cars-for-sale/vehicle/{lid}"
+            car_name = rec.get("title") or rec.get("titleLong") or ""
+            if not car_name:
+                return False
+
+            pricing = rec.get("pricingDetail") or {}
+            price = pricing.get("displayPrice") or pricing.get("salePrice") or ""
+
+            mileage_raw = (rec.get("mileage") or {}).get("value", "")
+            trim = rec.get("atTrim") or (rec.get("trim") or {}).get("name", "") or ""
+            image_url = self._first_image(rec)
+            vin = self._extract_vin(rec)
+            seller = rec.get("ownerName", "") or ""
+            location = self._location_from_title(
+                rec.get("titleLong", ""), car_name)
+            distance = self._distance(rec)
+            carfax_url = self._history_url(rec)
+            seller_type = classify_seller_type(
+                seller_name=seller, source="autotrader") or ""
+
+            self.counted_insert(
+                car_query=car_query, href=href, image_url=image_url,
+                price=str(price), car_name=car_name, location=location,
+                mileage_raw=str(mileage_raw), source=self.SOURCE_NAME,
+                seller=seller, distance=distance, trim=trim,
+                carfax_url=carfax_url, seller_type=seller_type, vin=vin,
+            )
+            return True
+        except Exception as e:
+            self.count_parse_error()
+            logging.warning(f"[Autotrader] JSON record parse error: {e}")
+            return False
+
+    @staticmethod
+    def _first_image(rec):
+        sources = (rec.get("images") or {}).get("sources") or []
+        return sources[0].get("src", "") if sources else ""
+
+    @staticmethod
+    def _extract_vin(rec):
+        """VIN is embedded in the payment/incentive URLs of the record."""
+        m = re.search(r"vin=([A-HJ-NPR-Z0-9]{17})", json.dumps(rec))
+        return m.group(1) if m else ""
+
+    @staticmethod
+    def _distance(rec):
+        d = (rec.get("marketExtension") or {}).get("distance")
+        return f"{d:.1f} mi" if isinstance(d, (int, float)) else ""
+
+    @staticmethod
+    def _location_from_title(title_long, title=""):
+        """`titleLong` is `title` + ' City ST ZIP'. Strip the known title
+        prefix to isolate the location, then pull 'City, ST' (cities can be
+        multi-word, e.g. 'Salt Lake City')."""
+        if not title_long:
+            return ""
+        tail = title_long
+        if title and title_long.startswith(title):
+            tail = title_long[len(title):]
+        m = re.search(r"^\s*(.+?)\s+([A-Z]{2})\s+\d{5}\s*$", tail)
+        return f"{m.group(1).strip()}, {m.group(2)}" if m else ""
+
+    @staticmethod
+    def _history_url(rec):
+        """AutoCheck/Carfax vehicle-history link from productTiles."""
+        for tile in rec.get("productTiles") or []:
+            link = (tile.get("link") or {}).get("href", "")
+            if link and ("vehiclehistory" in link.lower()
+                         or "carfax" in link.lower()):
+                return link
+        return ""
 
     @staticmethod
     def _extract_vin_map(soup):
