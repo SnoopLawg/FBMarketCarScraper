@@ -8,14 +8,12 @@ import random
 from urllib.parse import quote_plus
 
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
+import netfetch
 from scrapers.base import BaseScraper
 from parsing import classify_seller_type, parse_price, detect_title_type
 from vin import extract_vin
-from driver import create_driver
 
 
 def _is_adjustment_amount(el):
@@ -38,6 +36,12 @@ def _is_adjustment_amount(el):
 
 class CarsComScraper(BaseScraper):
     SOURCE_NAME = "carscom"
+    # Search results are fetched over curl_cffi (Cloudflare-passing TLS + the
+    # default browser headers in netfetch). No Selenium for search — that
+    # retires the fresh-driver-per-query dance the old TLS-degradation hack
+    # needed. Detail-page enrichment still uses FlareSolverr (curl_cffi can't
+    # pass Cloudflare's managed challenge on /vehicledetail).
+    NEEDS_DRIVER = False
 
     def scrape(self):
         cc_config = self.config["Sources"].get("carscom", {})
@@ -45,6 +49,7 @@ class CarsComScraper(BaseScraper):
         max_dist = cc_config.get("max_distance", 100)
         max_pages = cc_config.get("max_pages", 3)
 
+        fetcher = netfetch.default_fetcher()
         total_found = 0
         total_matched = 0
 
@@ -52,13 +57,9 @@ class CarsComScraper(BaseScraper):
         # failures across queries rather than always starving the same ones).
         cars = list(self.desired_cars)
         random.shuffle(cars)
-        original_driver = self.driver
 
-        for i, car_query in enumerate(cars):
+        for car_query in cars:
             self.log(f"Scraping: {car_query}")
-            if i > 0:
-                self.delay_between_searches()
-
             base_url = (
                 f"https://www.cars.com/shopping/results/"
                 f"?zip={zip_code}&maximum_distance={max_dist}"
@@ -67,77 +68,43 @@ class CarsComScraper(BaseScraper):
                 f"&sort=best_match_desc"
             )
 
-            # Fresh driver per query. Cars.com's TLS handshake degrades after a
-            # handful of navigations in one Firefox session, so every query
-            # after the first would fail (nssFailure2) and return no cards —
-            # which held price coverage at ~44%. A new session per query keeps
-            # coverage complete; pagination within a query stays in one session.
-            self.driver = create_driver(proxy_config=self.config.get("Proxy"))
-            try:
-                for page in range(max_pages):
-                    url = base_url if page == 0 else f"{base_url}&page={page + 1}"
-                    self.log(f"  Page {page + 1}...")
-                    if page > 0:
-                        self.human_delay(8, 15)
+            for page in range(max_pages):
+                url = base_url if page == 0 else f"{base_url}&page={page + 1}"
+                self.log(f"  Page {page + 1}...")
 
-                    cards = self._fetch_cards(url, retries=1 if page == 0 else 0)
-                    if not cards:
-                        if page == 0:
-                            self.log(f"  No results for '{car_query}'")
-                        break
+                res = fetcher.get(url, domain="www.cars.com")
+                if res.blocked or not res.ok:
+                    self.count_parse_error()
+                    logging.warning(
+                        f"[carscom] fetch failed/blocked (status {res.status}) "
+                        f"for {car_query} page {page + 1} — skipping query")
+                    break
 
-                    total_found += len(cards)
-                    for card in cards:
-                        if self._process_listing(card, car_query):
-                            total_matched += 1
+                cards = self._select_cards(res.text)
+                if not cards:
+                    if page == 0:
+                        self.log(f"  No results for '{car_query}'")
+                    break
 
-                    self.log(f"  Page {page + 1}: {len(cards)} listings")
-            finally:
-                try:
-                    self.driver.quit()
-                except Exception:
-                    pass
-                self.driver = original_driver
+                total_found += len(cards)
+                for card in cards:
+                    if self._process_listing(card, car_query):
+                        total_matched += 1
+                self.log(f"  Page {page + 1}: {len(cards)} listings")
 
         self.log(f"Done: {total_found} total listings, {total_matched} inserted")
 
-    def _fetch_cards(self, url, retries=0):
-        """Load a results URL and return its listing-card elements.
-
-        Cars.com throttles consecutive searches in a session — a throttled
-        request returns a page with no cards. Retry with a longer backoff to
-        recover before giving up on the query.
-        """
-        for attempt in range(retries + 1):
-            try:
-                self.driver.get(url)
-            except Exception as e:
-                self.log(f"  Failed to load: {e}")
-                return []
-            self.human_delay(4, 8)
-            self.scroll_page(count=4)
-            try:
-                WebDriverWait(self.driver, 12).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR,
-                         "spark-card[data-listing-id], "
-                         "[data-listing-id], .vehicle-card")))
-            except Exception:
-                pass
-            soup = BeautifulSoup(self.driver.page_source, "html.parser")
-            cards = soup.select("spark-card[data-listing-id]")
-            if not cards:
-                cards = [el for el in soup.select("[data-listing-id]")
-                         if el.select_one("a[href*='/vehicledetail']")]
-            if not cards:
-                cards = soup.select(".vehicle-card")
-            if cards:
-                return cards
-            if attempt < retries:
-                self.log(f"  Empty page, retry {attempt + 1}/{retries} "
-                         f"after backoff...")
-                self.human_delay(12, 25)
-        return []
+    @staticmethod
+    def _select_cards(html):
+        """Return listing-card elements from a results page's HTML."""
+        soup = BeautifulSoup(html, "html.parser")
+        cards = soup.select("spark-card[data-listing-id]")
+        if not cards:
+            cards = [el for el in soup.select("[data-listing-id]")
+                     if el.select_one("a[href*='/vehicledetail']")]
+        if not cards:
+            cards = soup.select(".vehicle-card")
+        return cards
 
     def _process_listing(self, card, car_query):
         """Parse and insert a listing. Returns True if inserted."""
@@ -460,6 +427,13 @@ class CarsComScraper(BaseScraper):
 
     def _enrich_via_selenium(self, db, limit=60):
         """Legacy Selenium enrichment (Cloudflare-blocked; kept as fallback)."""
+        if self.driver is None:
+            # NEEDS_DRIVER is False, so without FlareSolverr there's no browser
+            # to fall back to — skip rather than crash. (Production has
+            # FlareSolverr, so this path isn't taken there.)
+            self.log("No FlareSolverr and no driver — skipping Cars.com "
+                     "detail enrichment this run.")
+            return 0
         rows = db.get_listings_missing_title_type(source="carscom", limit=limit)
         if not rows:
             self.log("No Cars.com listings need enrichment.")

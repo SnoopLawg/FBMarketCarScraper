@@ -38,6 +38,22 @@ from curl_cffi import requests as creq
 
 DEFAULT_IMPERSONATE = "chrome"
 
+# Realistic top-level-navigation headers. curl_cffi's `impersonate` already sets
+# a matching User-Agent + TLS/JA3, but some WAFs (Cloudflare on Cars.com) ALSO
+# score on these request headers and serve a challenge when they're absent — a
+# bare curl_cffi GET 403s, the same GET with these passes. We deliberately do
+# NOT set User-Agent here (impersonate owns it; a mismatch is itself a signal).
+DEFAULT_HEADERS = {
+    "accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+               "image/avif,image/webp,image/apng,*/*;q=0.8"),
+    "accept-language": "en-US,en;q=0.9",
+    "upgrade-insecure-requests": "1",
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "none",
+    "sec-fetch-user": "?1",
+}
+
 
 @dataclass
 class _DomainState:
@@ -159,7 +175,7 @@ class Fetcher:
                  backoff_cap=60.0, timeout=40):
         self.limiter = limiter or RateLimiter()
         self.impersonate = impersonate
-        self.headers = headers or {}
+        self.headers = {**DEFAULT_HEADERS, **(headers or {})}
         self.max_retries = max_retries
         self.base_backoff = base_backoff
         self.backoff_cap = backoff_cap
