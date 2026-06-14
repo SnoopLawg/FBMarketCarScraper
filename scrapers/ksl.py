@@ -11,10 +11,11 @@ import os
 import re
 import time
 import random
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
-import requests
+from curl_cffi import requests as creq
 
+import netfetch
 from scrapers.base import BaseScraper
 from parsing import classify_seller_type, detect_title_type
 
@@ -25,16 +26,13 @@ class KSLScraper(BaseScraper):
 
     def __init__(self, driver, config, insert_fn, car_list=None):
         super().__init__(driver, config, insert_fn, car_list)
-        self._session = requests.Session()
+        # curl_cffi with browser TLS impersonation passes KSL's PerimeterX —
+        # the old plain-`requests` TLS fingerprint was the giveaway, not the IP
+        # (verified live from the server, no proxy needed). impersonate owns the
+        # User-Agent, so we don't set one. Proxy plumbing kept as a fallback.
+        self._session = creq.Session(
+            impersonate="chrome", headers=dict(netfetch.DEFAULT_HEADERS))
         self._apply_proxy(config)
-        self._session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
-                "Gecko/20100101 Firefox/128.0"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        })
 
     def _apply_proxy(self, config):
         """Route KSL's HTTP through a proxy when configured.
@@ -110,7 +108,7 @@ class KSLScraper(BaseScraper):
         path = f"https://cars.ksl.com/search/make/{make}"
         if model:
             # URL-encode model for multi-word (e.g. "Cr-v" -> "Cr-v")
-            path += f"/model/{requests.utils.quote(model)}"
+            path += f"/model/{quote(model)}"
         path += f"/priceFrom/{self.min_price}/priceTo/{self.max_price}"
 
         mileage_max = self.config.get("MileageMax")
@@ -347,7 +345,6 @@ class KSLScraper(BaseScraper):
         else:
             self.log("No KSL listings need title enrichment.")
         return total
-        return enriched
 
     def log(self, msg):
         logging.info(f"[{self.SOURCE_NAME}] {msg}")
